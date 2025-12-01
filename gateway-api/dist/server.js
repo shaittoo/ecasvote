@@ -8,6 +8,17 @@ const express_1 = __importDefault(require("express"));
 const body_parser_1 = __importDefault(require("body-parser"));
 const fabricClient_1 = require("./fabricClient");
 const app = (0, express_1.default)();
+// Enable CORS for all routes
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
 app.use(body_parser_1.default.json());
 // Simple health-check
 app.get('/health', (_req, res) => {
@@ -18,10 +29,14 @@ app.get('/elections/:id', async (req, res) => {
     try {
         const contract = await (0, fabricClient_1.getContract)();
         const bytes = await contract.evaluateTransaction('GetElection', req.params.id);
-        res.json(JSON.parse(bytes.toString()));
+        const responseText = Buffer.from(bytes).toString('utf8').trim();
+        if (!responseText) {
+            throw new Error('Empty response from chaincode');
+        }
+        res.json(JSON.parse(responseText));
     }
     catch (err) {
-        console.error(err);
+        console.error('GetElection error:', err);
         res.status(400).json({ error: err.message || 'GetElection failed' });
     }
 });
@@ -31,10 +46,14 @@ app.get('/elections/:id/positions/:positionId/candidates', async (req, res) => {
     try {
         const contract = await (0, fabricClient_1.getContract)();
         const bytes = await contract.evaluateTransaction('GetCandidatesByPosition', id, positionId);
-        res.json(JSON.parse(bytes.toString()));
+        const responseText = Buffer.from(bytes).toString('utf8').trim();
+        if (!responseText) {
+            throw new Error('Empty response from chaincode');
+        }
+        res.json(JSON.parse(responseText));
     }
     catch (err) {
-        console.error(err);
+        console.error('GetCandidatesByPosition error:', err);
         res.status(400).json({ error: err.message || 'GetCandidatesByPosition failed' });
     }
 });
@@ -80,10 +99,14 @@ app.get('/elections/:id/results', async (req, res) => {
     try {
         const contract = await (0, fabricClient_1.getContract)();
         const bytes = await contract.evaluateTransaction('GetElectionResults', id);
-        res.json(JSON.parse(bytes.toString()));
+        const responseText = Buffer.from(bytes).toString('utf8').trim();
+        if (!responseText) {
+            throw new Error('Empty response from chaincode');
+        }
+        res.json(JSON.parse(responseText));
     }
     catch (err) {
-        console.error(err);
+        console.error('GetElectionResults error:', err);
         res.status(400).json({ error: err.message || 'GetElectionResults failed' });
     }
 });

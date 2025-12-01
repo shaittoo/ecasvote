@@ -4,6 +4,21 @@ import bodyParser from 'body-parser';
 import { getContract } from './fabricClient';
 
 const app = express();
+
+// Enable CORS for all routes
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  
+  next();
+});
+
 app.use(bodyParser.json());
 
 // Simple health-check
@@ -16,9 +31,13 @@ app.get('/elections/:id', async (req, res) => {
   try {
     const contract = await getContract();
     const bytes = await contract.evaluateTransaction('GetElection', req.params.id);
-    res.json(JSON.parse(bytes.toString()));
+    const responseText = Buffer.from(bytes).toString('utf8').trim();
+    if (!responseText) {
+      throw new Error('Empty response from chaincode');
+    }
+    res.json(JSON.parse(responseText));
   } catch (err: any) {
-    console.error(err);
+    console.error('GetElection error:', err);
     res.status(400).json({ error: err.message || 'GetElection failed' });
   }
 });
@@ -29,14 +48,31 @@ app.get('/elections/:id/positions/:positionId/candidates', async (req, res) => {
   try {
     const contract = await getContract();
     const bytes = await contract.evaluateTransaction('GetCandidatesByPosition', id, positionId);
-    res.json(JSON.parse(bytes.toString()));
+    const responseText = Buffer.from(bytes).toString('utf8').trim();
+    if (!responseText) {
+      throw new Error('Empty response from chaincode');
+    }
+    res.json(JSON.parse(responseText));
   } catch (err: any) {
-    console.error(err);
+    console.error('GetCandidatesByPosition error:', err);
     res.status(400).json({ error: err.message || 'GetCandidatesByPosition failed' });
   }
 });
 
-// 3) Register voter
+// 3) Open election (change status from DRAFT to OPEN)
+app.post('/elections/:id/open', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const contract = await getContract();
+    await contract.submitTransaction('OpenElection', id);
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('OpenElection error:', err);
+    res.status(400).json({ error: err.message || 'OpenElection failed' });
+  }
+});
+
+// 4) Register voter
 app.post('/elections/:id/voters', async (req, res) => {
   const { id } = req.params;
   const { voterId } = req.body; // e.g., UP mail or student ID
@@ -55,7 +91,7 @@ app.post('/elections/:id/voters', async (req, res) => {
   }
 });
 
-// 4) Cast vote
+// 5) Cast vote
 app.post('/elections/:id/votes', async (req, res) => {
   const { id } = req.params;
   const { voterId, selections } = req.body;
@@ -76,15 +112,19 @@ app.post('/elections/:id/votes', async (req, res) => {
   }
 });
 
-// 5) Get results
+// 6) Get results
 app.get('/elections/:id/results', async (req, res) => {
   const { id } = req.params;
   try {
     const contract = await getContract();
     const bytes = await contract.evaluateTransaction('GetElectionResults', id);
-    res.json(JSON.parse(bytes.toString()));
+    const responseText = Buffer.from(bytes).toString('utf8').trim();
+    if (!responseText) {
+      throw new Error('Empty response from chaincode');
+    }
+    res.json(JSON.parse(responseText));
   } catch (err: any) {
-    console.error(err);
+    console.error('GetElectionResults error:', err);
     res.status(400).json({ error: err.message || 'GetElectionResults failed' });
   }
 });
