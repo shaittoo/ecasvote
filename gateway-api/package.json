@@ -1,0 +1,20 @@
+{
+  "name": "gateway-api",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.1",
+    "@hyperledger/fabric-gateway": "^1.10.0",
+    "@types/express": "^5.0.5",
+    "express": "^5.1.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}
