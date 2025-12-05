@@ -32,6 +32,9 @@ export default function VotePage() {
 
       // Check election status and open if needed
       const election = await fetchElection(ELECTION_ID);
+      if (!election) {
+        throw new Error("Election not found.");
+      }
       if (election.status !== 'OPEN') {
         if (election.status === 'DRAFT') {
           setErrorMessage("Election is not open yet. Opening election...");
