@@ -2,6 +2,8 @@
 import express from 'express';
 import bodyParser from 'body-parser';
 import { getContract } from './fabricClient';
+import { prisma } from './prismaClient';
+
 
 const app = express();
 
@@ -26,6 +28,31 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+// Initialize ledger with default election data (calls InitLedger)
+app.post('/init', async (_req, res) => {
+  try {
+    const contract = await getContract();
+    console.log('Calling InitLedger...');
+    await contract.submitTransaction('InitLedger');
+    console.log('InitLedger completed successfully');
+    res.json({ ok: true, message: 'Ledger initialized successfully' });
+  } catch (err: any) {
+    console.error('InitLedger error:', err);
+    const errorMessage = err.message || String(err);
+    
+    // Check if it's an endorsement error
+    if (errorMessage.includes('endorsement') || errorMessage.includes('ABORTED')) {
+      res.status(400).json({ 
+        error: errorMessage,
+        hint: 'This error indicates the chaincode endorsement policy requires multiple organizations. You need to either: 1) Re-instantiate the chaincode with policy "OR(\'Org1MSP.peer\')" for single-org testing, or 2) Ensure your network has the required organizations configured.',
+        solution: 'Run: peer lifecycle chaincode commit with --signature-policy "OR(\'Org1MSP.peer\')"'
+      });
+    } else {
+      res.status(400).json({ error: errorMessage });
+    }
+  }
+});
+
 // 1) Get election details
 app.get('/elections/:id', async (req, res) => {
   try {
@@ -38,7 +65,14 @@ app.get('/elections/:id', async (req, res) => {
     res.json(JSON.parse(responseText));
   } catch (err: any) {
     console.error('GetElection error:', err);
-    res.status(400).json({ error: err.message || 'GetElection failed' });
+    const errorMessage = err.message || String(err);
+    
+    // Map "election does not exist" to 404
+    if (errorMessage.includes('does not exist') || errorMessage.includes('Election')) {
+      return res.status(404).json({ error: 'No election configured' });
+    }
+    
+    res.status(400).json({ error: errorMessage || 'GetElection failed' });
   }
 });
 
@@ -102,13 +136,57 @@ app.post('/elections/:id/votes', async (req, res) => {
   }
 
   try {
+    // --- 1) OFF-CHAIN: upsert voter in SQLite ---
+    // For now we fake UP Mail + studentId from voterId
+    const upMail = `${voterId}@up.edu.ph`;
+    const studentId = `2025-${voterId}`;
+
+    console.log(`[Vote] Saving voter ${voterId} to SQLite...`);
+    await prisma.voter.upsert({
+      where: { id: voterId },
+      update: {
+        upMail,
+        studentId,
+        electionId: id,
+        hasVoted: true,
+        votedAt: new Date(),
+      },
+      create: {
+        id: voterId,
+        electionId: id,
+        upMail,
+        studentId,
+        hasVoted: true,
+        votedAt: new Date(),
+      },
+    });
+    console.log(`[Vote] ✅ Voter ${voterId} saved to SQLite`);
+
+    // --- 2) ON-CHAIN: call ECASVote chaincode (CastVote) ---
+    console.log(`[Vote] Submitting vote to blockchain...`);
     const contract = await getContract();
     const selectionsJson = JSON.stringify(selections);
     await contract.submitTransaction('CastVote', id, voterId, selectionsJson);
-    res.json({ ok: true });
+    console.log(`[Vote] ✅ Vote submitted to blockchain`);
+
+    return res.json({
+      ok: true,
+      message: 'Vote recorded on-chain and voter stored off-chain.',
+    });
   } catch (err: any) {
-    console.error(err);
-    res.status(400).json({ error: err.message || 'CastVote failed' });
+    console.error('[Vote] Error:', err);
+    const errorMessage = err.message ?? 'Internal server error';
+    
+    // Check if it's a blockchain error but SQLite might have succeeded
+    if (errorMessage.includes('endorsement') || errorMessage.includes('ABORTED')) {
+      return res.status(500).json({ 
+        error: 'Blockchain transaction failed',
+        details: errorMessage,
+        note: 'Voter may have been saved to SQLite. Check database.',
+      });
+    }
+    
+    return res.status(500).json({ error: errorMessage });
   }
 });
 

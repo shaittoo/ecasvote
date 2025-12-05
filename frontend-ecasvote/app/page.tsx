@@ -32,22 +32,30 @@ export default async function HomePage() {
               Go to ballot
             </Link>
           </div>
+        ) : !election ? (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
+            <h2 className="text-lg font-semibold text-blue-900 mb-2">
+              No Active Election
+            </h2>
+            <p className="text-sm text-blue-700 mb-4">
+              No election has been configured yet. Please create one in the admin panel or initialize the ledger.
+            </p>
+            <p className="text-xs text-blue-600">
+              To initialize the ledger with default election data, you can call the <code className="bg-blue-100 px-1 rounded">POST /init</code> endpoint on the gateway API.
+            </p>
+          </div>
         ) : (
           <>
             <header>
               <h1 className="text-3xl font-bold">
-                eCASVote – {election?.name || 'Loading...'}
+                eCASVote – {election.name}
               </h1>
-              {election && (
-                <>
-                  <p className="text-sm text-slate-600 mt-1">
-                    Status: <span className="font-semibold">{election.status}</span>
-                  </p>
-                  <p className="mt-3 text-slate-700">
-                    {election.description}
-                  </p>
-                </>
-              )}
+              <p className="text-sm text-slate-600 mt-1">
+                Status: <span className="font-semibold">{election.status}</span>
+              </p>
+              <p className="mt-3 text-slate-700">
+                {election.description}
+              </p>
               <Link
                 href="/vote"
                 className="inline-flex items-center rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow hover:bg-sky-400 mt-4"

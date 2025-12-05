@@ -43,20 +43,32 @@ async function handleResponse(res: Response) {
 
 export async function fetchElection(
   electionId: string
-): Promise<Election> {
+): Promise<Election | null> {
   const res = await fetch(`${API_BASE}/elections/${electionId}`, {
     cache: "no-store",
   });
+  
+  // Return null for 404 (no election configured)
+  if (res.status === 404) {
+    return null;
+  }
+  
   return handleResponse(res);
 }
 
 export async function fetchResults(
   electionId: string
-): Promise<ResultsJson> {
+): Promise<ResultsJson | null> {
   const res = await fetch(
     `${API_BASE}/elections/${electionId}/results`,
     { cache: "no-store" }
   );
+  
+  // Return null for 404 (no election configured)
+  if (res.status === 404) {
+    return null;
+  }
+  
   return handleResponse(res);
 }
 

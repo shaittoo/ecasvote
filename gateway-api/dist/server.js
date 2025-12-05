@@ -7,6 +7,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const body_parser_1 = __importDefault(require("body-parser"));
 const fabricClient_1 = require("./fabricClient");
+const prismaClient_1 = require("./prismaClient");
 const app = (0, express_1.default)();
 // Enable CORS for all routes
 app.use((req, res, next) => {
@@ -24,6 +25,31 @@ app.use(body_parser_1.default.json());
 app.get('/health', (_req, res) => {
     res.json({ ok: true });
 });
+// Initialize ledger with default election data (calls InitLedger)
+app.post('/init', async (_req, res) => {
+    try {
+        const contract = await (0, fabricClient_1.getContract)();
+        console.log('Calling InitLedger...');
+        await contract.submitTransaction('InitLedger');
+        console.log('InitLedger completed successfully');
+        res.json({ ok: true, message: 'Ledger initialized successfully' });
+    }
+    catch (err) {
+        console.error('InitLedger error:', err);
+        const errorMessage = err.message || String(err);
+        // Check if it's an endorsement error
+        if (errorMessage.includes('endorsement') || errorMessage.includes('ABORTED')) {
+            res.status(400).json({
+                error: errorMessage,
+                hint: 'This error indicates the chaincode endorsement policy requires multiple organizations. You need to either: 1) Re-instantiate the chaincode with policy "OR(\'Org1MSP.peer\')" for single-org testing, or 2) Ensure your network has the required organizations configured.',
+                solution: 'Run: peer lifecycle chaincode commit with --signature-policy "OR(\'Org1MSP.peer\')"'
+            });
+        }
+        else {
+            res.status(400).json({ error: errorMessage });
+        }
+    }
+});
 // 1) Get election details
 app.get('/elections/:id', async (req, res) => {
     try {
@@ -37,7 +63,12 @@ app.get('/elections/:id', async (req, res) => {
     }
     catch (err) {
         console.error('GetElection error:', err);
-        res.status(400).json({ error: err.message || 'GetElection failed' });
+        const errorMessage = err.message || String(err);
+        // Map "election does not exist" to 404
+        if (errorMessage.includes('does not exist') || errorMessage.includes('Election')) {
+            return res.status(404).json({ error: 'No election configured' });
+        }
+        res.status(400).json({ error: errorMessage || 'GetElection failed' });
     }
 });
 // 2) Get candidates for a position
@@ -57,7 +88,20 @@ app.get('/elections/:id/positions/:positionId/candidates', async (req, res) => {
         res.status(400).json({ error: err.message || 'GetCandidatesByPosition failed' });
     }
 });
-// 3) Register voter
+// 3) Open election (change status from DRAFT to OPEN)
+app.post('/elections/:id/open', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const contract = await (0, fabricClient_1.getContract)();
+        await contract.submitTransaction('OpenElection', id);
+        res.json({ ok: true });
+    }
+    catch (err) {
+        console.error('OpenElection error:', err);
+        res.status(400).json({ error: err.message || 'OpenElection failed' });
+    }
+});
+// 4) Register voter
 app.post('/elections/:id/voters', async (req, res) => {
     const { id } = req.params;
     const { voterId } = req.body; // e.g., UP mail or student ID
@@ -74,7 +118,7 @@ app.post('/elections/:id/voters', async (req, res) => {
         res.status(400).json({ error: err.message || 'RegisterVoter failed' });
     }
 });
-// 4) Cast vote
+// 5) Cast vote
 app.post('/elections/:id/votes', async (req, res) => {
     const { id } = req.params;
     const { voterId, selections } = req.body;
@@ -83,17 +127,56 @@ app.post('/elections/:id/votes', async (req, res) => {
         return res.status(400).json({ error: 'voterId and selections[] are required' });
     }
     try {
+        // --- 1) OFF-CHAIN: upsert voter in SQLite ---
+        // For now we fake UP Mail + studentId from voterId
+        const upMail = `${voterId}@up.edu.ph`;
+        const studentId = `2025-${voterId}`;
+        console.log(`[Vote] Saving voter ${voterId} to SQLite...`);
+        await prismaClient_1.prisma.voter.upsert({
+            where: { id: voterId },
+            update: {
+                upMail,
+                studentId,
+                electionId: id,
+                hasVoted: true,
+                votedAt: new Date(),
+            },
+            create: {
+                id: voterId,
+                electionId: id,
+                upMail,
+                studentId,
+                hasVoted: true,
+                votedAt: new Date(),
+            },
+        });
+        console.log(`[Vote] ✅ Voter ${voterId} saved to SQLite`);
+        // --- 2) ON-CHAIN: call ECASVote chaincode (CastVote) ---
+        console.log(`[Vote] Submitting vote to blockchain...`);
         const contract = await (0, fabricClient_1.getContract)();
         const selectionsJson = JSON.stringify(selections);
         await contract.submitTransaction('CastVote', id, voterId, selectionsJson);
-        res.json({ ok: true });
+        console.log(`[Vote] ✅ Vote submitted to blockchain`);
+        return res.json({
+            ok: true,
+            message: 'Vote recorded on-chain and voter stored off-chain.',
+        });
     }
     catch (err) {
-        console.error(err);
-        res.status(400).json({ error: err.message || 'CastVote failed' });
+        console.error('[Vote] Error:', err);
+        const errorMessage = err.message ?? 'Internal server error';
+        // Check if it's a blockchain error but SQLite might have succeeded
+        if (errorMessage.includes('endorsement') || errorMessage.includes('ABORTED')) {
+            return res.status(500).json({
+                error: 'Blockchain transaction failed',
+                details: errorMessage,
+                note: 'Voter may have been saved to SQLite. Check database.',
+            });
+        }
+        return res.status(500).json({ error: errorMessage });
     }
 });
-// 5) Get results
+// 6) Get results
 app.get('/elections/:id/results', async (req, res) => {
     const { id } = req.params;
     try {

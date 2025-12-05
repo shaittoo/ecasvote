@@ -1,0 +1,78 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ----------------- ENUMS -----------------
+
+enum ElectionStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+// ----------------- CORE TABLES -----------------
+
+model Election {
+  id          String          @id
+  name        String
+  description String?
+  startTime   DateTime
+  endTime     DateTime
+  status      ElectionStatus
+  createdBy   String
+  createdAt   DateTime        @default(now())
+}
+
+model Position {
+  id         String @id
+  electionId String
+  name       String
+  maxVotes   Int
+  order      Int
+}
+
+model Candidate {
+  id         String @id
+  electionId String
+  positionId String
+  name       String
+  party      String?
+  program    String?
+  yearLevel  String?
+}
+
+model Voter {
+  id         String  @id
+  electionId String
+  upMail     String?
+  studentId  String?
+  hasVoted   Boolean @default(false)
+  votedAt    DateTime?
+}
+
+model Ballot {
+  id         String   @id
+  electionId String
+  voterId    String
+  // JSON array like: [{ positionId: "chairperson", candidateId: "cand-chair-1" }]
+  selections Json
+  castAt     DateTime
+}
+
+// ----------------- AUDIT / LOGS -----------------
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  electionId String?
+  voterId    String?
+  action     String   // e.g. "CAST_VOTE", "OPEN_ELECTION"
+  txId       String?  // blockchain transaction ID
+  details    Json?    // any extra metadata
+  createdAt  DateTime @default(now())
+}
