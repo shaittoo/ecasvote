@@ -16,7 +16,29 @@ enum ElectionStatus {
   CLOSED
 }
 
+enum UserRole {
+  STUDENT
+  ADMIN
+  VALIDATOR
+}
+
 // ----------------- CORE TABLES -----------------
+
+// User table for ADMIN and VALIDATOR roles only
+// Students log in via the Voter table using studentNumber/upEmail
+model User {
+  id            Int       @id @default(autoincrement())
+  email         String    @unique
+  password      String    // Hashed password (bcrypt)
+  role          UserRole  // ADMIN or VALIDATOR (STUDENT role kept for future use)
+  fullName      String?
+  isActive      Boolean   @default(true)
+  lastLogin     DateTime?
+  voterId       Int?      @unique // Optional: Link to Voter table if needed in future
+  voter         Voter?    @relation(fields: [voterId], references: [id])
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
 
 model Election {
   id          String          @id
@@ -48,21 +70,40 @@ model Candidate {
 }
 
 model Voter {
-  id         String  @id
-  electionId String
-  upMail     String?
-  studentId  String?
-  hasVoted   Boolean @default(false)
-  votedAt    DateTime?
+  id            Int      @id @default(autoincrement())
+  studentNumber String   @unique      // 2021-00001
+  upEmail       String   @unique      // shaina.talisay@up.edu.ph
+  fullName      String
+  college       String              // e.g. "CAS"
+  department    String              // e.g. "DPSM"
+  program       String              // e.g. "BS Computer Science"
+  yearLevel     Int
+  status        String              // "ENROLLED", "LOA", "CROSS_REGISTERED", "NON_DEGREE"
+  isEligible    Boolean  @default(true)
+  hasVoted      Boolean  @default(false)
+  votedAt       DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User?               // Link to User table
 }
 
 model Ballot {
   id         String   @id
   electionId String
+  name       String   // e.g., "Ballot 2025-2026"
+  description String?
+  createdBy   String   // SEB admin who created it
+  createdAt   DateTime @default(now())
+}
+
+model Vote {
+  id         String   @id @default(uuid())
+  electionId String
   voterId    String
   // JSON array like: [{ positionId: "chairperson", candidateId: "cand-chair-1" }]
   selections Json
-  castAt     DateTime
+  txId       String?  // blockchain transaction ID
+  castAt     DateTime @default(now())
 }
 
 // ----------------- AUDIT / LOGS -----------------

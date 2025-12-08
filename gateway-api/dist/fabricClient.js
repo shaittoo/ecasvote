@@ -74,6 +74,8 @@ async function getContract() {
         commitStatusOptions: () => ({ deadline: Date.now() + 60000 }),
     });
     network = gateway.getNetwork(channelName);
+    // The gateway SDK automatically discovers peers from the channel configuration
+    // and will get endorsements from all required orgs based on the endorsement policy
     contract = network.getContract(chaincodeName);
     if (!contract) {
         throw new Error('Failed to get contract');

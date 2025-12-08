@@ -24,8 +24,35 @@ export interface BallotSelection {
 }
 
 export interface CastVotePayload {
-  voterId: string;
+  studentNumber: string;
   selections: BallotSelection[];
+}
+
+export interface LoginResponse {
+  ok: boolean;
+  message: string;
+  voter: {
+    id: number;
+    studentNumber: string;
+    upEmail: string;
+    fullName: string;
+    program: string;
+    yearLevel: number;
+    department: string;
+  };
+}
+
+export async function login(
+  studentNumber: string,
+  upEmail?: string
+): Promise<LoginResponse> {
+  const res = await fetch(`${API_BASE}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ studentNumber, upEmail }),
+  });
+
+  return handleResponse(res);
 }
 
 async function handleResponse(res: Response) {
@@ -78,6 +105,37 @@ export async function openElection(
   const res = await fetch(`${API_BASE}/elections/${electionId}/open`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+  });
+
+  await handleResponse(res);
+}
+
+export async function closeElection(
+  electionId: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/elections/${electionId}/close`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+
+  await handleResponse(res);
+}
+
+export interface UpdateElectionPayload {
+  name: string;
+  description?: string;
+  startTime: string;
+  endTime: string;
+}
+
+export async function updateElection(
+  electionId: string,
+  payload: UpdateElectionPayload
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/elections/${electionId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
 
   await handleResponse(res);
@@ -142,5 +200,124 @@ export async function fetchDashboard(
     return null;
   }
   
+  return handleResponse(res);
+}
+
+export interface Position {
+  id: string;
+  electionId: string;
+  name: string;
+  maxVotes: number;
+  order: number;
+  candidates: Array<{
+    id: string;
+    electionId: string;
+    positionId: string;
+    name: string;
+    party?: string;
+    program?: string;
+    yearLevel?: string;
+  }>;
+}
+
+export async function fetchPositions(
+  electionId: string
+): Promise<Position[]> {
+  const res = await fetch(`${API_BASE}/elections/${electionId}/positions`, {
+    cache: "no-store",
+  });
+  
+  if (!res.ok) {
+    throw new Error(`Failed to fetch positions: ${res.statusText}`);
+  }
+  
+  return handleResponse(res);
+}
+
+export interface CreateCandidatePayload {
+  positionName: string;
+  name: string;
+  party?: string;
+  yearLevel?: string;
+  program?: string;
+}
+
+export interface CreateCandidatesResponse {
+  ok: boolean;
+  candidates: Array<{
+    id: string;
+    electionId: string;
+    positionId: string;
+    name: string;
+    party?: string;
+    program?: string;
+    yearLevel?: string;
+  }>;
+  count: number;
+}
+
+export async function createCandidates(
+  electionId: string,
+  candidates: CreateCandidatePayload[]
+): Promise<CreateCandidatesResponse> {
+  const res = await fetch(`${API_BASE}/elections/${electionId}/candidates`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ candidates }),
+  });
+
+  return handleResponse(res);
+}
+
+export interface AuditLog {
+  id: number;
+  electionId: string | null;
+  voterId: string | null;
+  action: string;
+  txId: string | null;
+  details: any;
+  createdAt: string;
+}
+
+export interface AuditLogsResponse {
+  ok: boolean;
+  logs: AuditLog[];
+  count: number;
+}
+
+export async function fetchAuditLogs(
+  electionId: string
+): Promise<AuditLogsResponse> {
+  const res = await fetch(`${API_BASE}/elections/${electionId}/audit-logs`, {
+    cache: "no-store",
+  });
+  return handleResponse(res);
+}
+
+export interface IntegrityCheckData {
+  blockchainResults: ResultsJson;
+  databaseResults: ResultsJson;
+  comparison: Array<{
+    position: string;
+    candidate: string;
+    blockchainCount: number;
+    databaseCount: number;
+    match: boolean;
+  }>;
+  totals: {
+    blockchain: number;
+    database: number;
+    match: boolean;
+  };
+  hasMismatch: boolean;
+  timestamp: string;
+}
+
+export async function fetchIntegrityCheck(
+  electionId: string
+): Promise<IntegrityCheckData> {
+  const res = await fetch(`${API_BASE}/elections/${electionId}/integrity-check`, {
+    cache: "no-store",
+  });
   return handleResponse(res);
 }

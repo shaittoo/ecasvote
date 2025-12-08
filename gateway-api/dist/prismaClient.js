@@ -5,7 +5,7 @@ exports.prisma = void 0;
 const client_1 = require("@prisma/client");
 const adapter_better_sqlite3_1 = require("@prisma/adapter-better-sqlite3");
 const adapter = new adapter_better_sqlite3_1.PrismaBetterSqlite3({
-    url: process.env.DATABASE_URL || 'file:./dev.db',
+    url: process.env.DATABASE_URL || 'file:./prisma/dev.db',
 });
 exports.prisma = new client_1.PrismaClient({ adapter });
 exports.default = exports.prisma;

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import {
   Chart as ChartJS,
   ArcElement,
@@ -36,41 +36,44 @@ const ChartIcon = BarChart3;
 const FolderIcon = FolderOpen;
 
 // Countdown Timer Component
-function CountdownTimer() {
+function CountdownTimer({ endTime }: { endTime?: string }) {
   const [timeLeft, setTimeLeft] = useState({
-    days: 3,
-    hours: 12,
-    minutes: 25,
-    seconds: 40,
+    days: 0,
+    hours: 0,
+    minutes: 0,
+    seconds: 0,
   });
 
   useEffect(() => {
+    if (!endTime) return;
+
+    const calculateTimeLeft = () => {
+      const now = new Date().getTime();
+      const end = new Date(endTime).getTime();
+      const difference = end - now;
+
+      if (difference <= 0) {
+        return { days: 0, hours: 0, minutes: 0, seconds: 0 };
+      }
+
+      const days = Math.floor(difference / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((difference % (1000 * 60)) / 1000);
+
+      return { days, hours, minutes, seconds };
+    };
+
+    // Calculate immediately
+    setTimeLeft(calculateTimeLeft());
+
+    // Update every second
     const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        let { days, hours, minutes, seconds } = prev;
-        
-        if (seconds > 0) {
-          seconds--;
-        } else if (minutes > 0) {
-          minutes--;
-          seconds = 59;
-        } else if (hours > 0) {
-          hours--;
-          minutes = 59;
-          seconds = 59;
-        } else if (days > 0) {
-          days--;
-          hours = 23;
-          minutes = 59;
-          seconds = 59;
-        }
-        
-        return { days, hours, minutes, seconds };
-      });
+      setTimeLeft(calculateTimeLeft());
     }, 1000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [endTime]);
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-4 text-center">
@@ -237,6 +240,7 @@ function ElectionCalendar() {
 export default function AdminDashboardPage() {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const pathname = usePathname();
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
@@ -284,18 +288,9 @@ export default function AdminDashboardPage() {
   ];
 
   const navItems = [
-    { name: "Dashboard", icon: DashboardIcon, href: "/admin", active: true },
+    { name: "Dashboard", icon: DashboardIcon, href: "/admin", active: pathname === "/admin" },
     { name: "Onboarding", icon: BookIcon, href: "#" },
-    {
-      name: "Election Management",
-      icon: BallotIcon,
-      href: "#",
-      subItems: [
-        { name: "Create Election", href: "#" },
-        { name: "Ballot Setup", href: "#" },
-        { name: "Candidate Management", href: "#" },
-      ],
-    },
+    { name: "Election Management", icon: BallotIcon, href: "/admin/election-management", active: pathname === "/admin/election-management" },
     {
       name: "Voter Management",
       icon: ListIcon,
@@ -310,9 +305,9 @@ export default function AdminDashboardPage() {
       icon: ChartIcon,
       href: "#",
       subItems: [
-        { name: "Voter Turnout", href: "#" },
-        { name: "Results Summary", href: "#" },
-        { name: "Detailed Statistics", href: "#" },
+        { name: "Voter Turnout", href: "/admin/voter-turnout" },
+        { name: "Results Summary", href: "/admin/tally-results/summary-result" },
+        { name: "Integrity Check", href: "/admin/tally-results/integrity-check" },
       ],
     },
     {
@@ -382,28 +377,65 @@ export default function AdminDashboardPage() {
 
             return (
               <div key={item.name}>
-                <div
-                  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer ${
-                    item.active
-                      ? "bg-[#7A0019] text-white"
-                      : "text-gray-700 hover:bg-gray-100"
-                  }`}
-                  onClick={() => hasSubItems && sidebarOpen && toggleMenu(item.name.toLowerCase().replace(/\s+/g, ''))}
-                >
-                  <Icon className="w-5 h-5 flex-shrink-0" />
-                  {sidebarOpen && (
-                    <>
-                      <span className="font-medium flex-1">{item.name}</span>
-                      {hasSubItems && (
-                        isExpanded ? (
+                {!hasSubItems ? (
+                  item.href === "#" ? (
+                    <div
+                      className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer ${
+                        item.active
+                          ? "bg-[#7A0019] text-white"
+                          : "text-gray-700 hover:bg-gray-100"
+                      }`}
+                    >
+                      <Icon className="w-5 h-5 flex-shrink-0" />
+                      {sidebarOpen && (
+                        <>
+                          <span className="font-medium flex-1">{item.name}</span>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => {
+                        if (item.href !== pathname) {
+                          router.push(item.href);
+                        }
+                      }}
+                      className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer ${
+                        item.active
+                          ? "bg-[#7A0019] text-white"
+                          : "text-gray-700 hover:bg-gray-100"
+                      }`}
+                    >
+                      <Icon className="w-5 h-5 flex-shrink-0" />
+                      {sidebarOpen && (
+                        <>
+                          <span className="font-medium flex-1">{item.name}</span>
+                        </>
+                      )}
+                    </div>
+                  )
+                ) : (
+                  <div
+                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer ${
+                      item.active
+                        ? "bg-[#7A0019] text-white"
+                        : "text-gray-700 hover:bg-gray-100"
+                    }`}
+                    onClick={() => sidebarOpen && toggleMenu(item.name.toLowerCase().replace(/\s+/g, ''))}
+                  >
+                    <Icon className="w-5 h-5 flex-shrink-0" />
+                    {sidebarOpen && (
+                      <>
+                        <span className="font-medium flex-1">{item.name}</span>
+                        {isExpanded ? (
                           <ChevronDown className="w-4 h-4" />
                         ) : (
                           <ChevronRight className="w-4 h-4" />
-                        )
-                      )}
-                    </>
-                  )}
-                </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
                 {sidebarOpen && hasSubItems && isExpanded && (
                   <div className="ml-8 mt-1 space-y-1">
                     {item.subItems.map((subItem) => (
@@ -515,7 +547,7 @@ export default function AdminDashboardPage() {
                       {election?.name || "CAS Student Council Elections 2026"}
                     </h3>
                     <div className="flex items-center gap-4">
-                      <CountdownTimer />
+                      <CountdownTimer endTime={election?.endTime} />
                     </div>
                   </div>
                   <div className="flex gap-2">
@@ -552,8 +584,7 @@ export default function AdminDashboardPage() {
                       variant="outline"
                       className="flex-1"
                       onClick={() => {
-                        // TODO: Navigate to ballot setup
-                        alert('Ballot setup page coming soon');
+                        router.push('/admin/election-management');
                       }}
                     >
                       Manage Election
@@ -724,4 +755,3 @@ export default function AdminDashboardPage() {
     </div>
   );
 }
-
