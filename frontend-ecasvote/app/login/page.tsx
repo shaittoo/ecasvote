@@ -44,7 +44,7 @@ export default function LoginPage() {
       
       // Redirect based on login type
       if (loginType === "student") {
-        router.push("/");
+        router.push("/home");
       } else {
         router.push("/admin");
       }

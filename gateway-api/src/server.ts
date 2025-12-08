@@ -1,7 +1,7 @@
 // src/server.ts
 import express from 'express';
 import bodyParser from 'body-parser';
-import { getContract } from './fabricClient';
+import { getContract, getNetwork } from './fabricClient';
 import { prisma } from './prismaClient';
 
 
@@ -166,12 +166,37 @@ app.post('/elections/:id/votes', async (req, res) => {
     console.log(`[Vote] Submitting vote to blockchain...`);
     const contract = await getContract();
     const selectionsJson = JSON.stringify(selections);
-    await contract.submitTransaction('CastVote', id, voterId, selectionsJson);
-    console.log(`[Vote] ✅ Vote submitted to blockchain`);
+    
+    // Create proposal to get transaction ID, then endorse and submit
+    const proposal = contract.newProposal('CastVote', {
+      arguments: [id, voterId, selectionsJson],
+    });
+    const transactionId = proposal.getTransactionId();
+    
+    // Endorse the proposal to get a transaction
+    const transaction = await proposal.endorse();
+    
+    // Submit the transaction
+    await transaction.submit();
+    console.log(`[Vote] ✅ Vote submitted to blockchain with transaction ID: ${transactionId}`);
+
+    // --- 3) Store transaction ID in audit log ---
+    await prisma.auditLog.create({
+      data: {
+        electionId: id,
+        voterId: voterId,
+        action: 'CAST_VOTE',
+        txId: transactionId,
+        details: {
+          selections: selections,
+        },
+      },
+    });
 
     return res.json({
       ok: true,
       message: 'Vote recorded on-chain and voter stored off-chain.',
+      transactionId: transactionId,
     });
   } catch (err: any) {
     console.error('[Vote] Error:', err);
@@ -204,6 +229,100 @@ app.get('/elections/:id/results', async (req, res) => {
   } catch (err: any) {
     console.error('GetElectionResults error:', err);
     res.status(400).json({ error: err.message || 'GetElectionResults failed' });
+  }
+});
+
+// 7) Get transaction ID for a voter's vote
+app.get('/elections/:id/voters/:voterId/transaction', async (req, res) => {
+  const { id, voterId } = req.params;
+  try {
+    const auditLog = await prisma.auditLog.findFirst({
+      where: {
+        electionId: id,
+        voterId: voterId,
+        action: 'CAST_VOTE',
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    if (!auditLog || !auditLog.txId) {
+      return res.status(404).json({ error: 'Transaction ID not found for this voter' });
+    }
+
+    res.json({
+      electionId: id,
+      voterId: voterId,
+      transactionId: auditLog.txId,
+      castAt: auditLog.createdAt,
+      details: auditLog.details,
+    });
+  } catch (err: any) {
+    console.error('GetTransactionId error:', err);
+    res.status(400).json({ error: err.message || 'GetTransactionId failed' });
+  }
+});
+
+// 8) Get dashboard statistics for an election
+app.get('/elections/:id/dashboard', async (req, res) => {
+  const { id } = req.params;
+  try {
+    // Get total voters for this election
+    const totalVoters = await prisma.voter.count({
+      where: { electionId: id },
+    });
+
+    // Get voters who have voted
+    const votedCount = await prisma.voter.count({
+      where: {
+        electionId: id,
+        hasVoted: true,
+      },
+    });
+
+    // Get election info from blockchain
+    let election = null;
+    try {
+      const contract = await getContract();
+      const bytes = await contract.evaluateTransaction('GetElection', id);
+      const responseText = Buffer.from(bytes).toString('utf8').trim();
+      if (responseText) {
+        election = JSON.parse(responseText);
+      }
+    } catch (err) {
+      console.warn('Could not fetch election from blockchain:', err);
+    }
+
+    // Get recent announcements (from audit logs)
+    const announcements = await prisma.auditLog.findMany({
+      where: {
+        electionId: id,
+        action: { not: 'CAST_VOTE' }, // Exclude vote actions
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      take: 5,
+    });
+
+    res.json({
+      election,
+      statistics: {
+        totalVoters,
+        votedCount,
+        notVotedCount: totalVoters - votedCount,
+      },
+      announcements: announcements.map((log) => ({
+        id: log.id,
+        action: log.action,
+        details: log.details,
+        createdAt: log.createdAt,
+      })),
+    });
+  } catch (err: any) {
+    console.error('GetDashboard error:', err);
+    res.status(400).json({ error: err.message || 'GetDashboard failed' });
   }
 });
 
