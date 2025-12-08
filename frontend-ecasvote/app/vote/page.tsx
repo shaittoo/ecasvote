@@ -1,29 +1,287 @@
 // frontend-ecasvote/app/vote/page.tsx
 "use client";
 
-import { FormEvent, useState } from "react";
-import { castVote, registerVoter, fetchElection, openElection } from "@/lib/ecasvoteApi";
+import { FormEvent, useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import Image from "next/image";
+import Link from "next/link";
+import { castVote, registerVoter, fetchElection, openElection, fetchPositions, Position } from "@/lib/ecasvoteApi";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { 
+  LayoutDashboard as DashboardIcon, 
+  BookOpen as BookIcon, 
+  CheckSquare as CheckboxIcon, 
+  Shield as ShieldIcon, 
+  BarChart3 as ChartIcon,
+  Menu,
+  User,
+  LogOut,
+  XCircle,
+  X,
+  CheckCircle2
+} from "lucide-react";
 
 const ELECTION_ID = "election-2025";
 
-// For now we hardcode the single position/candidate that exists
-const POSITION_ID = "chairperson";
-const CANDIDATE_ID = "cand-chair-1";
-
 export default function VotePage() {
-  const [voterId, setVoterId] = useState("");
-  const [selectedCandidate, setSelectedCandidate] = useState(CANDIDATE_ID);
+  const router = useRouter();
+  const [showInstructions, setShowInstructions] = useState(true);
+  const [studentNumber, setStudentNumber] = useState<string | null>(null);
+  const [voterInfo, setVoterInfo] = useState<any>(null);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [selectedCandidates, setSelectedCandidates] = useState<Record<string, string[]>>({});
+  const [abstainPositions, setAbstainPositions] = useState<Record<string, boolean>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showErrorModal, setShowErrorModal] = useState(false);
+  const [errorModalMessage, setErrorModalMessage] = useState<string>("");
+  const [voterName, setVoterName] = useState("");
+  const [authConfirmed, setAuthConfirmed] = useState(false);
+  const [transactionTimestamp, setTransactionTimestamp] = useState<string | null>(null);
 
-  async function handleSubmit(e: FormEvent) {
+  useEffect(() => {
+    // Load student number from localStorage (set during login)
+    if (typeof window !== "undefined") {
+      const storedStudentNumber = localStorage.getItem("studentNumber");
+      const storedVoter = localStorage.getItem("voter");
+      
+      if (!storedStudentNumber) {
+        // Redirect to login if not logged in
+        router.push("/login");
+        return;
+      }
+      
+      setStudentNumber(storedStudentNumber);
+      if (storedVoter) {
+        try {
+          setVoterInfo(JSON.parse(storedVoter));
+        } catch (e) {
+          console.error("Failed to parse voter info:", e);
+        }
+      }
+    }
+  }, [router]);
+
+  useEffect(() => {
+    async function loadPositions() {
+      if (!studentNumber) return; // Wait for student number to be loaded
+      
+      try {
+        const positionsData = await fetchPositions(ELECTION_ID);
+        setPositions(positionsData);
+        
+        // Initialize selected candidates and abstain for each position
+        const initialSelections: Record<string, string[]> = {};
+        const initialAbstain: Record<string, boolean> = {};
+        positionsData.forEach((pos) => {
+          initialSelections[pos.id] = [];
+          initialAbstain[pos.id] = false;
+        });
+        setSelectedCandidates(initialSelections);
+        setAbstainPositions(initialAbstain);
+      } catch (err: any) {
+        console.error("Failed to load positions:", err);
+        setErrorModalMessage("Failed to load ballot. Please refresh the page.");
+        setShowErrorModal(true);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadPositions();
+  }, [studentNumber]);
+
+  function handleCandidateToggle(positionId: string, candidateId: string, maxVotes: number) {
+    // If selecting a candidate, clear abstain for this position
+    setAbstainPositions((prev) => ({
+      ...prev,
+      [positionId]: false,
+    }));
+
+    setSelectedCandidates((prev) => {
+      const current = prev[positionId] || [];
+      const isSelected = current.includes(candidateId);
+
+      if (isSelected) {
+        // Deselect
+        return {
+          ...prev,
+          [positionId]: current.filter((id) => id !== candidateId),
+        };
+      } else {
+        // Select (but respect maxVotes)
+        if (current.length >= maxVotes) {
+          // If max votes reached, replace the first one
+          return {
+            ...prev,
+            [positionId]: [candidateId, ...current.slice(1)],
+          };
+        } else {
+          return {
+            ...prev,
+            [positionId]: [...current, candidateId],
+          };
+        }
+      }
+    });
+  }
+
+  function handleAbstainToggle(positionId: string) {
+    const isAbstaining = abstainPositions[positionId] || false;
+    
+    if (isAbstaining) {
+      // Deselect abstain
+      setAbstainPositions((prev) => ({
+        ...prev,
+        [positionId]: false,
+      }));
+    } else {
+      // Select abstain - clear all candidates for this position
+      setAbstainPositions((prev) => ({
+        ...prev,
+        [positionId]: true,
+      }));
+      setSelectedCandidates((prev) => ({
+        ...prev,
+        [positionId]: [],
+      }));
+    }
+  }
+
+  function handleReviewClick(e: FormEvent) {
     e.preventDefault();
     setSuccessMessage(null);
     setErrorMessage(null);
 
-    if (!voterId.trim()) {
-      setErrorMessage("Please enter your voter ID (e.g. UP Mail or student ID).");
+    if (!studentNumber) {
+      setErrorMessage("Student number not found. Please log in again.");
+      router.push("/login");
+      return;
+    }
+
+    // Filter positions to only include those visible to the voter
+    const visiblePositions = positions.filter((position) => {
+      const isGovernorPosition = position.id.includes('-governor');
+      if (!isGovernorPosition) {
+        return true;
+      }
+      
+      if (!voterInfo?.department) {
+        return false;
+      }
+      
+      const voterDept = voterInfo.department.toLowerCase();
+      const positionDept = position.id.split('-')[0].toLowerCase();
+      
+      return voterDept === positionDept;
+    });
+
+    // Validate that each visible position has either candidates or abstain
+    const positionsWithoutSelections = visiblePositions.filter((pos) => {
+      const isAbstaining = abstainPositions[pos.id] || false;
+      const hasCandidates = (selectedCandidates[pos.id] || []).length > 0;
+      return !isAbstaining && !hasCandidates;
+    });
+    
+    if (positionsWithoutSelections.length > 0) {
+      setErrorModalMessage(
+        `Please select candidates or abstain for: ${positionsWithoutSelections.map((p) => p.name).join(", ")}`
+      );
+      setShowErrorModal(true);
+      return;
+    }
+
+    // Show review modal
+    setShowReviewModal(true);
+  }
+
+  function handleProceedFromReview() {
+    // Close review modal and show authentication modal
+    setShowReviewModal(false);
+    setShowAuthModal(true);
+    // Pre-fill voter name if available
+    if (voterInfo?.fullName) {
+      setVoterName(voterInfo.fullName);
+    }
+  }
+
+  async function handleSubmit() {
+    setSuccessMessage(null);
+    setErrorMessage(null);
+
+    if (!studentNumber) {
+      setErrorMessage("Student number not found. Please log in again.");
+      router.push("/login");
+      return;
+    }
+
+    // Filter positions to only include those visible to the voter
+    // (i.e., exclude governor positions that don't match the voter's department)
+    const visiblePositions = positions.filter((position) => {
+      const isGovernorPosition = position.id.includes('-governor');
+      if (!isGovernorPosition) {
+        return true; // Show all non-governor positions
+      }
+      
+      // For governor positions, only include if it matches voter's department
+      if (!voterInfo?.department) {
+        return false; // Hide if no department info
+      }
+      
+      const voterDept = voterInfo.department.toLowerCase();
+      const positionDept = position.id.split('-')[0].toLowerCase();
+      
+      return voterDept === positionDept;
+    });
+
+    // Build selections array from visible positions only
+    // Include candidates OR abstain for each position
+    const selections: Array<{ positionId: string; candidateId: string }> = [];
+    visiblePositions.forEach((position) => {
+      const isAbstaining = abstainPositions[position.id] || false;
+      const selected = selectedCandidates[position.id] || [];
+      
+      if (isAbstaining) {
+        // Add abstain vote
+        selections.push({
+          positionId: position.id,
+          candidateId: "ABSTAIN",
+        });
+      } else {
+        // Add candidate selections
+        selected.forEach((candidateId) => {
+          selections.push({
+            positionId: position.id,
+            candidateId,
+          });
+        });
+      }
+    });
+
+    if (selections.length === 0) {
+      setErrorModalMessage("Please select at least one candidate or abstain for a position.");
+      setShowErrorModal(true);
+      return;
+    }
+
+    // Validate that each visible position has either candidates or abstain
+    const positionsWithoutSelections = visiblePositions.filter((pos) => {
+      const isAbstaining = abstainPositions[pos.id] || false;
+      const hasCandidates = (selectedCandidates[pos.id] || []).length > 0;
+      return !isAbstaining && !hasCandidates;
+    });
+    
+    if (positionsWithoutSelections.length > 0) {
+      setErrorModalMessage(
+        `Please select candidates or abstain for: ${positionsWithoutSelections.map((p) => p.name).join(", ")}`
+      );
+      setShowErrorModal(true);
       return;
     }
 
@@ -35,11 +293,12 @@ export default function VotePage() {
       if (!election) {
         throw new Error("Election not found.");
       }
-      if (election.status !== 'OPEN') {
-        if (election.status === 'DRAFT') {
-          setErrorMessage("Election is not open yet. Opening election...");
+      if (election.status !== "OPEN") {
+        if (election.status === "DRAFT") {
+          setErrorModalMessage("Election is not open yet. Opening election...");
+          setShowErrorModal(true);
           await openElection(ELECTION_ID);
-          setErrorMessage(null);
+          setShowErrorModal(false);
         } else {
           throw new Error(`Election is ${election.status} and cannot accept votes.`);
         }
@@ -47,134 +306,841 @@ export default function VotePage() {
 
       // Register voter if not already registered (will fail silently if already registered)
       try {
-        await registerVoter(ELECTION_ID, voterId.trim());
+        await registerVoter(ELECTION_ID, studentNumber.trim());
       } catch (regErr: any) {
         // If already registered, that's fine - continue
-        if (!regErr.message?.includes('already registered')) {
-          console.warn('Registration warning:', regErr);
+        if (!regErr.message?.includes("already registered")) {
+          console.warn("Registration warning:", regErr);
         }
       }
 
       // Cast the vote
-      await castVote(ELECTION_ID, {
-        voterId: voterId.trim(),
-        selections: [
-          {
-            positionId: POSITION_ID,
-            candidateId: selectedCandidate,
-          },
-        ],
+      const voteResponse = await castVote(ELECTION_ID, {
+        studentNumber: studentNumber,
+        selections,
       });
 
-      setSuccessMessage(
-        "Your vote has been successfully recorded on the blockchain."
-      );
+      // Set timestamp for success modal
+      setTransactionTimestamp(new Date().toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      }));
+
+      // Update voter info in localStorage to mark as voted
+      if (typeof window !== "undefined" && voterInfo) {
+        const updatedVoter = { ...voterInfo, hasVoted: true };
+        localStorage.setItem("voter", JSON.stringify(updatedVoter));
+        setVoterInfo(updatedVoter);
+      }
+
+      // Close auth modal and show success modal
+      setShowAuthModal(false);
+      setShowSuccessModal(true);
+      setAuthConfirmed(false);
+      setVoterName("");
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(err.message ?? "Failed to cast vote.");
+      
+      // Parse error message to show user-friendly messages
+      let errorMsg = "Failed to cast vote.";
+      const errorText = err.message || err.toString();
+      
+      if (errorText.includes("already cast") || errorText.includes("already voted") || errorText.includes("hasVoted")) {
+        errorMsg = "You have already cast your vote. Each voter can only vote once.";
+      } else if (errorText.includes("not eligible") || errorText.includes("isEligible")) {
+        errorMsg = "You are not eligible to vote. Please contact the CAS SEB if you believe this is an error.";
+      } else if (errorText.includes("not found") || errorText.includes("Voter not found")) {
+        errorMsg = "Voter not found in registry. Please contact the CAS SEB.";
+      } else if (errorText.includes("CLOSED") || errorText.includes("closed")) {
+        errorMsg = "The election is currently closed and is not accepting votes.";
+      } else if (errorText.includes("DRAFT") || errorText.includes("not open")) {
+        errorMsg = "The election is not open yet. Please wait for the election to begin.";
+      } else if (errorText.includes("department") || errorText.includes("Governor")) {
+        errorMsg = errorText; // Use the specific department error message
+      } else if (errorText.includes("Too many selections")) {
+        errorMsg = errorText; // Use the specific max votes error
+      } else if (errorText.includes("Invalid candidate") || errorText.includes("Invalid position")) {
+        errorMsg = "Invalid selection detected. Please refresh the page and try again.";
+      } else {
+        errorMsg = errorText || "An unexpected error occurred. Please try again or contact support.";
+      }
+      
+      // Show error in modal instead of inline
+      setErrorModalMessage(errorMsg);
+      setShowAuthModal(false);
+      setShowErrorModal(true);
     } finally {
       setIsSubmitting(false);
     }
   }
 
+  const handleLogout = () => {
+    router.push("/login");
+  };
+
+  const navItems = [
+    { name: "Dashboard", icon: DashboardIcon, href: "/home", active: false },
+    { name: "Onboarding", icon: BookIcon, href: "#", active: false },
+    { name: "Cast Vote", icon: CheckboxIcon, href: "/vote", active: true },
+    { name: "Privacy Statement", icon: ShieldIcon, href: "#", active: false },
+    { name: "Election Results", icon: ChartIcon, href: "/results", active: false },
+  ];
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-gray-600">Loading ballot...</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <main className="min-h-screen bg-slate-900 flex justify-center px-4 py-10">
-      <div className="w-full max-w-2xl bg-slate-950/70 border border-slate-800 rounded-2xl shadow-xl p-6 sm:p-8 text-slate-50">
-        <header className="mb-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-sky-400 mb-2">
-            eCASVote
-          </p>
-          <h1 className="text-2xl sm:text-3xl font-semibold mb-1">
-            UPV CAS SC Elections 2025 – Ballot
-          </h1>
-          <p className="text-sm text-slate-400">
-            This demo ballot writes directly to the Hyperledger Fabric
-            network via the gateway API.
-          </p>
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* Left Sidebar */}
+      <aside
+        className={`bg-white border-r border-gray-200 transition-all duration-300 flex flex-col fixed left-0 top-0 h-screen z-10 ${
+          sidebarOpen ? "w-64" : "w-20"
+        }`}
+      >
+        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+          {sidebarOpen ? (
+            <div className="flex items-center gap-2">
+              <Image
+                src="/ecasvotelogo.jpeg"
+                alt="eCASVote Logo"
+                width={120}
+                height={40}
+                className="object-contain"
+                priority
+              />
+            </div>
+          ) : (
+            <div className="w-full flex justify-center">
+              <Image
+                src="/ecasvotelogo.jpeg"
+                alt="eCASVote"
+                width={40}
+                height={40}
+                className="object-contain"
+                priority
+              />
+            </div>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+        </div>
+
+        <nav className="p-4 space-y-1 flex-1">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.name}
+                href={item.href}
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                  item.active
+                    ? "bg-[#7A0019] text-white"
+                    : "text-gray-700 hover:bg-gray-100"
+                }`}
+              >
+                <Icon />
+                {sidebarOpen && <span className="font-medium">{item.name}</span>}
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* User Profile Card */}
+        <div className="p-4 border-t border-gray-200 bg-white">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center flex-shrink-0">
+              <User className="h-5 w-5 text-gray-600" />
+            </div>
+            {sidebarOpen && (
+              <>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-gray-900 truncate">
+                    {voterInfo?.fullName || "User"}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleLogout}
+                  title="Logout"
+                >
+                  <LogOut className="h-4 w-4" />
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <div className={`flex-1 flex flex-col transition-all duration-300 ${
+        sidebarOpen ? "ml-64" : "ml-20"
+      }`}>
+        {/* Top Header */}
+        <header className="bg-white border-b border-gray-200 px-6 py-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold text-gray-900">Cast Vote</h1>
+            <div className="flex items-center gap-4">
+              {studentNumber && (
+                <div className="px-3 py-1 bg-gray-100 rounded-md text-sm text-gray-600">
+                  Student Number: {studentNumber}
+                </div>
+              )}
+            </div>
+          </div>
         </header>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Voter ID */}
-          <section>
-            <label className="block text-sm font-medium text-slate-200 mb-1">
-              Voter ID
-            </label>
-            <p className="text-xs text-slate-400 mb-2">
-              For now, you can use any identifier (e.g. <code>voter123</code>).  
-              In the real system this will be bound to UP Mail + student ID.
-            </p>
-            <input
-              type="text"
-              value={voterId}
-              onChange={(e) => setVoterId(e.target.value)}
-              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
-              placeholder="e.g. 2021-12345 or juan.delacruz@up.edu.ph"
-            />
-          </section>
+        {/* Main Content Area */}
+        <main className="flex-1 p-6 overflow-y-auto">
+          {showInstructions ? (
+            // Instructions Screen
+            <div className="max-w-4xl mx-auto">
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+                <h2 className="text-xl font-semibold text-gray-900 mb-6">How to Cast Your Ballot</h2>
+                
+                <div className="space-y-6">
+                  {/* Step 1 */}
+                  <div className="flex gap-4">
+                    <div className="flex-shrink-0">
+                      <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center text-white font-semibold">
+                        1
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-gray-900 mb-2">Select Your Candidate</h3>
+                      <p className="text-gray-600 text-sm">
+                        Click on your favored candidate for each position. For positions that allow multiple selections, 
+                        you can select up to the maximum number indicated.
+                      </p>
+                    </div>
+                  </div>
 
-          {/* Chairperson position */}
-          <section>
-            <h2 className="text-sm font-semibold text-slate-200 mb-1">
-              Chairperson <span className="text-xs text-slate-400">(vote for 1)</span>
-            </h2>
+                  {/* Step 2 */}
+                  <div className="flex gap-4">
+                    <div className="flex-shrink-0">
+                      <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center text-white font-semibold">
+                        2
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-gray-900 mb-2">Affix E-Signature</h3>
+                      <p className="text-gray-600 text-sm">
+                        After making your selections, click the "Confirm" button. You will be prompted for a digital 
+                        confirmation. This is not a written signature, but a digital confirmation of your choices.
+                      </p>
+                    </div>
+                  </div>
 
-            <div className="mt-3 space-y-3">
-              <label
-                className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-900 px-3 py-3 cursor-pointer hover:border-sky-500/80 transition"
-              >
-                <input
-                  type="radio"
-                  name="chairperson"
-                  value={CANDIDATE_ID}
-                  checked={selectedCandidate === CANDIDATE_ID}
-                  onChange={() => setSelectedCandidate(CANDIDATE_ID)}
-                  className="mt-1 h-4 w-4 text-sky-500 focus:ring-sky-500 border-slate-600 bg-slate-900"
-                />
-                <div>
-                  <p className="text-sm font-medium">
-                    Juan Dela Cruz{" "}
-                    <span className="text-xs text-slate-400 align-middle">
-                      – Party A
-                    </span>
-                  </p>
-                  <p className="text-xs text-slate-400">
-                    BS Computer Science, 4th year
+                  {/* Step 3 */}
+                  <div className="flex gap-4">
+                    <div className="flex-shrink-0">
+                      <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center text-white font-semibold">
+                        3
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-gray-900 mb-2">Submit Ballot</h3>
+                      <p className="text-gray-600 text-sm">
+                        Once you have confirmed your selections, click the "Submit Ballot" button to finalize your vote. 
+                        Your vote will be recorded on the blockchain and cannot be changed.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-8 flex justify-end">
+                  <Button
+                    onClick={() => setShowInstructions(false)}
+                    className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8 py-2"
+                  >
+                    Continue
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            // Ballot Form
+            <div className="max-w-4xl mx-auto">
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+                <div className="mb-6">
+                  <h2 className="text-xl font-semibold text-gray-900 mb-2">Election Ballot</h2>
+                  <p className="text-sm text-red-600">
+                    *The candidate list is presented in no particular order.
                   </p>
                 </div>
-              </label>
-            </div>
-          </section>
 
-          {/* Messages */}
-          {successMessage && (
-            <div className="rounded-lg border border-emerald-500/60 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
-              {successMessage}
+                <form onSubmit={handleReviewClick} className="space-y-8">
+                  {/* Voter Info Display */}
+                  {voterInfo && (
+                    <section className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">Voter Information</p>
+                          <p className="text-sm text-gray-600 mt-1">
+                            {voterInfo.fullName} • {voterInfo.program} • Year {voterInfo.yearLevel}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">Student Number: {voterInfo.studentNumber}</p>
+                        </div>
+                      </div>
+                    </section>
+                  )}
+
+                  {/* Positions */}
+                  {positions
+                    .filter((position) => {
+                      // Filter governor positions: only show the governor position matching voter's department
+                      const isGovernorPosition = position.id.includes('-governor');
+                      if (!isGovernorPosition) {
+                        return true; // Show all non-governor positions
+                      }
+                      
+                      // For governor positions, only show if it matches voter's department
+                      if (!voterInfo?.department) {
+                        return false; // Hide if no department info
+                      }
+                      
+                      const voterDept = voterInfo.department.toLowerCase();
+                      const positionDept = position.id.split('-')[0].toLowerCase();
+                      
+                      return voterDept === positionDept;
+                    })
+                    .map((position) => {
+                    const selected = selectedCandidates[position.id] || [];
+                    const isRadio = position.maxVotes === 1;
+                    const isAbstaining = abstainPositions[position.id] || false;
+                    
+                    return (
+                      <section key={position.id} className="border-b border-gray-200 pb-6 last:border-b-0">
+                        <div className="mb-4">
+                          <h3 className="text-lg font-semibold text-[#7A0019] mb-1">
+                            {position.name}
+                          </h3>
+                          {position.maxVotes > 1 && !isAbstaining && (
+                            <p className="text-sm text-red-600">
+                              *Voter shall select at most {position.maxVotes === 3 ? 'THREE' : position.maxVotes === 5 ? 'FIVE' : position.maxVotes.toString()} ({position.maxVotes}) candidates.
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="space-y-3">
+                          {position.candidates.map((candidate, index) => {
+                            const isSelected = selected.includes(candidate.id);
+                            return (
+                              <label
+                                key={candidate.id}
+                                className={`flex items-center gap-4 p-4 rounded-lg border-2 transition-all ${
+                                  isAbstaining
+                                    ? "border-gray-200 bg-gray-50 cursor-not-allowed opacity-50"
+                                    : isSelected
+                                    ? "border-[#7A0019] bg-red-50 cursor-pointer"
+                                    : "border-gray-200 bg-white hover:border-gray-300 cursor-pointer"
+                                }`}
+                              >
+                                <div className="flex-shrink-0">
+                                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                                    isSelected ? "bg-[#7A0019]" : "bg-blue-100"
+                                  }`}>
+                                    <User className={`h-6 w-6 ${
+                                      isSelected ? "text-white" : "text-blue-600"
+                                    }`} />
+                                  </div>
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <p className="font-semibold text-gray-900">
+                                      {index + 1}. {candidate.name.toUpperCase()}
+                                    </p>
+                                    {candidate.party && (
+                                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                        candidate.party === "PMB" 
+                                          ? "bg-blue-100 text-blue-700"
+                                          : candidate.party === "SAMASA"
+                                          ? "bg-red-100 text-red-700"
+                                          : "bg-gray-100 text-gray-700"
+                                      }`}>
+                                        {candidate.party}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {(candidate.program || candidate.yearLevel) && (
+                                    <p className="text-sm text-gray-600">
+                                      {[candidate.program, candidate.yearLevel]
+                                        .filter(Boolean)
+                                        .join(", ")}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="flex-shrink-0">
+                                  <input
+                                    type={isRadio ? "radio" : "checkbox"}
+                                    name={isRadio ? position.id : undefined}
+                                    checked={isSelected}
+                                    disabled={isAbstaining}
+                                    onChange={() =>
+                                      handleCandidateToggle(position.id, candidate.id, position.maxVotes)
+                                    }
+                                    className={`h-5 w-5 text-[#7A0019] focus:ring-[#7A0019] border-gray-300 ${
+                                      isRadio ? "" : "rounded"
+                                    } ${isAbstaining ? "cursor-not-allowed opacity-50" : ""}`}
+                                  />
+                                </div>
+                              </label>
+                            );
+                          })}
+                          
+                          {/* Abstain Option */}
+                          <label
+                            className={`flex items-center gap-4 p-4 rounded-lg border-2 cursor-pointer transition-all mt-3 ${
+                              abstainPositions[position.id]
+                                ? "border-gray-500 bg-gray-100"
+                                : "border-gray-200 bg-white hover:border-gray-300"
+                            }`}
+                          >
+                            <div className="flex-shrink-0">
+                              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                                abstainPositions[position.id] ? "bg-gray-500" : "bg-gray-100"
+                              }`}>
+                                <XCircle className={`h-6 w-6 ${
+                                  abstainPositions[position.id] ? "text-white" : "text-gray-600"
+                                }`} />
+                              </div>
+                            </div>
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-900">
+                                Abstain
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                I choose not to vote for any candidate in this position
+                              </p>
+                            </div>
+                            <div className="flex-shrink-0">
+                              <input
+                                type="radio"
+                                name={`abstain-${position.id}`}
+                                checked={abstainPositions[position.id] || false}
+                                onChange={() => handleAbstainToggle(position.id)}
+                                className="h-5 w-5 text-gray-500 focus:ring-gray-500 border-gray-300"
+                              />
+                            </div>
+                          </label>
+                        </div>
+                        {selected.length > 0 && !abstainPositions[position.id] && (
+                          <p className="text-sm text-gray-500 mt-2">
+                            {selected.length} of {position.maxVotes} selected
+                          </p>
+                        )}
+                        {abstainPositions[position.id] && (
+                          <p className="text-sm text-gray-500 mt-2">
+                            Abstaining from this position
+                          </p>
+                        )}
+                      </section>
+                    );
+                  })}
+
+                  {/* Messages */}
+                  {successMessage && (
+                    <div className="rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
+                      {successMessage}
+                    </div>
+                  )}
+                  {/* Submit */}
+                  <div className="flex items-center justify-between pt-4 border-t border-gray-200">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowInstructions(true)}
+                    >
+                      ← Back to Instructions
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8 py-2"
+                    >
+                      {isSubmitting ? "Submitting…" : "Submit Ballot"}
+                    </Button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
-          {errorMessage && (
-            <div className="rounded-lg border border-rose-500/60 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-              {errorMessage}
-            </div>
-          )}
-
-          {/* Submit */}
-          <div className="flex items-center justify-between pt-2">
-            <a
-              href="/"
-              className="text-xs text-slate-400 hover:text-slate-200 underline-offset-2 hover:underline"
-            >
-              ← Back to results
-            </a>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="inline-flex items-center rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-md hover:bg-sky-400 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {isSubmitting ? "Submitting…" : "Cast vote"}
-            </button>
-          </div>
-        </form>
+        </main>
       </div>
-    </main>
+
+      {/* Review Vote Modal */}
+      {showReviewModal && (
+        <div 
+          className="fixed inset-0 bg-gray bg-opacity-20 backdrop-blur-md flex items-center justify-center z-50"
+          onClick={() => setShowReviewModal(false)}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-green-600">Review your Vote</h2>
+              <button
+                onClick={() => setShowReviewModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 space-y-6">
+              {positions
+                .filter((position) => {
+                  const isGovernorPosition = position.id.includes('-governor');
+                  if (!isGovernorPosition) return true;
+                  if (!voterInfo?.department) return false;
+                  const voterDept = voterInfo.department.toLowerCase();
+                  const positionDept = position.id.split('-')[0].toLowerCase();
+                  return voterDept === positionDept;
+                })
+                .map((position) => {
+                  const selected = selectedCandidates[position.id] || [];
+                  const isAbstaining = abstainPositions[position.id] || false;
+                  
+                  // Skip positions with no selections
+                  if (!isAbstaining && selected.length === 0) {
+                    return null;
+                  }
+
+                  return (
+                    <div key={position.id} className="border-b border-gray-200 pb-4 last:border-b-0">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-3">{position.name}</h3>
+                      
+                      {isAbstaining ? (
+                        <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                          <div className="w-10 h-10 rounded-full bg-gray-400 flex items-center justify-center">
+                            <XCircle className="h-5 w-5 text-white" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900">Abstain</p>
+                            <p className="text-sm text-gray-600">No candidate selected for this position</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {selected.map((candidateId) => {
+                            const candidate = position.candidates.find(c => c.id === candidateId);
+                            if (!candidate) return null;
+                            
+                            const partyColors: Record<string, { bg: string; text: string }> = {
+                              'PMB': { bg: 'bg-blue-100', text: 'text-blue-700' },
+                              'SAMASA': { bg: 'bg-red-100', text: 'text-red-700' },
+                              'INDEPENDENT': { bg: 'bg-gray-100', text: 'text-gray-700' },
+                            };
+                            const partyColor = partyColors[candidate.party || ''] || partyColors['INDEPENDENT'];
+                            
+                            return (
+                              <div key={candidateId} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                                  candidate.party === 'PMB' ? 'bg-blue-200' :
+                                  candidate.party === 'SAMASA' ? 'bg-red-200' :
+                                  'bg-yellow-200'
+                                }`}>
+                                  <User className="h-5 w-5 text-gray-700" />
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <p className="font-semibold text-gray-900">
+                                      {candidate.name.toUpperCase()}
+                                    </p>
+                                    {candidate.party && (
+                                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${partyColor.bg} ${partyColor.text}`}>
+                                        {candidate.party}
+                                      </span>
+                                    )}
+                                    <div className="ml-auto">
+                                      <div className="w-5 h-5 border-2 border-green-500 rounded bg-green-50 flex items-center justify-center">
+                                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 flex items-center justify-end gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowReviewModal(false)}
+                className="px-6"
+              >
+                Cancel Submission
+              </Button>
+              <Button
+                type="button"
+                onClick={handleProceedFromReview}
+                className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8"
+              >
+                Proceed
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Vote Authentication Modal */}
+      {showAuthModal && (
+        <div 
+          className="fixed inset-0 bg-gray bg-opacity-20 backdrop-blur-md flex items-center justify-center z-50"
+          onClick={() => {
+            setShowAuthModal(false);
+            setAuthConfirmed(false);
+            setVoterName("");
+          }}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-green-600">Vote Authentication</h2>
+              <button
+                onClick={() => {
+                  setShowAuthModal(false);
+                  setAuthConfirmed(false);
+                  setVoterName("");
+                }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 space-y-6">
+              <p className="text-gray-700">
+                Please check the box below to formally acknowledge and confirm the following:
+              </p>
+
+              <div className="border border-gray-300 rounded-lg p-4 bg-gray-50">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={authConfirmed}
+                    onChange={(e) => setAuthConfirmed(e.target.checked)}
+                    className="mt-1 h-5 w-5 text-[#7A0019] focus:ring-[#7A0019] border-gray-300 rounded"
+                  />
+                  <span className="text-sm text-gray-700 leading-relaxed">
+                    I hereby confirm that this ballot accurately reflects my own, uncoerced choices, cast solely by me and without the influence or instruction of any external party. By ticking this box, I attest to the authenticity and integrity of my selections, and I authorize the eCASVote system to immutably record this vote on the Blockchain Ledger for verifiable inclusion in the official election tally.
+                  </span>
+                </label>
+              </div>
+
+              <div>
+                <label htmlFor="voterName" className="block text-sm font-medium text-gray-700 mb-2">
+                  Your Name
+                </label>
+                <Input
+                  id="voterName"
+                  type="text"
+                  value={voterName}
+                  onChange={(e) => setVoterName(e.target.value)}
+                  placeholder="Enter your full name"
+                  className="w-full"
+                />
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 flex items-center justify-end gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setShowAuthModal(false);
+                  setAuthConfirmed(false);
+                  setVoterName("");
+                }}
+                className="px-6"
+              >
+                Cancel Submission
+              </Button>
+              <Button
+                type="button"
+                onClick={handleSubmit}
+                disabled={isSubmitting || !authConfirmed || !voterName.trim()}
+                className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? "Submitting…" : "Confirm Submission"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Confirmation Modal */}
+      {showSuccessModal && (
+        <div 
+          className="fixed inset-0 bg-gray bg-opacity-20 backdrop-blur-md flex items-center justify-center z-50"
+        >
+          <div 
+            className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-3xl font-bold text-green-700">Vote Successfully Recorded!</h2>
+              <button
+                onClick={() => {
+                  setShowSuccessModal(false);
+                  router.push("/home");
+                }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-8 space-y-6">
+              {/* Confirmation Points */}
+              <div className="space-y-4">
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-green-500 flex items-center justify-center">
+                    <CheckCircle2 className="h-5 w-5 text-white" />
+                  </div>
+                  <p className="text-gray-700 pt-1">
+                    Your vote has been securely and immutably recorded on the blockchain ledger.
+                  </p>
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-green-500 flex items-center justify-center">
+                    <CheckCircle2 className="h-5 w-5 text-white" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-gray-700 pt-1">
+                      Your voter token is now officially marked as used.
+                    </p>
+                    <p className="text-purple-400 text-xs mt-1">Slot</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-green-500 flex items-center justify-center">
+                    <CheckCircle2 className="h-5 w-5 text-white" />
+                  </div>
+                  <p className="text-gray-700 pt-1">
+                    Your vote is final and cannot be altered.
+                  </p>
+                </div>
+              </div>
+
+              {/* Additional Information */}
+              <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Additional Information</h3>
+                <div className="space-y-3">
+                  <div>
+                    <span className="font-medium text-gray-700">Time Stamp:</span>
+                    <span className="ml-2 text-gray-600">{transactionTimestamp || "Processing..."}</span>
+                  </div>
+                  <div>
+                    <span className="font-medium text-gray-700">Status:</span>
+                    <span className="ml-2 text-gray-600">Recorded in CAS SC Elections 2026</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 flex items-center justify-end">
+              <Button
+                type="button"
+                onClick={() => {
+                  setShowSuccessModal(false);
+                  router.push("/home");
+                }}
+                className="bg-green-700 hover:bg-green-800 text-white px-8"
+              >
+                Go Back To Dashboard
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error Modal */}
+      {showErrorModal && (
+        <div 
+          className="fixed inset-0 bg-gray bg-opacity-20 backdrop-blur-md flex items-center justify-center z-50"
+          onClick={() => setShowErrorModal(false)}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-red-600">Vote Submission Error</h2>
+              <button
+                onClick={() => setShowErrorModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 space-y-4">
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <p className="text-red-800 font-medium mb-2">Error:</p>
+                <p className="text-red-700">{errorModalMessage}</p>
+              </div>
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <p className="text-yellow-800 text-sm leading-relaxed">
+                  <strong>Important:</strong> If you have already cast your vote and believe this is an error in the system, 
+                  please contact the SEB Administration. They will investigate and resolve the issue for you.
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 flex items-center justify-end">
+              <Button
+                type="button"
+                onClick={() => setShowErrorModal(false)}
+                className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8"
+              >
+                Confirm
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

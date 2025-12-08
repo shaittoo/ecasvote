@@ -79,47 +79,118 @@ export class ECASVoteContract extends Contract {
       );
     }
 
-    // 2. Create a default position "chairperson" if it doesn't exist
-    const positionId = 'chairperson';
-    const positionKey = this.positionKey(electionId, positionId);
-    const existingPosition = await ctx.stub.getState(positionKey);
+    // 2. Create all positions
+    const positions = [
+      { id: 'usc-councilor', name: 'USC Councilor', maxVotes: 3, order: 1 },
+      { id: 'cas-rep-usc', name: 'CAS Rep. to the USC', maxVotes: 1, order: 2 },
+      { id: 'cas-chairperson', name: 'CAS Chairperson', maxVotes: 1, order: 3 },
+      { id: 'cas-vice-chairperson', name: 'CAS Vice Chairperson', maxVotes: 1, order: 4 },
+      { id: 'cas-councilor', name: 'CAS Councilor', maxVotes: 5, order: 5 },
+      { id: 'clovers-governor', name: 'Clovers Governor', maxVotes: 1, order: 6 },
+      { id: 'elektrons-governor', name: 'Elektrons Governor', maxVotes: 1, order: 7 },
+      { id: 'redbolts-governor', name: 'Redbolts Governor', maxVotes: 1, order: 8 },
+      { id: 'skimmers-governor', name: 'Skimmers Governor', maxVotes: 1, order: 9 },
+    ];
 
-    if (!existingPosition || existingPosition.length === 0) {
-      const position: Position = {
-        id: positionId,
-        electionId,
-        name: 'Chairperson',
-        maxVotes: 1,
-        order: 1,
-      };
+    for (const pos of positions) {
+      const positionKey = this.positionKey(electionId, pos.id);
+      const existingPosition = await ctx.stub.getState(positionKey);
 
-      await ctx.stub.putState(
-        positionKey,
-        new Uint8Array(Buffer.from(JSON.stringify(position))),
-      );
+      if (!existingPosition || existingPosition.length === 0) {
+        const position: Position = {
+          id: pos.id,
+          electionId,
+          name: pos.name,
+          maxVotes: pos.maxVotes,
+          order: pos.order,
+        };
+
+        await ctx.stub.putState(
+          positionKey,
+          new Uint8Array(Buffer.from(JSON.stringify(position))),
+        );
+
+        // Create candidates for each position
+        const candidatesData = this.getCandidatesForPosition(pos.id);
+        for (let i = 0; i < candidatesData.length; i++) {
+          const candidateId = `cand-${pos.id}-${i + 1}`;
+          const candidateKey = this.candidateKey(electionId, pos.id, candidateId);
+          const existingCandidate = await ctx.stub.getState(candidateKey);
+
+          if (!existingCandidate || existingCandidate.length === 0) {
+            const candidate: Candidate = {
+              id: candidateId,
+              electionId,
+              positionId: pos.id,
+              name: candidatesData[i].name,
+              party: candidatesData[i].party,
+              program: candidatesData[i].program,
+              yearLevel: candidatesData[i].yearLevel,
+            };
+
+            await ctx.stub.putState(
+              candidateKey,
+              new Uint8Array(Buffer.from(JSON.stringify(candidate))),
+            );
+          }
+        }
+      }
     }
+  }
 
-    // 3. Create a default candidate under that position if not existing
-    const candidateId = 'cand-chair-1';
-    const candidateKey = this.candidateKey(electionId, positionId, candidateId);
-    const existingCandidate = await ctx.stub.getState(candidateKey);
+  // Helper method to get candidates for each position
+  private getCandidatesForPosition(positionId: string): Array<{ name: string; party: string; program: string; yearLevel: string }> {
+    const candidatesMap: Record<string, Array<{ name: string; party: string; program: string; yearLevel: string }>> = {
+      'usc-councilor': [
+        { name: 'Maria Santos', party: 'PMB', program: 'BS Computer Science', yearLevel: '3rd Year' },
+        { name: 'Juan Dela Cruz', party: 'Samasa', program: 'BS Mathematics', yearLevel: '2nd Year' },
+        { name: 'Ana Garcia', party: 'Independent', program: 'BS Biology', yearLevel: '4th Year' },
+        { name: 'Carlos Reyes', party: 'PMB', program: 'BS Chemistry', yearLevel: '3rd Year' },
+      ],
+      'cas-rep-usc': [
+        { name: 'Patricia Lopez', party: 'Samasa', program: 'BS Computer Science', yearLevel: '4th Year' },
+        { name: 'Roberto Tan', party: 'PMB', program: 'BS Mathematics', yearLevel: '3rd Year' },
+      ],
+      'cas-chairperson': [
+        { name: 'Sofia Martinez', party: 'PMB', program: 'BS Biology', yearLevel: '4th Year' },
+        { name: 'Miguel Fernandez', party: 'Samasa', program: 'BS Computer Science', yearLevel: '4th Year' },
+        { name: 'Isabella Cruz', party: 'Independent', program: 'BS Chemistry', yearLevel: '3rd Year' },
+      ],
+      'cas-vice-chairperson': [
+        { name: 'Diego Ramos', party: 'PMB', program: 'BS Mathematics', yearLevel: '3rd Year' },
+        { name: 'Elena Torres', party: 'Samasa', program: 'BS Biology', yearLevel: '3rd Year' },
+      ],
+      'cas-councilor': [
+        { name: 'Gabriel Villanueva', party: 'PMB', program: 'BS Computer Science', yearLevel: '2nd Year' },
+        { name: 'Lucia Mendoza', party: 'Samasa', program: 'BS Mathematics', yearLevel: '3rd Year' },
+        { name: 'Fernando Castro', party: 'Independent', program: 'BS Biology', yearLevel: '2nd Year' },
+        { name: 'Valentina Ortega', party: 'PMB', program: 'BS Chemistry', yearLevel: '4th Year' },
+        { name: 'Ricardo Navarro', party: 'Samasa', program: 'BS Computer Science', yearLevel: '3rd Year' },
+        { name: 'Camila Silva', party: 'Independent', program: 'BS Mathematics', yearLevel: '2nd Year' },
+      ],
+      'clovers-governor': [
+        { name: 'Alejandro Morales', party: 'PMB', program: 'BS Computer Science', yearLevel: '3rd Year' },
+        { name: 'Daniela Herrera', party: 'Samasa', program: 'BS Biology', yearLevel: '2nd Year' },
+      ],
+      'elektrons-governor': [
+        { name: 'Nicolas Jimenez', party: 'Samasa', program: 'BS Mathematics', yearLevel: '3rd Year' },
+        { name: 'Adriana Vega', party: 'PMB', program: 'BS Computer Science', yearLevel: '4th Year' },
+        { name: 'Sebastian Ruiz', party: 'Independent', program: 'BS Chemistry', yearLevel: '2nd Year' },
+      ],
+      'redbolts-governor': [
+        { name: 'Victoria Paredes', party: 'PMB', program: 'BS Biology', yearLevel: '3rd Year' },
+        { name: 'Andres Moreno', party: 'Samasa', program: 'BS Computer Science', yearLevel: '2nd Year' },
+      ],
+      'skimmers-governor': [
+        { name: 'Olivia Cordero', party: 'Samasa', program: 'BS Mathematics', yearLevel: '4th Year' },
+        { name: 'Mateo Salazar', party: 'PMB', program: 'BS Chemistry', yearLevel: '3rd Year' },
+        { name: 'Emma Gutierrez', party: 'Independent', program: 'BS Biology', yearLevel: '2nd Year' },
+      ],
+    };
 
-    if (!existingCandidate || existingCandidate.length === 0) {
-      const candidate: Candidate = {
-        id: candidateId,
-        electionId,
-        positionId,
-        name: 'Juan Dela Cruz',
-        party: 'Party A',
-        program: 'BSCS',
-        yearLevel: '4',
-      };
-
-      await ctx.stub.putState(
-        candidateKey,
-        new Uint8Array(Buffer.from(JSON.stringify(candidate))),
-      );
-    }
+    return candidatesMap[positionId] || [
+      { name: `Candidate 1 - ${positionId}`, party: 'TBD', program: 'TBD', yearLevel: 'TBD' },
+    ];
   }
   
 
@@ -190,6 +261,28 @@ export class ECASVoteContract extends Contract {
   public async GetElection(ctx: Context, electionId: string): Promise<string> {
     const election = await this.getElection(ctx, electionId);
     return JSON.stringify(election);
+  }
+
+  public async UpdateElection(
+    ctx: Context,
+    electionId: string,
+    name: string,
+    description: string,
+    startTime: string,
+    endTime: string,
+  ): Promise<void> {
+    const election = await this.getElection(ctx, electionId);
+    
+    // Update election fields (preserve status, createdBy, createdAt)
+    election.name = name;
+    election.description = description;
+    election.startTime = startTime;
+    election.endTime = endTime;
+
+    await ctx.stub.putState(
+      this.electionKey(electionId),
+      new Uint8Array(Buffer.from(JSON.stringify(election))),
+    );
   }
 
   // ----------- POSITIONS & CANDIDATES -----------
@@ -340,6 +433,17 @@ export class ECASVoteContract extends Contract {
     selectionsJson: string,
   ): Promise<void> {
     const election = await this.getElection(ctx, electionId);
+    
+    // Auto-close election if end time has passed
+    const now = new Date().toISOString();
+    if (election.status === 'OPEN' && now > election.endTime) {
+      election.status = 'CLOSED';
+      await ctx.stub.putState(
+        this.electionKey(electionId),
+        new Uint8Array(Buffer.from(JSON.stringify(election))),
+      );
+    }
+    
     if (election.status !== 'OPEN') {
       throw new Error(`Election ${electionId} is not OPEN for voting`);
     }
@@ -381,6 +485,12 @@ export class ECASVoteContract extends Contract {
 
       if (!pos) {
         throw new Error(`Invalid position ${posId} in ballot`);
+      }
+
+      // Handle abstain votes - skip validation and counting
+      if (sel.candidateId === 'ABSTAIN') {
+        // Abstain votes are valid but don't count towards maxVotes
+        continue;
       }
 
       // ensure candidate exists for that position

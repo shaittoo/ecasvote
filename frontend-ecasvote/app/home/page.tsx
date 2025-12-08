@@ -94,41 +94,42 @@ const BallotIcon = () => (
 );
 
 // Countdown Timer Component
-function CountdownTimer() {
+function CountdownTimer({ endTime }: { endTime: string }) {
   const [timeLeft, setTimeLeft] = useState({
-    days: 3,
-    hours: 12,
-    minutes: 25,
-    seconds: 40,
+    days: 0,
+    hours: 0,
+    minutes: 0,
+    seconds: 0,
   });
 
   useEffect(() => {
+    const calculateTimeLeft = () => {
+      const now = new Date();
+      const end = new Date(endTime);
+      const difference = end.getTime() - now.getTime();
+
+      if (difference <= 0) {
+        return { days: 0, hours: 0, minutes: 0, seconds: 0 };
+      }
+
+      const days = Math.floor(difference / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((difference % (1000 * 60)) / 1000);
+
+      return { days, hours, minutes, seconds };
+    };
+
+    // Calculate immediately
+    setTimeLeft(calculateTimeLeft());
+
+    // Update every second
     const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        let { days, hours, minutes, seconds } = prev;
-        
-        if (seconds > 0) {
-          seconds--;
-        } else if (minutes > 0) {
-          minutes--;
-          seconds = 59;
-        } else if (hours > 0) {
-          hours--;
-          minutes = 59;
-          seconds = 59;
-        } else if (days > 0) {
-          days--;
-          hours = 23;
-          minutes = 59;
-          seconds = 59;
-        }
-        
-        return { days, hours, minutes, seconds };
-      });
+      setTimeLeft(calculateTimeLeft());
     }, 1000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [endTime]);
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-4 text-center">
@@ -274,8 +275,21 @@ export default function DashboardPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [voterInfo, setVoterInfo] = useState<any>(null);
 
   useEffect(() => {
+    // Load voter info from localStorage
+    if (typeof window !== "undefined") {
+      const storedVoter = localStorage.getItem("voter");
+      if (storedVoter) {
+        try {
+          setVoterInfo(JSON.parse(storedVoter));
+        } catch (e) {
+          console.error("Failed to parse voter info:", e);
+        }
+      }
+    }
+
     async function loadDashboard() {
       try {
         const data = await fetchDashboard(ELECTION_ID);
@@ -293,7 +307,7 @@ export default function DashboardPage() {
     router.push("/login");
   };
 
-  const stats = dashboardData?.statistics || { totalVoters: 1420, votedCount: 1065, notVotedCount: 355 };
+  const stats = dashboardData?.statistics || { totalVoters: 0, votedCount: 0, notVotedCount: 0 };
   const election = dashboardData?.election;
   const announcements = dashboardData?.announcements || [];
 
@@ -302,7 +316,7 @@ export default function DashboardPage() {
     { name: "Onboarding", icon: BookIcon, href: "#" },
     { name: "Cast Vote", icon: CheckboxIcon, href: "/vote" },
     { name: "Privacy Statement", icon: ShieldIcon, href: "#" },
-    { name: "Election Results", icon: ChartIcon, href: "#" },
+    { name: "Election Results", icon: ChartIcon, href: "/results" },
   ];
 
   return (
@@ -375,7 +389,9 @@ export default function DashboardPage() {
             {sidebarOpen && (
               <>
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium text-gray-900 truncate">John Doe</div>
+                  <div className="font-medium text-gray-900 truncate">
+                    {voterInfo?.fullName || "User"}
+                  </div>
                 </div>
                 <Button
                   variant="ghost"
@@ -433,8 +449,13 @@ export default function DashboardPage() {
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <CardTitle>Hello, John!</CardTitle>
-                    <Badge variant="secondary">Not Yet Voted</Badge>
+                    <CardTitle>Hello, {voterInfo?.fullName?.split(' ')[0] || 'User'}!</CardTitle>
+                    <Badge 
+                      variant={voterInfo?.hasVoted ? "default" : "secondary"}
+                      className={voterInfo?.hasVoted ? "bg-green-600 text-white" : ""}
+                    >
+                      {voterInfo?.hasVoted ? "Voted" : "Not Yet Voted"}
+                    </Badge>
                   </div>
                   <CardDescription>
                     Welcome to UPV CAS Student Council's Online Voting System
@@ -443,57 +464,117 @@ export default function DashboardPage() {
               </Card>
 
               {/* Ongoing Elections Card */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Ongoing Elections</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="mb-4">
-                    <h3 className="text-lg font-medium mb-4">
-                      {election?.name || "CAS Student Council Elections 2026"}
-                    </h3>
-                    <CountdownTimer />
-                  </div>
-                  <Link href="/vote" className={cn(buttonVariants({ variant: "default", size: "default" }), "w-full text-white inline-block text-center")} style={{ backgroundColor: "#7A0019" }}>
-                    Cast Your Vote Now!
-                  </Link>
-                </CardContent>
-              </Card>
-
-              {/* Voter Turnout Card */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Voter Turnout</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-col md:flex-row items-center gap-6">
-                    <DonutChart voted={stats.votedCount} total={stats.totalVoters || 1420} />
-                    <div className="flex-1 w-full">
-                      <div className="mb-4">
-                        <p className="text-lg font-semibold mb-2" style={{ color: "#0C8C3F" }}>
-                          {stats.votedCount} out of {stats.totalVoters || 1420} CAS Students
-                        </p>
-                      </div>
-                      <Tabs defaultValue="overall" className="mb-4">
-                        <TabsList>
-                          <TabsTrigger value="overall">Overall</TabsTrigger>
-                          <TabsTrigger value="breakdown">Breakdown</TabsTrigger>
-                        </TabsList>
-                      </Tabs>
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 rounded" style={{ backgroundColor: "#0C8C3F" }}></div>
-                          <span className="text-sm text-muted-foreground">Voted {stats.votedCount}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 bg-muted rounded"></div>
-                          <span className="text-sm text-muted-foreground">Not Yet Voted {stats.notVotedCount}</span>
+              {loading ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Ongoing Elections</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-center py-8">
+                      <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-4"></div>
+                      <p className="text-gray-500">Loading election data...</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : election && election.status === 'OPEN' ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Ongoing Elections</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="mb-4">
+                      <h3 className="text-lg font-medium mb-4">
+                        {election.name}
+                      </h3>
+                      <CountdownTimer endTime={election.endTime} />
+                    </div>
+                    <Link href="/vote" className={cn(buttonVariants({ variant: "default", size: "default" }), "w-full text-white inline-block text-center")} style={{ backgroundColor: "#7A0019" }}>
+                      Cast Your Vote Now!
+                    </Link>
+                  </CardContent>
+                </Card>
+              ) : election && election.status === 'CLOSED' ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Election Closed</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="mb-4">
+                      <h3 className="text-lg font-medium mb-4">
+                        {election.name}
+                      </h3>
+                      <div className="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
+                        <div className="text-lg font-semibold text-gray-600">
+                          Election has ended
                         </div>
                       </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
+                    <Link href="/results" className={cn(buttonVariants({ variant: "default", size: "default" }), "w-full text-white inline-block text-center")} style={{ backgroundColor: "#7A0019" }}>
+                      View Results
+                    </Link>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Ongoing Elections</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-center py-8">
+                      <p className="text-gray-500">No active elections at this time.</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Voter Turnout Card */}
+              {loading ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Voter Turnout</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-center py-8">
+                      <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-4"></div>
+                      <p className="text-gray-500">Loading turnout data...</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Voter Turnout</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-col md:flex-row items-center gap-6">
+                      <DonutChart voted={stats.votedCount} total={stats.totalVoters || 1} />
+                      <div className="flex-1 w-full">
+                        <div className="mb-4">
+                          <p className="text-lg font-semibold mb-2" style={{ color: "#0C8C3F" }}>
+                            {stats.votedCount} out of {stats.totalVoters} CAS Students
+                          </p>
+                        </div>
+                        <Tabs defaultValue="overall" className="mb-4">
+                          <TabsList>
+                            <TabsTrigger value="overall">Overall</TabsTrigger>
+                            <TabsTrigger value="breakdown">Breakdown</TabsTrigger>
+                          </TabsList>
+                        </Tabs>
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded" style={{ backgroundColor: "#0C8C3F" }}></div>
+                            <span className="text-sm text-muted-foreground">Voted {stats.votedCount}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 bg-muted rounded"></div>
+                            <span className="text-sm text-muted-foreground">Not Yet Voted {stats.notVotedCount}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </div>
 
             {/* Right Column */}

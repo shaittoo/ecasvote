@@ -7,7 +7,13 @@
     "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "seed": "ts-node src/seedDummyData.ts",
-    "check-db": "ts-node check-prisma-db.ts"
+    "seed:voters": "ts-node prisma/seed.ts",
+    "seed:users": "ts-node prisma/seedUsers.ts",
+    "check-db": "ts-node check-prisma-db.ts",
+    "security:test": "ts-node src/securityTests.ts"
+  },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
   },
   "keywords": [],
   "author": "",
@@ -18,7 +24,9 @@
     "@hyperledger/fabric-gateway": "^1.10.0",
     "@prisma/adapter-better-sqlite3": "^7.1.0",
     "@prisma/client": "^7.1.0",
+    "@types/bcrypt": "^6.0.0",
     "@types/express": "^5.0.5",
+    "bcrypt": "^6.0.0",
     "better-sqlite3": "^12.5.0",
     "express": "^5.1.0",
     "prisma": "^7.1.0",
