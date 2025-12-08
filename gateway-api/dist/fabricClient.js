@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getContract = getContract;
+exports.getNetwork = getNetwork;
 // src/fabricClient.ts
 const grpc = __importStar(require("@grpc/grpc-js"));
 const fabric_gateway_1 = require("@hyperledger/fabric-gateway");
@@ -58,6 +59,7 @@ const peerEndpoint = process.env.PEER_ENDPOINT || 'localhost:7051';
 const peerHostAlias = process.env.PEER_HOST_ALIAS || 'peer0.org1.example.com';
 let gateway;
 let contract;
+let network;
 async function getContract() {
     if (contract)
         return contract;
@@ -71,9 +73,21 @@ async function getContract() {
         submitOptions: () => ({ deadline: Date.now() + 5000 }),
         commitStatusOptions: () => ({ deadline: Date.now() + 60000 }),
     });
-    const network = gateway.getNetwork(channelName);
+    network = gateway.getNetwork(channelName);
     contract = network.getContract(chaincodeName);
+    if (!contract) {
+        throw new Error('Failed to get contract');
+    }
     return contract;
+}
+async function getNetwork() {
+    if (!network) {
+        await getContract(); // This will initialize network
+    }
+    if (!network) {
+        throw new Error('Failed to initialize network');
+    }
+    return network;
 }
 async function newGrpcConnection() {
     const tlsRootCert = await fs_1.promises.readFile(tlsCertPath);

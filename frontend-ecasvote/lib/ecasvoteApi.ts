@@ -96,15 +96,51 @@ export async function registerVoter(
   await handleResponse(res);
 }
 
+export interface CastVoteResponse {
+  ok: boolean;
+  message: string;
+  transactionId: string;
+}
+
 export async function castVote(
   electionId: string,
   payload: CastVotePayload
-): Promise<void> {
+): Promise<CastVoteResponse> {
   const res = await fetch(`${API_BASE}/elections/${electionId}/votes`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
-  await handleResponse(res);
+  return handleResponse(res);
+}
+
+export interface DashboardData {
+  election: Election | null;
+  statistics: {
+    totalVoters: number;
+    votedCount: number;
+    notVotedCount: number;
+  };
+  announcements: Array<{
+    id: number;
+    action: string;
+    details: any;
+    createdAt: string;
+  }>;
+}
+
+export async function fetchDashboard(
+  electionId: string
+): Promise<DashboardData | null> {
+  const res = await fetch(`${API_BASE}/elections/${electionId}/dashboard`, {
+    cache: "no-store",
+  });
+  
+  // Return null for 404 (no election configured)
+  if (res.status === 404) {
+    return null;
+  }
+  
+  return handleResponse(res);
 }

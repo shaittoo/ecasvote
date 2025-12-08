@@ -42,6 +42,7 @@ const peerHostAlias = process.env.PEER_HOST_ALIAS || 'peer0.org1.example.com';
 
 let gateway: Gateway | undefined;
 let contract: Contract | undefined;
+let network: any | undefined;
 
 export async function getContract(): Promise<Contract> {
   if (contract) return contract;
@@ -57,9 +58,22 @@ export async function getContract(): Promise<Contract> {
     commitStatusOptions: () => ({ deadline: Date.now() + 60000 }),
   });
 
-  const network = gateway.getNetwork(channelName);
+  network = gateway.getNetwork(channelName);
   contract = network.getContract(chaincodeName);
+  if (!contract) {
+    throw new Error('Failed to get contract');
+  }
   return contract;
+}
+
+export async function getNetwork() {
+  if (!network) {
+    await getContract(); // This will initialize network
+  }
+  if (!network) {
+    throw new Error('Failed to initialize network');
+  }
+  return network;
 }
 
 async function newGrpcConnection(): Promise<grpc.Client> {

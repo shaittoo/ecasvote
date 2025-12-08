@@ -66,7 +66,9 @@ export default function VotePage() {
         ],
       });
 
-      setSuccessMessage("Your vote has been successfully recorded on the blockchain.");
+      setSuccessMessage(
+        "Your vote has been successfully recorded on the blockchain."
+      );
     } catch (err: any) {
       console.error(err);
       setErrorMessage(err.message ?? "Failed to cast vote.");

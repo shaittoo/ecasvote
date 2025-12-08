@@ -155,11 +155,32 @@ app.post('/elections/:id/votes', async (req, res) => {
         console.log(`[Vote] Submitting vote to blockchain...`);
         const contract = await (0, fabricClient_1.getContract)();
         const selectionsJson = JSON.stringify(selections);
-        await contract.submitTransaction('CastVote', id, voterId, selectionsJson);
-        console.log(`[Vote] ✅ Vote submitted to blockchain`);
+        // Create proposal to get transaction ID, then endorse and submit
+        const proposal = contract.newProposal('CastVote', {
+            arguments: [id, voterId, selectionsJson],
+        });
+        const transactionId = proposal.getTransactionId();
+        // Endorse the proposal to get a transaction
+        const transaction = await proposal.endorse();
+        // Submit the transaction
+        await transaction.submit();
+        console.log(`[Vote] ✅ Vote submitted to blockchain with transaction ID: ${transactionId}`);
+        // --- 3) Store transaction ID in audit log ---
+        await prismaClient_1.prisma.auditLog.create({
+            data: {
+                electionId: id,
+                voterId: voterId,
+                action: 'CAST_VOTE',
+                txId: transactionId,
+                details: {
+                    selections: selections,
+                },
+            },
+        });
         return res.json({
             ok: true,
             message: 'Vote recorded on-chain and voter stored off-chain.',
+            transactionId: transactionId,
         });
     }
     catch (err) {
@@ -191,6 +212,36 @@ app.get('/elections/:id/results', async (req, res) => {
     catch (err) {
         console.error('GetElectionResults error:', err);
         res.status(400).json({ error: err.message || 'GetElectionResults failed' });
+    }
+});
+// 7) Get transaction ID for a voter's vote
+app.get('/elections/:id/voters/:voterId/transaction', async (req, res) => {
+    const { id, voterId } = req.params;
+    try {
+        const auditLog = await prismaClient_1.prisma.auditLog.findFirst({
+            where: {
+                electionId: id,
+                voterId: voterId,
+                action: 'CAST_VOTE',
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+        });
+        if (!auditLog || !auditLog.txId) {
+            return res.status(404).json({ error: 'Transaction ID not found for this voter' });
+        }
+        res.json({
+            electionId: id,
+            voterId: voterId,
+            transactionId: auditLog.txId,
+            castAt: auditLog.createdAt,
+            details: auditLog.details,
+        });
+    }
+    catch (err) {
+        console.error('GetTransactionId error:', err);
+        res.status(400).json({ error: err.message || 'GetTransactionId failed' });
     }
 });
 const PORT = process.env.PORT || 4000;
