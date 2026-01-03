@@ -4,24 +4,14 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import {
-  Chart as ChartJS,
-  ArcElement,
-  Tooltip,
-  Legend,
-} from "chart.js";
-import { Doughnut } from "react-chartjs-2";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Search, Bell, Settings, HelpCircle, Menu, LogOut, User } from "lucide-react";
 import { fetchDashboard } from "@/lib/ecasvoteApi";
 
-// Register Chart.js components
-ChartJS.register(ArcElement, Tooltip, Legend);
 
 const ELECTION_ID = 'election-2025';
 
@@ -87,189 +77,6 @@ const PersonIcon = () => (
   </svg>
 );
 
-const BallotIcon = () => (
-  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-    <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
-  </svg>
-);
-
-// Countdown Timer Component
-function CountdownTimer({ endTime }: { endTime: string }) {
-  const [timeLeft, setTimeLeft] = useState({
-    days: 0,
-    hours: 0,
-    minutes: 0,
-    seconds: 0,
-  });
-
-  useEffect(() => {
-    const calculateTimeLeft = () => {
-      const now = new Date();
-      const end = new Date(endTime);
-      const difference = end.getTime() - now.getTime();
-
-      if (difference <= 0) {
-        return { days: 0, hours: 0, minutes: 0, seconds: 0 };
-      }
-
-      const days = Math.floor(difference / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((difference % (1000 * 60)) / 1000);
-
-      return { days, hours, minutes, seconds };
-    };
-
-    // Calculate immediately
-    setTimeLeft(calculateTimeLeft());
-
-    // Update every second
-    const timer = setInterval(() => {
-      setTimeLeft(calculateTimeLeft());
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [endTime]);
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 text-center">
-      <div className="text-2xl font-semibold text-gray-900">
-        {String(timeLeft.days).padStart(2, "0")} days : {String(timeLeft.hours).padStart(2, "0")} hours : {String(timeLeft.minutes).padStart(2, "0")} minutes : {String(timeLeft.seconds).padStart(2, "0")} seconds
-      </div>
-    </div>
-  );
-}
-
-// Donut Chart Component
-function DonutChart({ voted, total }: { voted: number; total: number }) {
-  const notVoted = total - voted;
-
-  const data = {
-    labels: ["Voted", "Not Yet Voted"],
-    datasets: [
-      {
-        data: [voted, notVoted],
-        backgroundColor: ["#0C8C3F", "#e5e7eb"],
-        borderWidth: 0,
-      },
-    ],
-  };
-
-  const options = {
-    responsive: true,
-    maintainAspectRatio: true,
-    cutout: "70%",
-    plugins: {
-      legend: {
-        display: false,
-      },
-      tooltip: {
-        enabled: true,
-      },
-    },
-  };
-
-  return (
-    <div className="relative w-48 h-48 mx-auto">
-      <Doughnut data={data} options={options} />
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className="text-center">
-          <div className="text-3xl font-bold text-gray-900">{voted}</div>
-          <div className="text-sm text-gray-600">Voted</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Calendar Component
-function Calendar() {
-  const [currentMonth, setCurrentMonth] = useState(new Date(2025, 4, 1)); // May 2025
-  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-  const daysOfWeek = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
-
-  const firstDayOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
-  const lastDayOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
-  const daysInMonth = lastDayOfMonth.getDate();
-  const startingDayOfWeek = firstDayOfMonth.getDay();
-
-  const prevMonth = () => {
-    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
-  };
-
-  const nextMonth = () => {
-    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
-  };
-
-  const isElectionPeriod = (day: number) => {
-    return day >= 15 && day <= 18;
-  };
-
-  const isToday = (day: number) => {
-    const today = new Date();
-    return (
-      day === 9 &&
-      currentMonth.getMonth() === today.getMonth() &&
-      currentMonth.getFullYear() === today.getFullYear()
-    );
-  };
-
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-4">
-          <Button variant="ghost" size="icon" onClick={prevMonth}>
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </Button>
-          <h3 className="font-semibold">
-            {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
-          </h3>
-          <Button variant="ghost" size="icon" onClick={nextMonth}>
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </Button>
-        </div>
-        <div className="grid grid-cols-7 gap-1 mb-2">
-          {daysOfWeek.map((day) => (
-            <div key={day} className="text-center text-xs font-medium text-muted-foreground py-1">
-              {day}
-            </div>
-          ))}
-        </div>
-        <div className="grid grid-cols-7 gap-1">
-          {Array.from({ length: startingDayOfWeek }).map((_, i) => (
-            <div key={`empty-${i}`} className="aspect-square"></div>
-          ))}
-          {Array.from({ length: daysInMonth }).map((_, i) => {
-            const day = i + 1;
-            const isElection = isElectionPeriod(day);
-            const isTodayDate = isToday(day);
-            return (
-              <div
-                key={day}
-                className={`aspect-square flex items-center justify-center text-sm ${
-                  isTodayDate ? "bg-muted rounded" : ""
-                } ${isElection ? "bg-green-100 rounded" : ""}`}
-              >
-                {day}
-              </div>
-            );
-          })}
-        </div>
-        <div className="mt-2 text-xs text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-green-100 rounded"></div>
-            <span>Election Period</span>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 export default function DashboardPage() {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -307,9 +114,7 @@ export default function DashboardPage() {
     router.push("/login");
   };
 
-  const stats = dashboardData?.statistics || { totalVoters: 0, votedCount: 0, notVotedCount: 0 };
   const election = dashboardData?.election;
-  const announcements = dashboardData?.announcements || [];
 
   const navItems = [
     { name: "Dashboard", icon: DashboardIcon, href: "/home", active: true },
@@ -442,10 +247,9 @@ export default function DashboardPage() {
 
         {/* Main Content Area */}
         <main className="flex-1 p-2 overflow-y-auto">
-          <div className="w-full max-w-8xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left Column */}
-            <div className="lg:col-span-2 space-y-6">
-              {/* Greeting Card */}
+          <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="space-y-6">
+              {/* Welcome Card with Voting Status */}
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between">
@@ -454,7 +258,7 @@ export default function DashboardPage() {
                       variant={voterInfo?.hasVoted ? "default" : "secondary"}
                       className={voterInfo?.hasVoted ? "bg-green-600 text-white" : ""}
                     >
-                      {voterInfo?.hasVoted ? "Voted" : "Not Yet Voted"}
+                      {voterInfo?.hasVoted ? "Voted" : "Not Voted"}
                     </Badge>
                   </div>
                   <CardDescription>
@@ -463,11 +267,11 @@ export default function DashboardPage() {
                 </CardHeader>
               </Card>
 
-              {/* Ongoing Elections Card */}
+              {/* Election Status Card */}
               {loading ? (
                 <Card>
                   <CardHeader>
-                    <CardTitle>Ongoing Elections</CardTitle>
+                    <CardTitle>Election Status</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="text-center py-8">
@@ -479,37 +283,55 @@ export default function DashboardPage() {
               ) : election && election.status === 'OPEN' ? (
                 <Card>
                   <CardHeader>
-                    <CardTitle>Ongoing Elections</CardTitle>
+                    <CardTitle>Election Status</CardTitle>
                   </CardHeader>
-                  <CardContent>
-                    <div className="mb-4">
-                      <h3 className="text-lg font-medium mb-4">
-                        {election.name}
-                      </h3>
-                      <CountdownTimer endTime={election.endTime} />
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-medium mb-1">
+                          {election.name}
+                        </h3>
+                        <Badge variant="default" className="bg-green-600 text-white">
+                          Open
+                        </Badge>
+                      </div>
                     </div>
-                    <Link href="/vote" className={cn(buttonVariants({ variant: "default", size: "default" }), "w-full text-white inline-block text-center")} style={{ backgroundColor: "#7A0019" }}>
-                      Cast Your Vote Now!
+                    <Link 
+                      href="/vote" 
+                      className={cn(
+                        buttonVariants({ variant: "default", size: "default" }), 
+                        "w-full text-white inline-block text-center"
+                      )} 
+                      style={{ backgroundColor: "#7A0019" }}
+                    >
+                      Cast Your Vote
                     </Link>
                   </CardContent>
                 </Card>
               ) : election && election.status === 'CLOSED' ? (
                 <Card>
                   <CardHeader>
-                    <CardTitle>Election Closed</CardTitle>
+                    <CardTitle>Election Status</CardTitle>
                   </CardHeader>
-                  <CardContent>
-                    <div className="mb-4">
-                      <h3 className="text-lg font-medium mb-4">
-                        {election.name}
-                      </h3>
-                      <div className="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
-                        <div className="text-lg font-semibold text-gray-600">
-                          Election has ended
-                        </div>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-medium mb-1">
+                          {election.name}
+                        </h3>
+                        <Badge variant="secondary" className="bg-gray-500 text-white">
+                          Closed
+                        </Badge>
                       </div>
                     </div>
-                    <Link href="/results" className={cn(buttonVariants({ variant: "default", size: "default" }), "w-full text-white inline-block text-center")} style={{ backgroundColor: "#7A0019" }}>
+                    <Link 
+                      href="/results" 
+                      className={cn(
+                        buttonVariants({ variant: "default", size: "default" }), 
+                        "w-full text-white inline-block text-center"
+                      )} 
+                      style={{ backgroundColor: "#7A0019" }}
+                    >
                       View Results
                     </Link>
                   </CardContent>
@@ -517,7 +339,7 @@ export default function DashboardPage() {
               ) : (
                 <Card>
                   <CardHeader>
-                    <CardTitle>Ongoing Elections</CardTitle>
+                    <CardTitle>Election Status</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="text-center py-8">
@@ -527,110 +349,14 @@ export default function DashboardPage() {
                 </Card>
               )}
 
-              {/* Voter Turnout Card */}
-              {loading ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Voter Turnout</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-center py-8">
-                      <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-4"></div>
-                      <p className="text-gray-500">Loading turnout data...</p>
-                    </div>
-                  </CardContent>
-                </Card>
-              ) : (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Voter Turnout</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex flex-col md:flex-row items-center gap-6">
-                      <DonutChart voted={stats.votedCount} total={stats.totalVoters || 1} />
-                      <div className="flex-1 w-full">
-                        <div className="mb-4">
-                          <p className="text-lg font-semibold mb-2" style={{ color: "#0C8C3F" }}>
-                            {stats.votedCount} out of {stats.totalVoters} CAS Students
-                          </p>
-                        </div>
-                        <Tabs defaultValue="overall" className="mb-4">
-                          <TabsList>
-                            <TabsTrigger value="overall">Overall</TabsTrigger>
-                            <TabsTrigger value="breakdown">Breakdown</TabsTrigger>
-                          </TabsList>
-                        </Tabs>
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded" style={{ backgroundColor: "#0C8C3F" }}></div>
-                            <span className="text-sm text-muted-foreground">Voted {stats.votedCount}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 bg-muted rounded"></div>
-                            <span className="text-sm text-muted-foreground">Not Yet Voted {stats.notVotedCount}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+              {/* Neutral Thank You Message */}
+              {election && (
+                <div className="text-center pt-2">
+                  <p className="text-sm text-muted-foreground">
+                    Thank you for participating in the CAS Student Council Elections.
+                  </p>
+                </div>
               )}
-            </div>
-
-            {/* Right Column */}
-            <div className="space-y-6">
-              {/* Calendar */}
-              <Calendar />
-
-              {/* Announcements */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle>Announcements</CardTitle>
-                    <Button variant="ghost" size="icon">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between mb-4">
-                    <Button variant="ghost" size="sm">
-                      &lt; Previous
-                    </Button>
-                    <Button variant="ghost" size="sm">
-                      Next &gt;
-                    </Button>
-                  </div>
-                  <div className="space-y-3">
-                    {announcements.length > 0 ? (
-                      announcements.map((announcement: any) => (
-                        <div
-                          key={announcement.id}
-                          className="flex items-center gap-3 p-3 border rounded-lg hover:bg-accent cursor-pointer transition-colors"
-                        >
-                          <div className="text-yellow-500">
-                            <BallotIcon />
-                          </div>
-                          <div className="flex-1 text-sm">
-                            {announcement.action === 'OPEN_ELECTION' 
-                              ? 'Election has been opened'
-                              : announcement.details?.message || announcement.action || 'Announcement'}
-                          </div>
-                          <svg className="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                          </svg>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-sm text-muted-foreground text-center py-4">
-                        No announcements yet
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
             </div>
           </div>
         </main>
