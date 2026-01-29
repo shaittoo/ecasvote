@@ -31,8 +31,8 @@ export const navItems = [
     icon: ListIcon,
     href: "#",
     subItems: [
-      { name: "Voter Roster", href: "#" },
-      { name: "Token Status", href: "#" },
+      { name: "Voter Roster", href: "/admin/voter-management/voter-roster" },
+      { name: "Token Status", href: "/admin/voter-management/token-status" },
     ],
   },
   {
