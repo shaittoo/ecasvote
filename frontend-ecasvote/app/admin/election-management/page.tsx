@@ -28,16 +28,9 @@ import {
 } from "lucide-react";
 import { fetchElection, fetchPositions, createCandidates, updateElection } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
+import Sidebar from "../components/sidebar";
 
 const ELECTION_ID = 'election-2025';
-
-// Icons
-const DashboardIcon = Home;
-const BookIcon = BookOpen;
-const BallotIcon = Vote;
-const ListIcon = Users;
-const ChartIcon = BarChart3;
-const FolderIcon = FolderOpen;
 
 type SubNavItem = {
   name: string;
@@ -126,48 +119,6 @@ export default function ElectionManagementPage() {
     }
     loadData();
   }, []);
-
-  const handleLogout = () => {
-    router.push("/login");
-  };
-
-  const toggleMenu = (menu: string) => {
-    setExpandedMenus((prev) => ({ ...prev, [menu]: !prev[menu] }));
-  };
-
-  const navItems: NavItem[] = [
-    { name: "Dashboard", icon: DashboardIcon, href: "/admin", active: pathname === "/admin" },
-    { name: "Onboarding", icon: BookIcon, href: "#" },
-    { name: "Election Management", icon: BallotIcon, href: "/admin/election-management", active: pathname === "/admin/election-management" },
-    {
-      name: "Voter Management",
-      icon: ListIcon,
-      href: "#",
-      subItems: [
-        { name: "Voter Roster", href: "#" },
-        { name: "Token Status", href: "#" },
-      ],
-    },
-    {
-      name: "Tally & Results",
-      icon: ChartIcon,
-      href: "#",
-      subItems: [
-        { name: "Voter Turnout", href: "/admin/voter-turnout" },
-        { name: "Results Summary", href: "/admin/tally-results/summary-result" },
-        { name: "Integrity Check", href: "/admin/tally-results/integrity-check" },
-      ],
-    },
-    {
-      name: "Audit & Logs",
-      icon: FolderIcon,
-      href: "#",
-      subItems: [
-        { name: "Audit Trail Viewer", href: "#" },
-        { name: "System Activity Logs", href: "#" },
-      ],
-    },
-  ];
 
   const [elections, setElections] = useState<any[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -333,150 +284,10 @@ export default function ElectionManagementPage() {
         button { cursor: pointer; }
         aside nav a { pointer-events: auto !important; cursor: pointer !important; }
       `}</style>
-
-      {/* Left Sidebar */}
-      <aside
-        className={`bg-white border-r border-gray-200 transition-all duration-300 flex flex-col fixed left-0 top-0 h-screen z-30 ${
-          sidebarOpen ? "w-64" : "w-20"
-        }`}
-      >
-        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          {sidebarOpen ? (
-            <div className="flex items-center gap-2">
-              <Image
-                src="/ecasvotelogo.jpeg"
-                alt="eCASVote Logo"
-                width={120}
-                height={40}
-                className="object-contain"
-                priority
-              />
-            </div>
-          ) : (
-            <div className="w-full flex justify-center">
-              <Image
-                src="/ecasvotelogo.jpeg"
-                alt="eCASVote"
-                width={40}
-                height={40}
-                className="object-contain"
-                priority
-              />
-            </div>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-          >
-            <Menu className="h-5 w-5" />
-          </Button>
-        </div>
-
-        <nav className="p-4 space-y-1 flex-1 overflow-y-auto">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const hasSubItems = item.subItems && item.subItems.length > 0;
-            const menuKey = item.name.toLowerCase().replace(/\s+/g, "");
-            const isExpanded = expandedMenus[menuKey] || false;
-            const isActive = item.active || ((item.subItems || []).some(s => s.active) ?? false);
-
-            return (
-              <div key={item.name}>
-                {!hasSubItems ? (
-                  item.href === "#" ? (
-                    <div
-                      className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer ${
-                        isActive ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-                      }`}
-                    >
-                      <Icon className="w-5 h-5" />
-                      {sidebarOpen && <span className="font-medium">{item.name}</span>}
-                    </div>
-                  ) : (
-                    <div
-                      onClick={() => {
-                        if (item.href !== pathname) {
-                          router.push(item.href);
-                        }
-                      }}
-                      className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer ${
-                        isActive ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-                      }`}
-                    >
-                      <Icon className="w-5 h-5" />
-                      {sidebarOpen && <span className="font-medium">{item.name}</span>}
-                    </div>
-                  )
-                ) : (
-                  <div
-                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer ${
-                      isActive ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-                    }`}
-                    onClick={() => sidebarOpen && toggleMenu(menuKey)}
-                  >
-                    <Icon className="w-5 h-5" />
-                    {sidebarOpen && (
-                      <>
-                        <span className="font-medium flex-1">{item.name}</span>
-                        {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                      </>
-                    )}
-                  </div>
-                )}
-                {sidebarOpen && hasSubItems && isExpanded && (
-                  <div className="ml-8 mt-1 space-y-1">
-                    {item.subItems?.map((subItem) => (
-                      <div
-                        key={subItem.name}
-                        onClick={() => {
-                          if (subItem.href !== "#" && subItem.href !== pathname) {
-                            router.push(subItem.href);
-                          }
-                        }}
-                        className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg cursor-pointer ${
-                          subItem.active
-                            ? "bg-[#7A0019] text-white"
-                            : "text-gray-600 hover:bg-gray-50"
-                        }`}
-                      >
-                        <span>{subItem.name}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </nav>
-
-        {/* User Profile Card */}
-        <div className="p-4 border-t border-gray-200 bg-white">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center flex-shrink-0">
-              <User className="h-5 w-5 text-muted-foreground" />
-            </div>
-            {sidebarOpen && (
-              <>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-gray-900 truncate">{adminInfo?.fullName || 'SEB Admin'}</div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleLogout}
-                  title="Logout"
-                >
-                  <LogOut className="h-4 w-4" />
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
-      </aside>
+      <Sidebar />
 
       {/* Main Content */}
-      <div className={`flex-1 flex flex-col ${sidebarOpen ? "ml-64" : "ml-20"} transition-all duration-300`}>
+      <div className="flex-1 flex flex-col">
         {/* Main Content Area */}
         <main className="flex-1 p-6 overflow-y-auto">
           <div className="w-full max-w-6xl mx-auto space-y-6">
