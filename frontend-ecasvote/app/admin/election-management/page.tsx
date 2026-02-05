@@ -472,7 +472,7 @@ export default function ElectionManagementPage() {
                 <div className="flex items-center justify-between w-full">
                   <div className="flex items-center gap-3">
                     <label className="text-sm font-medium">Select Election:</label>
-                    <select className="border border-gray-300 rounded-md px-3 py-2 text-sm">
+                    <select className="border border-gray-300 rounded-md px-3 py-2 text-sm cursor-pointer">
                       <option>Select Election</option>
                       {elections.map((election) => (
                         <option key={election.id} value={election.id}>

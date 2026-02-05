@@ -50,8 +50,8 @@ export const navItems = [
     icon: FolderIcon,
     href: "#",
     subItems: [
-      { name: "Audit Trail Viewer", href: "#" },
-      { name: "System Activity Logs", href: "#" },
+      { name: "Audit Trail Viewer", href: "/admin/audit-and-logs/audit-trail" },
+      { name: "System Activity Logs", href: "/admin/audit-and-logs/system-activity" },
     ],
   },
 ];

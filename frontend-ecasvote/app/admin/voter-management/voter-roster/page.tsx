@@ -43,7 +43,7 @@ export default function VoterRosterPage() {
         <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-gray-900">Voter Roster</h1>
           <select
-            className="border rounded px-3 py-2"
+            className="border rounded px-3 py-2 cursor-pointer"
             value={selectedElection}
             onChange={(e) => setSelectedElection(e.target.value)}
           >
@@ -61,7 +61,7 @@ export default function VoterRosterPage() {
             <div className="max-w-7xl mx-auto space-y-6">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle className="text-lg">Registered Voters</CardTitle>
+                  <CardTitle className="text-lg">Registered Student Voters</CardTitle>
                   <div className="flex items-center justify-between gap-4">
                     {/* Search */}
                     <div className="flex-1 max-w-2xl">
@@ -81,7 +81,7 @@ export default function VoterRosterPage() {
                     </div>
 
                     {/* Import Button */}
-                    <Button className="bg-green-600 hover:bg-green-700 text-white flex items-center gap-2">
+                    <Button className="bg-green-600 hover:bg-green-700 text-white flex items-center gap-2 cursor-pointer">
                         <Upload className="w-4 h-4" />
                         Import Voter Roster
                     </Button>

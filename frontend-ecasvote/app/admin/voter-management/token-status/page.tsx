@@ -49,7 +49,7 @@ export default function TokenStatusPage() {
         <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-gray-900">Token Status</h1>
           <select
-            className="border rounded px-3 py-2"
+            className="border rounded px-3 py-2 cursor-pointer"
             value={selectedElection}
             onChange={(e) => setSelectedElection(e.target.value)}
           >
@@ -93,7 +93,7 @@ export default function TokenStatusPage() {
                       </div>
                     </div>
 
-                    <Button className="bg-red-700 hover:bg-red-800 text-white flex items-center gap-2">
+                    <Button className="bg-red-700 hover:bg-red-800 text-white flex items-center gap-2 cursor-pointer">
                       <Plus className="w-4 h-4" />
                       Generate All Token
                     </Button>
