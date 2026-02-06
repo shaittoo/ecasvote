@@ -238,7 +238,7 @@ export default function VoterTurnoutPage() {
           <div className="flex items-center gap-4">
             <div className="relative group">
               <select 
-                className="w-full border rounded px-3 py-2" 
+                className="w-full border rounded px-3 py-2 cursor-pointer" 
                 value={selectedElection} 
                 onChange={(e) => setSelectedElection(e.target.value)}
               >

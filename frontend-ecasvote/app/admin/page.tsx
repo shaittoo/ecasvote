@@ -148,6 +148,7 @@ export default function AdminDashboardPage() {
   const pathname = usePathname();
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"overall" | "breakdown">("overall");
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
     election: false,
     voter: false,
@@ -297,7 +298,7 @@ export default function AdminDashboardPage() {
                     ) : null}
                     <Button
                       variant="outline"
-                      className="flex-1"
+                      className="flex-1 cursor-pointer"
                       onClick={() => {
                         router.push('/admin/election-management');
                       }}
@@ -320,10 +321,26 @@ export default function AdminDashboardPage() {
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle>Voter Turnout</CardTitle>
-                    <Tabs defaultValue="overall" className="w-auto">
+
+                    <Tabs
+                      value={activeTab}
+                      onValueChange={(val) => setActiveTab(val as "overall" | "breakdown")}
+                      className="w-auto"
+                    >
                       <TabsList>
-                        <TabsTrigger value="overall">Overall</TabsTrigger>
-                        <TabsTrigger value="breakdown">Breakdown</TabsTrigger>
+                        <TabsTrigger
+                          value="overall"
+                          className={activeTab === "overall" ? "cursor-default" : "cursor-pointer"}
+                        >
+                          Overall
+                        </TabsTrigger>
+
+                        <TabsTrigger
+                          value="breakdown"
+                          className={activeTab === "breakdown" ? "cursor-default" : "cursor-pointer"}
+                        >
+                          Breakdown
+                        </TabsTrigger>
                       </TabsList>
                     </Tabs>
                   </div>
