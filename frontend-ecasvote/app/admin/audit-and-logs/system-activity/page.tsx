@@ -5,7 +5,7 @@ import Sidebar from "../../components/sidebar";
 import StatCard from "../../components/statcard";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Search } from "lucide-react";
+import { Search, Download, Printer } from "lucide-react";
 
 interface SystemLog {
   timestamp: string;
@@ -87,12 +87,12 @@ export default function SystemActivityLogs() {
               {/* Search + Export + Table */}
               <Card>
                 <CardHeader className="space-y-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex-1 max-w-6xl relative">
+                  <div className="flex items-center justify-between gap-4 w-full">
+                    <div className="relative flex-1 max-w-6xl">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                       <Input
-                        placeholder="Search keyword or actions..."
-                        className="pl-10 pr-36"
+                        placeholder="Search by User, Role, Action Performed, ..."
+                        className="w-full pl-10 pr-20"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                       />
@@ -101,18 +101,20 @@ export default function SystemActivityLogs() {
                       </span>
                     </div>
 
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-shrink-0">
                       <button
-                        className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer"
+                        className="flex items-center px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer"
                         onClick={handleExportCSV}
                       >
-                        CSV
+                        <Download className="h-4 w-4 mr-2" />
+                        Export CSV
                       </button>
                       <button
-                        className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer"
+                        className="flex items-center px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer"
                         onClick={handleExportPDF}
                       >
-                        PDF
+                        <Printer className="h-4 w-4 mr-2" />
+                        Print
                       </button>
                     </div>
                   </div>
