@@ -15,16 +15,81 @@ import {
 import { Doughnut, Bar } from "react-chartjs-2";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Search, Bell, Settings, HelpCircle, Menu, LogOut, Home, FileText, BarChart3, Shield, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { fetchDashboard, fetchElection, fetchPositions, fetchResults, fetchAuditLogs, fetchIntegrityCheck } from "@/lib/ecasvoteApi";
 import type { Position, AuditLog, IntegrityCheckData } from "@/lib/ecasvoteApi";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import Sidebar from "./components/sidebar";
 
 // Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
 
 const ELECTION_ID = 'election-2025';
+
+function GroupBreakdownChart({ groups }: { groups: Array<{ name: string; voted: number; total: number; color: string }> }) {
+  const data = {
+    labels: groups.map(g => g.name),
+    datasets: [
+      {
+        label: 'Voted',
+        data: groups.map(g => (g.voted / g.total) * 100),
+        backgroundColor: groups.map(g => g.color),
+        borderRadius: 4,
+      },
+      {
+        label: 'Not Voted',
+        data: groups.map(g => ((g.total - g.voted) / g.total) * 100),
+        backgroundColor: '#e5e7eb',
+        borderRadius: 4,
+      },
+    ],
+  };
+
+  const options = {
+    indexAxis: 'y' as const,
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false,
+      },
+      tooltip: {
+        callbacks: {
+          label: function(context: any) {
+            const groupIndex = context.dataIndex;
+            const group = groups[groupIndex];
+            if (context.datasetIndex === 0) {
+              return `${group.voted} out of ${group.total} (${Math.round((group.voted / group.total) * 100)}%)`;
+            } else {
+              return `${group.total - group.voted} out of ${group.total} (${Math.round(((group.total - group.voted) / group.total) * 100)}%)`;
+            }
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        stacked: true,
+        max: 100,
+        ticks: {
+          callback: function(value: any) {
+            return value + '%';
+          },
+        },
+      },
+      y: {
+        stacked: true,
+      },
+    },
+  };
+
+  return (
+    <div className="w-full h-64">
+      <Bar data={data} options={options} />
+    </div>
+  );
+}
 
 export default function ValidatorDashboardPage() {
   const router = useRouter();
@@ -37,7 +102,14 @@ export default function ValidatorDashboardPage() {
   const [integrityData, setIntegrityData] = useState<IntegrityCheckData | null>(null);
   const [integrityLoading, setIntegrityLoading] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'candidates' | 'results' | 'audit' | 'integrity'>('overview');
+  const [activeTab, setActiveTab] = useState<"overall" | "breakdown">("overall");
+
+  const groups = [
+    { name: "Red Bolts", voted: 184, total: 200, color: "#dc2626" },
+    { name: "Skimmers", voted: 252, total: 300, color: "#9333ea" },
+    { name: "Elektrons", voted: 380, total: 500, color: "#ea580c" },
+    { name: "Clovers", voted: 74, total: 200, color: "#16a34a" },
+  ];
 
   useEffect(() => {
     async function loadData() {
@@ -75,12 +147,6 @@ export default function ValidatorDashboardPage() {
       setIntegrityLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (activeTab === 'integrity' && !integrityData && !integrityLoading) {
-      loadIntegrityData();
-    }
-  }, [activeTab]);
 
   const handleLogout = () => {
     router.push("/login");
@@ -128,595 +194,131 @@ export default function ValidatorDashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      {/* Left Sidebar */}
-      <aside
-        className={`bg-white border-r border-gray-200 transition-all duration-300 flex flex-col fixed left-0 top-0 h-screen z-30 ${
-          sidebarOpen ? "w-64" : "w-20"
-        }`}
-      >
-        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          {sidebarOpen ? (
-            <div className="flex items-center gap-2">
-              <Image
-                src="/ecasvotelogo.jpeg"
-                alt="eCASVote Logo"
-                width={40}
-                height={40}
-                className="rounded"
-              />
-            </div>
-          ) : (
-            <Image
-              src="/ecasvotelogo.jpeg"
-              alt="eCASVote Logo"
-              width={40}
-              height={40}
-              className="rounded mx-auto"
-            />
-          )}
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-1 hover:bg-gray-100 rounded"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-        </div>
-
-        <nav className="flex-1 overflow-y-auto p-4">
-          <div
-            onClick={() => setActiveTab('overview')}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer mb-2 ${
-              activeTab === 'overview' ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <Home className="w-5 h-5" />
-            {sidebarOpen && <span className="font-medium">Dashboard</span>}
-          </div>
-          <div
-            onClick={() => setActiveTab('candidates')}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer mb-2 ${
-              activeTab === 'candidates' ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <FileText className="w-5 h-5" />
-            {sidebarOpen && <span className="font-medium">Candidates</span>}
-          </div>
-          <div
-            onClick={() => setActiveTab('results')}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer mb-2 ${
-              activeTab === 'results' ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <BarChart3 className="w-5 h-5" />
-            {sidebarOpen && <span className="font-medium">Results</span>}
-          </div>
-          <div
-            onClick={() => setActiveTab('audit')}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer mb-2 ${
-              activeTab === 'audit' ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <Shield className="w-5 h-5" />
-            {sidebarOpen && <span className="font-medium">Audit Logs</span>}
-          </div>
-          <div
-            onClick={() => setActiveTab('integrity')}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer mb-2 ${
-              activeTab === 'integrity' ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <CheckCircle2 className="w-5 h-5" />
-            {sidebarOpen && <span className="font-medium">Integrity Check</span>}
-          </div>
-        </nav>
-
-        <div className="p-4 border-t border-gray-200">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-full bg-[#7A0019] flex items-center justify-center text-white font-semibold">
-              V
-            </div>
-            {sidebarOpen && (
-              <div className="flex-1">
-                <p className="font-medium text-sm">Validator</p>
-                <p className="text-xs text-gray-500">Read-Only Access</p>
-              </div>
-            )}
-          </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 w-full"
-          >
-            <LogOut className="w-4 h-4" />
-            {sidebarOpen && <span className="text-sm">Logout</span>}
-          </button>
-        </div>
-      </aside>
+      <Sidebar />
 
       {/* Main Content */}
-      <div className={`flex-1 transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-20"}`}>
-        {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4 flex-1">
-            <Search className="w-5 h-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search keyword or actions..."
-              className="flex-1 border-none outline-none text-sm"
-            />
-          </div>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-600">Validator Dashboard</span>
-            <Bell className="w-5 h-5 text-gray-400 cursor-pointer" />
-            <Settings className="w-5 h-5 text-gray-400 cursor-pointer" />
-            <HelpCircle className="w-5 h-5 text-gray-400 cursor-pointer" />
-          </div>
-        </header>
+      <main className="flex-1 p-2 overflow-y-auto">
+          <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <CardTitle>Hello, Validator!</CardTitle>
+                    <Badge variant="secondary" className="bg-blue-500 text-white">
+                      Validator
+                    </Badge>
+                  </div>
+                  <CardDescription>
+                  Welcome to UPV CAS Student Council's Online Voting System
+                  </CardDescription>
+                </CardHeader>
+              </Card>
 
-        {/* Main Content Area */}
-        <main className="p-6">
-          {loading ? (
-            <div className="text-center py-12">Loading...</div>
-          ) : (
-            <>
-              {/* Overview Tab */}
-              {activeTab === 'overview' && (
-                <div className="space-y-6">
-                  {/* Greeting */}
-                  <Card>
-                    <CardHeader>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <CardTitle className="text-2xl">Hello, Validator!</CardTitle>
-                          <CardDescription className="mt-1">
-                            Welcome to UPV CAS Student Council's Online Voting System
-                          </CardDescription>
-                        </div>
-                        <Badge className="bg-blue-500 text-white">VALIDATOR</Badge>
-                      </div>
-                    </CardHeader>
-                  </Card>
+              {/* Voter Turnout Card */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Voter Turnout</CardTitle>
 
-                  {/* Election Information */}
-                  {election && (
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Election Information</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-4">
-                          <div>
-                            <p className="text-sm text-gray-600">Election Name</p>
-                            <p className="font-semibold text-lg">{election.name}</p>
-                          </div>
-                          <div className="grid grid-cols-2 gap-4">
-                            <div>
-                              <p className="text-sm text-gray-600">Status</p>
-                              <Badge
-                                className={
-                                  election.status === 'OPEN'
-                                    ? 'bg-green-500 text-white'
-                                    : election.status === 'CLOSED'
-                                    ? 'bg-red-500 text-white'
-                                    : 'bg-gray-500 text-white'
-                                }
-                              >
-                                {election.status}
-                              </Badge>
-                            </div>
-                            <div>
-                              <p className="text-sm text-gray-600">Description</p>
-                              <p className="font-medium">{election.description || 'N/A'}</p>
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-4">
-                            <div>
-                              <p className="text-sm text-gray-600">Start Time</p>
-                              <p className="font-medium">
-                                {new Date(election.startTime).toLocaleString('en-US', { timeZone: 'Asia/Manila' })}
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-sm text-gray-600">End Time</p>
-                              <p className="font-medium">
-                                {new Date(election.endTime).toLocaleString('en-US', { timeZone: 'Asia/Manila' })}
-                              </p>
+                    <Tabs
+                      value={activeTab}
+                      onValueChange={(val) => setActiveTab(val as "overall" | "breakdown")}
+                      className="w-auto"
+                    >
+                      <TabsList>
+                        <TabsTrigger
+                          value="overall"
+                          className={activeTab === "overall" ? "cursor-default" : "cursor-pointer"}
+                        >
+                          Overall
+                        </TabsTrigger>
+
+                        <TabsTrigger
+                          value="breakdown"
+                          className={activeTab === "breakdown" ? "cursor-default" : "cursor-pointer"}
+                        >
+                          Breakdown
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <Tabs defaultValue="overall">
+                    <TabsContent value="overall" className="mt-4">
+                      <div className="flex flex-col items-center justify-center md:flex-row items-center gap-6">
+                        <div className="relative items-center justify-center w-48 h-48 mx-auto">
+                          <Doughnut
+                            data={{
+                              labels: ["Voted", "Not Yet Voted"],
+                              datasets: [
+                                {
+                                  data: [stats.votedCount, stats.notVotedCount],
+                                  backgroundColor: ["#0C8C3F", "#e5e7eb"],
+                                  borderWidth: 0,
+                                },
+                              ],
+                            }}
+                            options={{
+                              responsive: true,
+                              maintainAspectRatio: true,
+                              cutout: "70%",
+                              plugins: {
+                                legend: { display: false },
+                              },
+                            }}
+                          />
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <div className="text-center">
+                              <div className="text-3xl font-bold">{stats.votedCount}</div>
+                              <div className="text-sm text-muted-foreground">Voted</div>
                             </div>
                           </div>
                         </div>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {/* Voter Turnout */}
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Voter Turnout</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="flex items-center gap-8">
-                        <div className="w-48 h-48">
-                          <Doughnut data={voterTurnoutData} options={{ maintainAspectRatio: false }} />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-2xl font-bold mb-2">
+                        <div className="flex-1 w-full">
+                          <p className="text-lg font-semibold mb-4" style={{ color: "#0C8C3F" }}>
                             {stats.votedCount} out of {stats.totalVoters} CAS Students
                           </p>
                           <div className="space-y-2">
                             <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 bg-green-500 rounded"></div>
-                              <span>Voted: {stats.votedCount}</span>
+                              <div className="w-4 h-4 rounded" style={{ backgroundColor: "#0C8C3F" }}></div>
+                              <span className="text-sm text-muted-foreground">Voted {stats.votedCount}</span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 bg-gray-300 rounded"></div>
-                              <span>Not Yet Voted: {stats.notVotedCount}</span>
+                              <div className="w-4 h-4 bg-muted rounded"></div>
+                              <span className="text-sm text-muted-foreground">Not Yet Voted {stats.notVotedCount}</span>
                             </div>
                           </div>
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
-              {/* Candidates Tab */}
-              {activeTab === 'candidates' && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Candidates</CardTitle>
-                    <CardDescription>View all candidates for each position</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-6">
-                      {positions.map((position) => (
-                        <div key={position.id} className="border-b pb-4 last:border-b-0">
-                          <h3 className="font-semibold text-lg mb-3">{position.name}</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {position.candidates?.map((candidate) => (
-                              <div
-                                key={candidate.id}
-                                className="border rounded-lg p-4 hover:shadow-md transition-shadow"
-                              >
-                                <p className="font-medium">{candidate.name}</p>
-                                {candidate.party && (
-                                  <p className="text-sm text-gray-600 mt-1">Party: {candidate.party}</p>
-                                )}
-                                {candidate.program && (
-                                  <p className="text-sm text-gray-600">Program: {candidate.program}</p>
-                                )}
-                                {candidate.yearLevel && (
-                                  <p className="text-sm text-gray-600">Year Level: {candidate.yearLevel}</p>
-                                )}
+                    </TabsContent>
+                    <TabsContent value="breakdown" className="mt-4">
+                      <div className="space-y-4">
+                        <GroupBreakdownChart groups={groups} />
+                        <div className="space-y-3">
+                          {groups.map((group) => (
+                            <div key={group.name} className="flex items-center justify-between p-3 border rounded-lg">
+                              <div className="flex items-center gap-3">
+                                <div className="w-4 h-4 rounded" style={{ backgroundColor: group.color }}></div>
+                                <span className="font-medium">{group.name}</span>
                               </div>
-                            ))}
-                            {(!position.candidates || position.candidates.length === 0) && (
-                              <p className="text-gray-500 text-sm">No candidates registered</p>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Results Tab */}
-              {activeTab === 'results' && (
-                <div className="space-y-6">
-                  {resultsCharts.map((chart, idx) => (
-                    <Card key={idx}>
-                      <CardHeader>
-                        <CardTitle>{chart.position}</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="h-64">
-                          <Bar data={chart.data} options={{ maintainAspectRatio: false }} />
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                  {resultsCharts.length === 0 && (
-                    <Card>
-                      <CardContent className="py-12 text-center text-gray-500">
-                        No results available yet
-                      </CardContent>
-                    </Card>
-                  )}
-                </div>
-              )}
-
-              {/* Audit Logs Tab */}
-              {activeTab === 'audit' && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Audit Logs</CardTitle>
-                    <CardDescription>Complete transaction history and system activities</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="border-b border-gray-200">
-                            <th className="text-left py-3 px-4 font-semibold text-gray-900">Timestamp</th>
-                            <th className="text-left py-3 px-4 font-semibold text-gray-900">Action</th>
-                            <th className="text-left py-3 px-4 font-semibold text-gray-900">Voter ID</th>
-                            <th className="text-left py-3 px-4 font-semibold text-gray-900">Transaction ID</th>
-                            <th className="text-left py-3 px-4 font-semibold text-gray-900">Details</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {auditLogs.map((log) => (
-                            <tr key={log.id} className="border-b border-gray-100 hover:bg-gray-50">
-                              <td className="py-3 px-4 text-sm">
-                                {new Date(log.createdAt).toLocaleString('en-US', { timeZone: 'Asia/Manila' })}
-                              </td>
-                              <td className="py-3 px-4">
-                                <Badge variant="outline">{log.action}</Badge>
-                              </td>
-                              <td className="py-3 px-4 text-sm text-gray-600">
-                                {log.voterId || 'N/A'}
-                              </td>
-                              <td className="py-3 px-4 text-sm font-mono text-gray-600">
-                                {log.txId ? (
-                                  <span className="text-xs">{log.txId.substring(0, 20)}...</span>
-                                ) : (
-                                  'N/A'
-                                )}
-                              </td>
-                              <td className="py-3 px-4 text-sm text-gray-600">
-                                {log.details ? JSON.stringify(log.details).substring(0, 50) + '...' : 'N/A'}
-                              </td>
-                            </tr>
+                              <span className="text-sm text-muted-foreground">
+                                {group.voted} out of {group.total}
+                              </span>
+                            </div>
                           ))}
-                          {auditLogs.length === 0 && (
-                            <tr>
-                              <td colSpan={5} className="py-12 text-center text-gray-500">
-                                No audit logs found
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Integrity Check Tab */}
-              {activeTab === 'integrity' && (
-                <div className="space-y-6">
-                  {/* Summary Card */}
-                  {integrityLoading ? (
-                    <Card>
-                      <CardContent className="py-12 text-center">
-                        <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-4"></div>
-                        <p className="text-gray-500">Loading integrity verification...</p>
-                        <p className="text-xs text-gray-400 mt-2">This may take a few seconds while we query the blockchain</p>
-                      </CardContent>
-                    </Card>
-                  ) : integrityData && (
-                    <Card>
-                      <CardHeader>
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <CardTitle>Integrity Verification</CardTitle>
-                            <CardDescription>
-                              Compare blockchain vote counts with database records
-                            </CardDescription>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={loadIntegrityData}
-                              disabled={integrityLoading}
-                            >
-                              <RefreshCw className={`w-4 h-4 mr-2 ${integrityLoading ? 'animate-spin' : ''}`} />
-                              Refresh
-                            </Button>
-                            {integrityData.hasMismatch ? (
-                              <Badge className="bg-red-500 text-white flex items-center gap-2">
-                                <AlertTriangle className="w-4 h-4" />
-                                Mismatch Detected
-                              </Badge>
-                            ) : (
-                              <Badge className="bg-green-500 text-white flex items-center gap-2">
-                                <CheckCircle2 className="w-4 h-4" />
-                                All Matches
-                              </Badge>
-                            )}
-                          </div>
                         </div>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="border rounded-lg p-4">
-                            <p className="text-sm text-gray-600 mb-1">Blockchain Votes</p>
-                            <p className="text-2xl font-bold text-gray-900">{integrityData.totals.blockchain}</p>
-                          </div>
-                          <div className="border rounded-lg p-4">
-                            <p className="text-sm text-gray-600 mb-1">Database Votes</p>
-                            <p className="text-2xl font-bold text-gray-900">{integrityData.totals.database}</p>
-                          </div>
-                          <div className="border rounded-lg p-4">
-                            <p className="text-sm text-gray-600 mb-1">Status</p>
-                            {integrityData.totals.match ? (
-                              <p className="text-lg font-semibold text-green-600">✓ Match</p>
-                            ) : (
-                              <p className="text-lg font-semibold text-red-600">✗ Mismatch</p>
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-xs text-gray-500 mt-4">
-                          Last verified: {new Date(integrityData.timestamp).toLocaleString('en-US', { timeZone: 'Asia/Manila' })}
-                        </p>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {/* On-Chain Vote Count Verification */}
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>On-Chain Vote Count Verification</CardTitle>
-                      <CardDescription>
-                        Vote counts directly from the blockchain (immutable record)
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      {integrityLoading ? (
-                        <div className="text-center py-12 text-gray-500">
-                          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-4"></div>
-                          <p>Loading integrity check data...</p>
-                        </div>
-                      ) : integrityData ? (
-                        <div className="overflow-x-auto">
-                          <table className="w-full">
-                            <thead>
-                              <tr className="border-b border-gray-200">
-                                <th className="text-left py-3 px-4 font-semibold text-gray-900">Position</th>
-                                <th className="text-left py-3 px-4 font-semibold text-gray-900">Candidate</th>
-                                <th className="text-right py-3 px-4 font-semibold text-gray-900">Count from Blockchain</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {integrityData.comparison.map((item, index) => {
-                                const position = positions.find(p => p.id === item.position);
-                                const candidate = position?.candidates?.find(c => c.id === item.candidate);
-                                const positionName = position?.name || item.position.replace(/-/g, ' ');
-                                const candidateName = candidate?.name || item.candidate;
-                                
-                                return (
-                                  <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
-                                    <td className="py-3 px-4 font-medium">{positionName}</td>
-                                    <td className="py-3 px-4">{candidateName}</td>
-                                    <td className="py-3 px-4 text-right font-semibold">{item.blockchainCount}</td>
-                                  </tr>
-                                );
-                              })}
-                              {integrityData.comparison.length === 0 && (
-                                <tr>
-                                  <td colSpan={3} className="py-12 text-center text-gray-500">
-                                    No votes recorded yet
-                                  </td>
-                                </tr>
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <div className="text-center py-12 text-gray-500">
-                          Click to load integrity check data
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* Off-Chain Vote Record Count Comparison */}
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Off-Chain Vote Record Count</CardTitle>
-                      <CardDescription>
-                        Comparison between Prisma database and blockchain records
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      {integrityLoading ? (
-                        <div className="text-center py-12 text-gray-500">
-                          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-4"></div>
-                          <p>Loading comparison data...</p>
-                        </div>
-                      ) : integrityData ? (
-                        <div className="overflow-x-auto">
-                          <table className="w-full">
-                            <thead>
-                              <tr className="border-b border-gray-200">
-                                <th className="text-left py-3 px-4 font-semibold text-gray-900">Position</th>
-                                <th className="text-left py-3 px-4 font-semibold text-gray-900">Candidate</th>
-                                <th className="text-right py-3 px-4 font-semibold text-gray-900">Stored in Prisma</th>
-                                <th className="text-right py-3 px-4 font-semibold text-gray-900">Stored in Blockchain</th>
-                                <th className="text-center py-3 px-4 font-semibold text-gray-900">Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {integrityData.comparison.map((item, index) => {
-                                const position = positions.find(p => p.id === item.position);
-                                const candidate = position?.candidates?.find(c => c.id === item.candidate);
-                                const positionName = position?.name || item.position.replace(/-/g, ' ');
-                                const candidateName = candidate?.name || item.candidate;
-                                
-                                return (
-                                  <tr 
-                                    key={index} 
-                                    className={`border-b border-gray-100 hover:bg-gray-50 ${
-                                      !item.match ? 'bg-red-50' : ''
-                                    }`}
-                                  >
-                                    <td className="py-3 px-4 font-medium">{positionName}</td>
-                                    <td className="py-3 px-4">{candidateName}</td>
-                                    <td className="py-3 px-4 text-right">{item.databaseCount}</td>
-                                    <td className="py-3 px-4 text-right">{item.blockchainCount}</td>
-                                    <td className="py-3 px-4 text-center">
-                                      {item.match ? (
-                                        <Badge className="bg-green-500 text-white">✓ Match</Badge>
-                                      ) : (
-                                        <Badge className="bg-red-500 text-white flex items-center justify-center gap-1">
-                                          <AlertTriangle className="w-3 h-3" />
-                                          Mismatch
-                                        </Badge>
-                                      )}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                              {integrityData.comparison.length === 0 && (
-                                <tr>
-                                  <td colSpan={5} className="py-12 text-center text-gray-500">
-                                    No votes recorded yet
-                                  </td>
-                                </tr>
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <div className="text-center py-12 text-gray-500">
-                          Click to load comparison data
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* Warning Message */}
-                  {integrityData && integrityData.hasMismatch && (
-                    <Card className="border-red-200 bg-red-50">
-                      <CardHeader>
-                        <div className="flex items-center gap-2">
-                          <AlertTriangle className="w-5 h-5 text-red-600" />
-                          <CardTitle className="text-red-900">Warning: Data Mismatch Detected</CardTitle>
-                        </div>
-                      </CardHeader>
-                      <CardContent>
-                        <p className="text-red-800">
-                          There is a discrepancy between the blockchain records and the database records. 
-                          This could indicate:
-                        </p>
-                        <ul className="list-disc list-inside mt-2 text-red-800 space-y-1">
-                          <li>Database synchronization issues</li>
-                          <li>Potential data manipulation</li>
-                          <li>Incomplete transaction processing</li>
-                        </ul>
-                        <p className="text-red-800 mt-4 font-semibold">
-                          Please investigate immediately and contact the system administrator.
-                        </p>
-                      </CardContent>
-                    </Card>
-                  )}
-                </div>
-              )}
-            </>
-          )}
+                      </div>
+                    </TabsContent>
+                  </Tabs>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </main>
       </div>
-    </div>
   );
 }
+
+                  
 
