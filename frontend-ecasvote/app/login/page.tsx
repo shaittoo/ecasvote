@@ -7,10 +7,8 @@ import { login } from "@/lib/ecasvoteApi";
 
 const API_BASE = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
 
-type LoginType = "student" | "admin" | "validator";
 
 export default function LoginPage() {
-  const [loginType, setLoginType] = useState<LoginType>("student");
   const [upMail, setUpMail] = useState("");
   const [username, setUsername] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -37,60 +35,50 @@ export default function LoginPage() {
         return;
       }
 
-      if (loginType === "student") {
-        // Call login API to validate CAS student
+      // Auto-detect role: try student, then admin, then validator
+      try {
         const response = await login(username.trim(), upMail.trim());
-        
-        // Store voter info in session/localStorage for later use
         if (typeof window !== "undefined") {
           localStorage.setItem("voter", JSON.stringify(response.voter));
           localStorage.setItem("studentNumber", response.voter.studentNumber);
         }
-        
         router.push("/home");
-      } else if (loginType === "admin") {
-        // Admin login - call admin login API
-        const response = await fetch(`${API_BASE}/login/admin`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: upMail.trim(), password: username.trim() }),
-        });
+        return;
+      } catch {
+        // fall through to admin/validator
+      }
 
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Admin login failed");
-        }
+      const adminResponse = await fetch(`${API_BASE}/login/admin`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: upMail.trim(), password: username.trim() }),
+      });
 
-        const data = await response.json();
-        
-        // Store admin info
+      if (adminResponse.ok) {
+        const data = await adminResponse.json();
         if (typeof window !== "undefined") {
           localStorage.setItem("admin", JSON.stringify(data.admin || { role: "ADMIN" }));
         }
-        
         router.push("/admin");
-      } else if (loginType === "validator") {
-        // Validator login - call validator login API
-        const response = await fetch(`${API_BASE}/login/validator`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: upMail.trim(), password: username.trim() }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Validator login failed");
-        }
-
-        const data = await response.json();
-        
-        // Store validator info
-        if (typeof window !== "undefined") {
-          localStorage.setItem("validator", JSON.stringify(data.validator || { role: "VALIDATOR" }));
-        }
-        
-        router.push("/validator");
+        return;
       }
+
+      const validatorResponse = await fetch(`${API_BASE}/login/validator`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: upMail.trim(), password: username.trim() }),
+      });
+
+      if (!validatorResponse.ok) {
+        const errorData = await validatorResponse.json();
+        throw new Error(errorData.error || "Login failed");
+      }
+
+      const data = await validatorResponse.json();
+      if (typeof window !== "undefined") {
+        localStorage.setItem("validator", JSON.stringify(data.validator || { role: "VALIDATOR" }));
+      }
+      router.push("/validator");
     } catch (err: any) {
       // Parse error message from API
       let errorMessage = "Login failed. Please try again.";
@@ -131,62 +119,11 @@ export default function LoginPage() {
       {/* Right side - Login Form */}
       <div className="w-full md:w-1/2 flex items-center justify-center p-8">
         <div className="w-full max-w-md bg-white rounded-2xl shadow-lg">
-          {/* Tabs */}
-          <div className="flex border-b border-gray-200">
-            <button
-              type="button"
-              onClick={() => {
-                setLoginType("student");
-                setError(null);
-                setUpMail("");
-                setUsername("");
-              }}
-              className={`flex-1 py-4 px-6 font-semibold text-sm transition-all ${
-                loginType === "student"
-                  ? "bg-white text-slate-900 border-b-2 border-red-700"
-                  : "bg-gray-100 text-slate-600 hover:bg-gray-200"
-              }`}
-            >
-              Student Voter
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setLoginType("admin");
-                setError(null);
-                setUpMail("");
-                setUsername("");
-              }}
-              className={`flex-1 py-4 px-6 font-semibold text-sm transition-all ${
-                loginType === "admin"
-                  ? "bg-white text-slate-900 border-b-2 border-red-700"
-                  : "bg-gray-100 text-slate-600 hover:bg-gray-200"
-              }`}
-            >
-              Administrator
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setLoginType("validator");
-                setError(null);
-                setUpMail("");
-                setUsername("");
-              }}
-              className={`flex-1 py-4 px-6 font-semibold text-sm transition-all ${
-                loginType === "validator"
-                  ? "bg-white text-slate-900 border-b-2 border-red-700"
-                  : "bg-gray-100 text-slate-600 hover:bg-gray-200"
-              }`}
-            >
-              Validator
-            </button>
-          </div>
-
+          {/* Tabs removed */}
           {/* Form */}
           <div className="p-8">
             <h2 className="text-xl font-bold text-slate-900 mb-6">
-              Login as a {loginType === "student" ? "Student Voter" : loginType === "admin" ? "Administrator" : "Validator"}
+              Log in to your account
             </h2>
 
             <form onSubmit={handleSubmit} className="space-y-5">
@@ -209,13 +146,13 @@ export default function LoginPage() {
                 />
               </div>
 
-              {/* Student Number Field */}
+              {/* Student Number or Password Field */}
               <div>
                 <label
                   htmlFor="username"
                   className="block text-sm font-medium text-slate-700 mb-2"
                 >
-                  Student Number
+                  Student Number or Password
                 </label>
                 <input
                   id="username"
