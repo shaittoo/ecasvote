@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import Image from "next/image";
 import {
   Chart as ChartJS,
   ArcElement,
@@ -16,10 +15,11 @@ import { Doughnut, Bar } from "react-chartjs-2";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Search, Bell, Settings, HelpCircle, Menu, LogOut, Home, FileText, BarChart3, Shield, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
+import { Search, Bell, Settings, HelpCircle, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { fetchDashboard, fetchElection, fetchPositions, fetchResults, fetchAuditLogs, fetchIntegrityCheck } from "@/lib/ecasvoteApi";
 import type { Position, AuditLog, IntegrityCheckData } from "@/lib/ecasvoteApi";
+import { ValidatorSidebar } from "@/components/sidebars/Sidebar";
 
 // Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
@@ -86,6 +86,8 @@ export default function ValidatorDashboardPage() {
     router.push("/login");
   };
 
+  const sidebarUserName = "Validator";
+
   const stats = dashboardData?.statistics || { totalVoters: 0, votedCount: 0, notVotedCount: 0 };
   const election = dashboardData?.election;
 
@@ -128,109 +130,15 @@ export default function ValidatorDashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      {/* Left Sidebar */}
-      <aside
-        className={`bg-white border-r border-gray-200 transition-all duration-300 flex flex-col fixed left-0 top-0 h-screen z-30 ${
-          sidebarOpen ? "w-64" : "w-20"
-        }`}
-      >
-        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          {sidebarOpen ? (
-            <div className="flex items-center gap-2">
-              <Image
-                src="/ecasvotelogo.jpeg"
-                alt="eCASVote Logo"
-                width={40}
-                height={40}
-                className="rounded"
-              />
-            </div>
-          ) : (
-            <Image
-              src="/ecasvotelogo.jpeg"
-              alt="eCASVote Logo"
-              width={40}
-              height={40}
-              className="rounded mx-auto"
-            />
-          )}
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-1 hover:bg-gray-100 rounded"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-        </div>
-
-        <nav className="flex-1 overflow-y-auto p-4">
-          <div
-            onClick={() => setActiveTab('overview')}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer mb-2 ${
-              activeTab === 'overview' ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <Home className="w-5 h-5" />
-            {sidebarOpen && <span className="font-medium">Dashboard</span>}
-          </div>
-          <div
-            onClick={() => setActiveTab('candidates')}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer mb-2 ${
-              activeTab === 'candidates' ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <FileText className="w-5 h-5" />
-            {sidebarOpen && <span className="font-medium">Candidates</span>}
-          </div>
-          <div
-            onClick={() => setActiveTab('results')}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer mb-2 ${
-              activeTab === 'results' ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <BarChart3 className="w-5 h-5" />
-            {sidebarOpen && <span className="font-medium">Results</span>}
-          </div>
-          <div
-            onClick={() => setActiveTab('audit')}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer mb-2 ${
-              activeTab === 'audit' ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <Shield className="w-5 h-5" />
-            {sidebarOpen && <span className="font-medium">Audit Logs</span>}
-          </div>
-          <div
-            onClick={() => setActiveTab('integrity')}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer mb-2 ${
-              activeTab === 'integrity' ? "bg-[#7A0019] text-white" : "text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <CheckCircle2 className="w-5 h-5" />
-            {sidebarOpen && <span className="font-medium">Integrity Check</span>}
-          </div>
-        </nav>
-
-        <div className="p-4 border-t border-gray-200">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-full bg-[#7A0019] flex items-center justify-center text-white font-semibold">
-              V
-            </div>
-            {sidebarOpen && (
-              <div className="flex-1">
-                <p className="font-medium text-sm">Validator</p>
-                <p className="text-xs text-gray-500">Read-Only Access</p>
-              </div>
-            )}
-          </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 w-full"
-          >
-            <LogOut className="w-4 h-4" />
-            {sidebarOpen && <span className="text-sm">Logout</span>}
-          </button>
-        </div>
-      </aside>
+      <ValidatorSidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((prev) => !prev)}
+        active={activeTab}
+        userName={sidebarUserName}
+        onLogout={handleLogout}
+        onSelect={(key) => setActiveTab(key)}
+        fixed
+      />
 
       {/* Main Content */}
       <div className={`flex-1 transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-20"}`}>

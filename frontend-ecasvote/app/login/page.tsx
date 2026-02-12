@@ -6,7 +6,7 @@ import Image from "next/image";
 import { login } from "@/lib/ecasvoteApi";
 
 const API_BASE = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
-
+const HELP_MESSAGE = "Please contact the system administrator for login assistance.";
 
 export default function LoginPage() {
   const [upMail, setUpMail] = useState("");
@@ -42,7 +42,7 @@ export default function LoginPage() {
           localStorage.setItem("voter", JSON.stringify(response.voter));
           localStorage.setItem("studentNumber", response.voter.studentNumber);
         }
-        router.push("/home");
+        router.push("/studentvoter");
         return;
       } catch {
         // fall through to admin/validator
@@ -172,7 +172,7 @@ export default function LoginPage() {
                   className="text-sm text-slate-600 hover:text-red-600 flex items-center gap-1"
                   onClick={(e) => {
                     e.preventDefault();
-                    alert("Please contact the system administrator for login assistance.");
+                    alert(HELP_MESSAGE);
                   }}
                 >
                   <span className="text-slate-500">?</span>

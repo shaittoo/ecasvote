@@ -8,19 +8,8 @@ import Link from "next/link";
 import { castVote, registerVoter, fetchElection, openElection, fetchPositions, Position } from "@/lib/ecasvoteApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { 
-  LayoutDashboard as DashboardIcon, 
-  BookOpen as BookIcon, 
-  CheckSquare as CheckboxIcon, 
-  Shield as ShieldIcon, 
-  BarChart3 as ChartIcon,
-  Menu,
-  User,
-  LogOut,
-  XCircle,
-  X,
-  CheckCircle2
-} from "lucide-react";
+import { StudentVoterSidebar } from "@/components/sidebars/Sidebar";
+import { User, XCircle, X, CheckCircle2 } from "lucide-react";
 
 const ELECTION_ID = "election-2025";
 
@@ -382,111 +371,18 @@ export default function VotePage() {
     router.push("/login");
   };
 
-  const navItems = [
-    { name: "Dashboard", icon: DashboardIcon, href: "/home", active: false },
-    { name: "Onboarding", icon: BookIcon, href: "#", active: false },
-    { name: "Cast Vote", icon: CheckboxIcon, href: "/vote", active: true },
-    { name: "Privacy Statement", icon: ShieldIcon, href: "#", active: false },
-    { name: "Election Results", icon: ChartIcon, href: "/results", active: false },
-  ];
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex">
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-gray-600">Loading ballot...</div>
-        </div>
-      </div>
-    );
-  }
+  const sidebarUserName = voterInfo?.fullName || "User";
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      {/* Left Sidebar */}
-      <aside
-        className={`bg-white border-r border-gray-200 transition-all duration-300 flex flex-col fixed left-0 top-0 h-screen z-10 ${
-          sidebarOpen ? "w-64" : "w-20"
-        }`}
-      >
-        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          {sidebarOpen ? (
-            <div className="flex items-center gap-2">
-              <Image
-                src="/ecasvotelogo.jpeg"
-                alt="eCASVote Logo"
-                width={120}
-                height={40}
-                className="object-contain"
-                priority
-              />
-            </div>
-          ) : (
-            <div className="w-full flex justify-center">
-              <Image
-                src="/ecasvotelogo.jpeg"
-                alt="eCASVote"
-                width={40}
-                height={40}
-                className="object-contain"
-                priority
-              />
-            </div>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-          >
-            <Menu className="h-5 w-5" />
-          </Button>
-        </div>
-
-        <nav className="p-4 space-y-1 flex-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                  item.active
-                    ? "bg-[#7A0019] text-white"
-                    : "text-gray-700 hover:bg-gray-100"
-                }`}
-              >
-                <Icon />
-                {sidebarOpen && <span className="font-medium">{item.name}</span>}
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* User Profile Card */}
-        <div className="p-4 border-t border-gray-200 bg-white">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center flex-shrink-0">
-              <User className="h-5 w-5 text-gray-600" />
-            </div>
-            {sidebarOpen && (
-              <>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-gray-900 truncate">
-                    {voterInfo?.fullName || "User"}
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleLogout}
-                  title="Logout"
-                >
-                  <LogOut className="h-4 w-4" />
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
-      </aside>
+      <StudentVoterSidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((prev) => !prev)}
+        active="vote"
+        userName={sidebarUserName}
+        onLogout={handleLogout}
+        fixed
+      />
 
       {/* Main Content */}
       <div className={`flex-1 flex flex-col transition-all duration-300 ${
@@ -1016,7 +912,7 @@ export default function VotePage() {
               <button
                 onClick={() => {
                   setShowSuccessModal(false);
-                  router.push("/home");
+                  router.push("/studentvoter");
                 }}
                 className="text-gray-400 hover:text-gray-600 transition-colors"
               >
@@ -1081,7 +977,7 @@ export default function VotePage() {
                 type="button"
                 onClick={() => {
                   setShowSuccessModal(false);
-                  router.push("/home");
+                  router.push("/studentvoter");
                 }}
                 className="bg-green-700 hover:bg-green-800 text-white px-8"
               >
