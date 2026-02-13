@@ -239,6 +239,7 @@ export default function ResultsSummaryPage() {
             <Button 
               variant="outline" 
               size="sm"
+              className="cursor-pointer"
               onClick={handleExport}
               disabled={!results || Object.keys(results).length === 0}
             >
@@ -248,6 +249,7 @@ export default function ResultsSummaryPage() {
             <Button 
               variant="outline" 
               size="sm"
+              className="cursor-pointer"
               onClick={handlePrint}
               disabled={!results || Object.keys(results).length === 0}
             >

@@ -199,37 +199,6 @@ export default function AdminDashboardPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
-        {/* Top Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex-1 max-w-2xl">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-                <Input
-                  type="text"
-                  placeholder="Search keyword or actions..."
-                  className="w-full pl-10 pr-20"
-                />
-                <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-sm text-muted-foreground">
-                  12 results
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 ml-6">
-              <Button variant="ghost" size="icon" className="relative">
-                <Bell className="h-5 w-5" />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-destructive rounded-full"></span>
-              </Button>
-              <Button variant="ghost" size="icon">
-                <Settings className="h-5 w-5" />
-              </Button>
-              <Button variant="ghost" size="icon">
-                <HelpCircle className="h-5 w-5" />
-              </Button>
-            </div>
-          </div>
-        </header>
-
         {/* Main Content Area */}
         <main className="flex-1 p-2 overflow-y-auto">
           <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
