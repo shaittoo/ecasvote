@@ -11,84 +11,16 @@ import {
   LinearScale,
   BarElement,
 } from "chart.js";
-import { Doughnut, Bar } from "react-chartjs-2";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Search, Bell, Settings, HelpCircle, Menu, LogOut, Home, FileText, BarChart3, Shield, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { fetchDashboard, fetchElection, fetchPositions, fetchResults, fetchAuditLogs, fetchIntegrityCheck } from "@/lib/ecasvoteApi";
 import type { Position, AuditLog, IntegrityCheckData } from "@/lib/ecasvoteApi";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import Sidebar from "./components/sidebar";
 
 // Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
 
 const ELECTION_ID = 'election-2025';
-
-function GroupBreakdownChart({ groups }: { groups: Array<{ name: string; voted: number; total: number; color: string }> }) {
-  const data = {
-    labels: groups.map(g => g.name),
-    datasets: [
-      {
-        label: 'Voted',
-        data: groups.map(g => (g.voted / g.total) * 100),
-        backgroundColor: groups.map(g => g.color),
-        borderRadius: 4,
-      },
-      {
-        label: 'Not Voted',
-        data: groups.map(g => ((g.total - g.voted) / g.total) * 100),
-        backgroundColor: '#e5e7eb',
-        borderRadius: 4,
-      },
-    ],
-  };
-
-  const options = {
-    indexAxis: 'y' as const,
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        display: false,
-      },
-      tooltip: {
-        callbacks: {
-          label: function(context: any) {
-            const groupIndex = context.dataIndex;
-            const group = groups[groupIndex];
-            if (context.datasetIndex === 0) {
-              return `${group.voted} out of ${group.total} (${Math.round((group.voted / group.total) * 100)}%)`;
-            } else {
-              return `${group.total - group.voted} out of ${group.total} (${Math.round(((group.total - group.voted) / group.total) * 100)}%)`;
-            }
-          },
-        },
-      },
-    },
-    scales: {
-      x: {
-        stacked: true,
-        max: 100,
-        ticks: {
-          callback: function(value: any) {
-            return value + '%';
-          },
-        },
-      },
-      y: {
-        stacked: true,
-      },
-    },
-  };
-
-  return (
-    <div className="w-full h-64">
-      <Bar data={data} options={options} />
-    </div>
-  );
-}
 
 export default function ValidatorDashboardPage() {
   const router = useRouter();
@@ -101,7 +33,6 @@ export default function ValidatorDashboardPage() {
   const [integrityData, setIntegrityData] = useState<IntegrityCheckData | null>(null);
   const [integrityLoading, setIntegrityLoading] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"overall" | "breakdown">("overall");
 
   const groups = [
     { name: "Red Bolts", voted: 184, total: 200, color: "#dc2626" },
@@ -215,105 +146,66 @@ export default function ValidatorDashboardPage() {
                 </CardHeader>
               </Card>
 
-              {/* Voter Turnout Card */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle>Voter Turnout</CardTitle>
+              {/* Election Information */}
+              {election && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Election Information</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      <div>
+                        <p className="text-sm text-gray-600">Election Name</p>
+                        <p className="font-semibold text-lg">{election.name}</p>
+                      </div>
 
-                    <Tabs
-                      value={activeTab}
-                      onValueChange={(val) => setActiveTab(val as "overall" | "breakdown")}
-                      className="w-auto"
-                    >
-                      <TabsList>
-                        <TabsTrigger
-                          value="overall"
-                          className={activeTab === "overall" ? "cursor-default" : "cursor-pointer"}
-                        >
-                          Overall
-                        </TabsTrigger>
-
-                        <TabsTrigger
-                          value="breakdown"
-                          className={activeTab === "breakdown" ? "cursor-default" : "cursor-pointer"}
-                        >
-                          Breakdown
-                        </TabsTrigger>
-                      </TabsList>
-                    </Tabs>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <Tabs defaultValue="overall">
-                    <TabsContent value="overall" className="mt-4">
-                      <div className="flex flex-col items-center justify-center md:flex-row items-center gap-6">
-                        <div className="relative items-center justify-center w-48 h-48 mx-auto">
-                          <Doughnut
-                            data={{
-                              labels: ["Voted", "Not Yet Voted"],
-                              datasets: [
-                                {
-                                  data: [stats.votedCount, stats.notVotedCount],
-                                  backgroundColor: ["#0C8C3F", "#e5e7eb"],
-                                  borderWidth: 0,
-                                },
-                              ],
-                            }}
-                            options={{
-                              responsive: true,
-                              maintainAspectRatio: true,
-                              cutout: "70%",
-                              plugins: {
-                                legend: { display: false },
-                              },
-                            }}
-                          />
-                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <div className="text-center">
-                              <div className="text-3xl font-bold">{stats.votedCount}</div>
-                              <div className="text-sm text-muted-foreground">Voted</div>
-                            </div>
-                          </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-sm text-gray-600">Status</p>
+                          <Badge
+                            className={
+                              election.status === "OPEN"
+                                ? "bg-green-500 text-white"
+                                : election.status === "CLOSED"
+                                ? "bg-red-500 text-white"
+                                : "bg-gray-500 text-white"
+                            }
+                          >
+                            {election.status}
+                          </Badge>
                         </div>
-                        <div className="flex-1 w-full">
-                          <p className="text-lg font-semibold mb-4" style={{ color: "#0C8C3F" }}>
-                            {stats.votedCount} out of {stats.totalVoters} CAS Students
+
+                        <div>
+                          <p className="text-sm text-gray-600">Description</p>
+                          <p className="font-medium">
+                            {election.description || "N/A"}
                           </p>
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 rounded" style={{ backgroundColor: "#0C8C3F" }}></div>
-                              <span className="text-sm text-muted-foreground">Voted {stats.votedCount}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 bg-muted rounded"></div>
-                              <span className="text-sm text-muted-foreground">Not Yet Voted {stats.notVotedCount}</span>
-                            </div>
-                          </div>
                         </div>
                       </div>
-                    </TabsContent>
-                    <TabsContent value="breakdown" className="mt-4">
-                      <div className="space-y-4">
-                        <GroupBreakdownChart groups={groups} />
-                        <div className="space-y-3">
-                          {groups.map((group) => (
-                            <div key={group.name} className="flex items-center justify-between p-3 border rounded-lg">
-                              <div className="flex items-center gap-3">
-                                <div className="w-4 h-4 rounded" style={{ backgroundColor: group.color }}></div>
-                                <span className="font-medium">{group.name}</span>
-                              </div>
-                              <span className="text-sm text-muted-foreground">
-                                {group.voted} out of {group.total}
-                              </span>
-                            </div>
-                          ))}
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-sm text-gray-600">Start Time</p>
+                          <p className="font-medium">
+                            {new Date(election.startTime).toLocaleString("en-US", {
+                              timeZone: "Asia/Manila",
+                            })}
+                          </p>
+                        </div>
+
+                        <div>
+                          <p className="text-sm text-gray-600">End Time</p>
+                          <p className="font-medium">
+                            {new Date(election.endTime).toLocaleString("en-US", {
+                              timeZone: "Asia/Manila",
+                            })}
+                          </p>
                         </div>
                       </div>
-                    </TabsContent>
-                  </Tabs>
-                </CardContent>
-              </Card>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </div>
           </div>
         </main>
