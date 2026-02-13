@@ -52,15 +52,8 @@ export default function AuditTrailViewer() {
 
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <header className="bg-white border-b border-gray-200 px-6 py-5 flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-gray-900">Audit Trail Viewer</h1>
-          <select
-            className="border rounded px-3 py-2 cursor-pointer"
-            value={selectedElection}
-            onChange={(e) => setSelectedElection(e.target.value)}
-          >
-            <option>{selectedElection}</option>
-          </select>
         </header>
 
         {/* Main */}

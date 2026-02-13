@@ -32,7 +32,7 @@ import {
 } from "chart.js";
 import { Doughnut, Bar, Line } from "react-chartjs-2";
 import { fetchDashboard, fetchElection } from "@/lib/ecasvoteApi";
-import Sidebar from "../components/sidebar";
+import Sidebar from "../../components/sidebar";
 
 ChartJS.register(
   ArcElement,
@@ -233,19 +233,8 @@ export default function VoterTurnoutPage() {
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <header className="bg-white border-b border-gray-200 px-6 py-5 flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-gray-900">Voter Turnout</h1>
-          <div className="flex items-center gap-4">
-            <div className="relative group">
-              <select 
-                className="w-full border rounded px-3 py-2 cursor-pointer" 
-                value={selectedElection} 
-                onChange={(e) => setSelectedElection(e.target.value)}
-              >
-                <option>{selectedElection}</option>
-              </select>
-            </div>
-          </div>
         </header>
 
         {/* Main Content Area */}
