@@ -1,0 +1,10 @@
+
+> gateway-api@1.0.0 start
+> node dist/server.js
+
+eCASVote gateway API listening on http://localhost:4000
+Server is running. Press Ctrl+C to stop.
+
+SIGTERM signal received: closing HTTP server
+HTTP server closed
+Database connection closed

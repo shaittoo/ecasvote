@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import Image from "next/image";
 import {
   Chart as ChartJS,
   ArcElement,
@@ -151,6 +150,8 @@ export default function ValidatorDashboardPage() {
   const handleLogout = () => {
     router.push("/login");
   };
+
+  const sidebarUserName = "Validator";
 
   const stats = dashboardData?.statistics || { totalVoters: 0, votedCount: 0, notVotedCount: 0 };
   const election = dashboardData?.election;
