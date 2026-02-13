@@ -40,7 +40,7 @@ export const navItems = [
     icon: ChartIcon,
     href: "#",
     subItems: [
-      { name: "Voter Turnout", href: "/admin/voter-turnout" },
+      { name: "Voter Turnout", href: "/admin/tally-results/voter-turnout" },
       { name: "Results Summary", href: "/admin/tally-results/summary-result" },
       { name: "Integrity Check", href: "/admin/tally-results/integrity-check" },
     ],
