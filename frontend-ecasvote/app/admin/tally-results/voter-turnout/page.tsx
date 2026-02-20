@@ -2,21 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import Image from "next/image";
-import Link from "next/link";
-import {
-  Menu,
-  ChevronDown,
-  ChevronRight,
-  User,
-  LogOut,
-  Home,
-  BookOpen,
-  Vote,
-  Users,
-  BarChart3,
-  FolderOpen,
-} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,7 +17,7 @@ import {
 } from "chart.js";
 import { Doughnut, Bar, Line } from "react-chartjs-2";
 import { fetchDashboard, fetchElection } from "@/lib/ecasvoteApi";
-import Sidebar from "../../components/sidebar";
+import { AdminSidebar } from "@/components/sidebars/Sidebar";
 
 ChartJS.register(
   ArcElement,
@@ -68,12 +53,6 @@ export default function VoterTurnoutPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
-    election: false,
-    voter: false,
-    tally: true,
-    audit: false,
-  });
   const [selectedElection, setSelectedElection] = useState("CAS SC Elections 2026");
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [turnoutStats, setTurnoutStats] = useState<TurnoutStats | null>(null);
@@ -152,6 +131,10 @@ export default function VoterTurnoutPage() {
     loadData();
   }, [selectedDate]);
 
+  const handleLogout = () => {
+    router.push("/login");
+  };
+
   // Calculate data from stats
   const totalVoters = turnoutStats?.totalVoters || 0;
   const votedCount = turnoutStats?.votedCount || 0;
@@ -228,17 +211,29 @@ export default function VoterTurnoutPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex">
       <style jsx global>{`button { cursor: pointer; }`}</style>
-      <Sidebar />
+      <AdminSidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((prev) => !prev)}
+        active="tally"
+        userName="John"
+        onLogout={handleLogout}
+        fixed
+        pathname={pathname}
+      />
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-5 flex items-center justify-between">
+        <header className={`bg-white border-b border-gray-200 px-6 py-5 flex items-center justify-between transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           <h1 className="text-2xl font-semibold text-gray-900">Voter Turnout</h1>
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 p-6 overflow-y-auto">
+        <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           {loading ? (
             <div className="text-center py-12">
               <p className="text-muted-foreground">Loading voter turnout data...</p>

@@ -1,14 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { fetchPositions } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
-import Sidebar from "../components/sidebar";
+import { ValidatorSidebar } from "@/components/sidebars/Sidebar";
 
 const ELECTION_ID = "election-2025";
 
 export default function ValidatorCandidatesPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -28,20 +32,36 @@ export default function ValidatorCandidatesPage() {
     loadPositions();
   }, []);
 
+  const handleLogout = () => {
+    router.push("/login");
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
+      <ValidatorSidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((prev) => !prev)}
+        active="candidates"
+        userName="Validator"
+        onLogout={handleLogout}
+        fixed
+        pathname={pathname}
+      />
 
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-5">
+        <header className={`bg-white border-b border-gray-200 px-6 py-5 transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           <h1 className="text-2xl font-semibold text-gray-900">
             Candidates
           </h1>
         </header>
 
         {/* Main Content */}
-        <main className="p-6 space-y-6">
+        <main className={`flex-1 p-6 space-y-6 overflow-y-auto transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           {loading ? (
             <div className="text-center py-12 text-gray-500">
               Loading candidates...

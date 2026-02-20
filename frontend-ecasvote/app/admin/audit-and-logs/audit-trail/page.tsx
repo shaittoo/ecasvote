@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Sidebar from "../../components/sidebar";
-import StatCard from "../../components/statcard";
+import { useRouter, usePathname } from "next/navigation";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Search, Download, Printer } from "lucide-react";
+import StatCard from "../../components/statcard";
+import { AdminSidebar } from "@/components/sidebars/Sidebar";
 
 interface AuditLog {
   txId: string;
@@ -19,12 +20,14 @@ interface AuditLog {
 }
 
 export default function AuditTrailViewer() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]); 
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [selectedElection, setSelectedElection] = useState("CAS SC Elections 2026");
 
-  // Stats (mock)
   const stats = {
     totalTransactions: 0,
     totalBlocks: 0,
@@ -32,10 +35,13 @@ export default function AuditTrailViewer() {
 
   useEffect(() => {
     setTimeout(() => {
-      // Leave auditLogs empty to show "no audit logs yet"
       setLoading(false);
     }, 800);
   }, []);
+
+  const handleLogout = () => {
+    router.push("/login");
+  };
 
   const filteredLogs = auditLogs.filter((log) =>
     `${log.txId} ${log.fn} ${log.endorsers} ${log.status} ${log.position}`
@@ -48,16 +54,28 @@ export default function AuditTrailViewer() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
+      <AdminSidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((prev) => !prev)}
+        active="audit"
+        userName="John"
+        onLogout={handleLogout}
+        fixed
+        pathname={pathname}
+      />
 
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-5 flex items-center justify-between">
+        <header className={`bg-white border-b border-gray-200 px-6 py-5 flex items-center justify-between transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           <h1 className="text-2xl font-semibold text-gray-900">Audit Trail Viewer</h1>
         </header>
 
         {/* Main */}
-        <main className="flex-1 p-6 overflow-y-auto">
+        <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           {loading ? (
             <div className="text-center py-12 text-gray-500">Loading audit logs...</div>
           ) : (

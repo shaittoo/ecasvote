@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Sidebar from "../components/sidebar";
+import { useRouter, usePathname } from "next/navigation";
 import {
   Card,
   CardContent,
@@ -26,17 +26,23 @@ import type {
   IntegrityCheckData,
   Position,
 } from "@/lib/ecasvoteApi";
+import { ValidatorSidebar } from "@/components/sidebars/Sidebar";
 
 const ELECTION_ID = "election-2025";
 
 export default function ValidatorIntegrityPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [integrityData, setIntegrityData] =
     useState<IntegrityCheckData | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   async function loadIntegrityData() {
     setLoading(true);
+    setError(null);
     try {
       const [integrity, positionsData] = await Promise.all([
         fetchIntegrityCheck(ELECTION_ID),
@@ -47,6 +53,7 @@ export default function ValidatorIntegrityPage() {
       setPositions(positionsData || []);
     } catch (error) {
       console.error("Failed to load integrity data:", error);
+      setError(error instanceof Error ? error.message : "Failed to load integrity check data");
       setIntegrityData(null);
     } finally {
       setLoading(false);
@@ -57,20 +64,36 @@ export default function ValidatorIntegrityPage() {
     loadIntegrityData();
   }, []);
 
+  const handleLogout = () => {
+    router.push("/login");
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
+      <ValidatorSidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((prev) => !prev)}
+        active="integrity"
+        userName="Validator"
+        onLogout={handleLogout}
+        fixed
+        pathname={pathname}
+      />
 
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-5">
+        <header className={`bg-white border-b border-gray-200 px-6 py-5 transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           <h1 className="text-2xl font-semibold text-gray-900">
             Integrity Check
           </h1>
         </header>
 
         {/* Main */}
-        <main className="p-6 space-y-6">
+        <main className={`flex-1 p-6 space-y-6 overflow-y-auto transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           {/* Summary Card */}
           {loading ? (
             <Card>
@@ -82,6 +105,26 @@ export default function ValidatorIntegrityPage() {
                 <p className="text-xs text-gray-400 mt-2">
                   This may take a few seconds while we query the blockchain
                 </p>
+              </CardContent>
+            </Card>
+          ) : error ? (
+            <Card className="border-red-200 bg-red-50">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-red-600" />
+                  <CardTitle className="text-red-900">Failed to Load</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <p className="text-red-800 mb-4">{error}</p>
+                <Button 
+                  variant="outline"
+                  onClick={loadIntegrityData}
+                  className="border-red-300 text-red-600 hover:bg-red-100"
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Retry
+                </Button>
               </CardContent>
             </Card>
           ) : integrityData && (

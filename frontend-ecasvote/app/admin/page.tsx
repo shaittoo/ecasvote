@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Search, Bell, Settings, HelpCircle, Menu, LogOut, User, ChevronDown, ChevronRight, Home, BookOpen, Vote, Users, BarChart3, FolderOpen, FileText, Grid } from "lucide-react";
 import { fetchDashboard, fetchElection, openElection } from "@/lib/ecasvoteApi";
-import Sidebar from "./components/sidebar";
+import { AdminSidebar } from "@/components/sidebars/Sidebar";
 
 // Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
@@ -144,17 +144,11 @@ function GroupBreakdownChart({ groups }: { groups: Array<{ name: string; voted: 
 
 export default function AdminDashboardPage() {
   const router = useRouter();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
   const pathname = usePathname();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"overall" | "breakdown">("overall");
-  const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
-    election: false,
-    voter: false,
-    tally: false,
-    audit: false,
-  });
 
   useEffect(() => {
     async function loadDashboard() {
@@ -174,10 +168,6 @@ export default function AdminDashboardPage() {
     router.push("/login");
   };
 
-  const toggleMenu = (menu: string) => {
-    setExpandedMenus(prev => ({ ...prev, [menu]: !prev[menu] }));
-  };
-
   const stats = dashboardData?.statistics || { totalVoters: 1200, votedCount: 890, notVotedCount: 310 };
   const election = dashboardData?.election;
   const announcements = dashboardData?.announcements || [];
@@ -195,12 +185,22 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
+      <AdminSidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((prev) => !prev)}
+        active="dashboard"
+        userName="John"
+        onLogout={handleLogout}
+        fixed
+        pathname={pathname}
+      />
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
         {/* Main Content Area */}
-        <main className="flex-1 p-2 overflow-y-auto">
+        <main className={`flex-1 p-2 overflow-y-auto transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="space-y-6">
               <Card>
