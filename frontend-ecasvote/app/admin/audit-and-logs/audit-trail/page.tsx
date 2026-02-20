@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Search, Download, Printer } from "lucide-react";
 import StatCard from "../../components/statcard";
-import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../../components/header";
 
 interface AuditLog {

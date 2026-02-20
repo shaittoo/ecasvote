@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search, Upload } from "lucide-react";
-import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../../components/header";
 
 interface Voter {

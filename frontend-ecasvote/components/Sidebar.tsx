@@ -127,11 +127,13 @@ function SidebarShell({
             item.key === activeKey ||
             (item.subItems?.some((sub) => sub.href === pathname) ?? false);
 
-          const classes = `w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-left ${
+          const classes = `w-full flex ${open ? 'items-center' : 'justify-center'} gap-3 ${open ? 'px-4' : 'px-0'} py-3 rounded-lg transition-colors text-left ${
             isActive
               ? "bg-[#7A0019] text-white"
               : "text-gray-700 hover:bg-gray-100"
           }`;
+          
+          const iconSize = open ? "h-5 w-5" : "h-5 w-5";
 
           if (!hasSubItems) {
             if (useButtons) {
@@ -146,7 +148,7 @@ function SidebarShell({
                   }
                   className={classes}
                 >
-                  <Icon className="h-5 w-5" />
+                  <Icon className={iconSize} />
                   {open && <span className="font-medium">{item.name}</span>}
                 </button>
               );
@@ -158,7 +160,7 @@ function SidebarShell({
                 href={item.href || "#"}
                 className={classes}
               >
-                <Icon className="h-5 w-5" />
+                <Icon className={iconSize} />
                 {open && <span className="font-medium">{item.name}</span>}
               </Link>
             );
@@ -171,7 +173,7 @@ function SidebarShell({
                 onClick={() => open && toggleMenu(item.key)}
                 className={classes}
               >
-                <Icon className="h-5 w-5" />
+                <Icon className={iconSize} />
                 {open && (
                   <>
                     <span className="font-medium flex-1">{item.name}</span>

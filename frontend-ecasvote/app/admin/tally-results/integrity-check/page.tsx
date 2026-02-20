@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { fetchElection, fetchPositions, fetchIntegrityCheck } from "@/lib/ecasvoteApi";
 import type { Position, IntegrityCheckData } from "@/lib/ecasvoteApi";
-import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../../components/header";
 
 const ELECTION_ID = 'election-2025';

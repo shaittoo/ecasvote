@@ -5,7 +5,7 @@ import { FormEvent, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { castVote, registerVoter, fetchElection, openElection, fetchPositions, Position } from "@/lib/ecasvoteApi";
 import { Button } from "@/components/ui/button";
-import { StudentVoterSidebar } from "@/components/sidebars/Sidebar";
+import { StudentVoterSidebar } from "@/components/Sidebar";
 import { User, XCircle } from "lucide-react";
 import { VoteModals } from "./modal";
 import { VoteInstructions } from "./instructions";

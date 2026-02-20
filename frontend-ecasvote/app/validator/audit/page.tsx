@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { fetchAuditLogs } from "@/lib/ecasvoteApi";
 import type { AuditLog } from "@/lib/ecasvoteApi";
-import { ValidatorSidebar } from "@/components/sidebars/Sidebar";
+import { ValidatorSidebar } from "@/components/Sidebar";
 import ValidatorHeader from "../components/header";
 
 const ELECTION_ID = "election-2025";

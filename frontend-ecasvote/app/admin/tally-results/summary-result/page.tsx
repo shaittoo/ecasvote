@@ -17,7 +17,7 @@ import {
 import { Bar } from "react-chartjs-2";
 import { Download, Printer } from "lucide-react";
 import { fetchElection, fetchResults } from "@/lib/ecasvoteApi";
-import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../../components/header";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
