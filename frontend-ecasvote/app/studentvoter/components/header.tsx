@@ -1,4 +1,5 @@
 import React from "react";
+import AccessibilityPanel from "@/components/accessibility";
 
 interface StudentVoterHeaderProps {
   title: string;
@@ -15,7 +16,10 @@ export default function StudentVoterHeader({ title, subtitle, sidebarOpen, actio
           <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
           {subtitle && <p className="text-sm text-gray-600 mt-1">{subtitle}</p>}
         </div>
-        {actions && <div className="flex items-center gap-4">{actions}</div>}
+        <div className="flex items-center gap-4">
+          {actions && <div className="flex items-center gap-4">{actions}</div>}
+          <AccessibilityPanel sizeClass="h-10 w-10" />
+        </div>
       </div>
     </header>
   );

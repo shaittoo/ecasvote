@@ -1,4 +1,5 @@
 import React from "react";
+import AccessibilityPanel from "@/components/accessibility";
 
 interface ValidatorHeaderProps {
   title: string;
@@ -17,7 +18,10 @@ export default function ValidatorHeader({ title, subtitle, sidebarOpen, actions 
           <h1 className="text-2xl font-semibold text-gray-900">{title}</h1>
           {subtitle && <p className="text-xs text-gray-500 mt-1">{subtitle}</p>}
         </div>
-        {actions && <div className="flex items-center gap-4">{actions}</div>}
+        <div className="flex items-center gap-4">
+          {actions && <div className="flex items-center gap-4">{actions}</div>}
+          <AccessibilityPanel sizeClass="h-10 w-10" />
+        </div>
       </div>
     </header>
   );

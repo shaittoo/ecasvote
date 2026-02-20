@@ -1,4 +1,5 @@
 import React from "react";
+import AccessibilityPanel from "@/components/accessibility";
 
 interface AdminHeaderProps {
   title: string;
@@ -20,7 +21,10 @@ export default function AdminHeader({ title, subtitle, sidebarOpen, actions }: A
         <h1 className="text-2xl font-semibold text-gray-900">{title}</h1>
         {subtitle && <p className="text-xs text-gray-600 mt-1">{subtitle}</p>}
       </div>
-      {actions && <div className="flex items-center gap-3">{actions}</div>}
+      <div className="flex items-center gap-3">
+        {actions && <div className="flex items-center gap-3">{actions}</div>}
+        <AccessibilityPanel sizeClass="h-10 w-10" />
+      </div>
     </header>
   );
 }
