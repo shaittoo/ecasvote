@@ -17,7 +17,7 @@ import {
 } from "chart.js";
 import { Doughnut, Bar, Line } from "react-chartjs-2";
 import { fetchDashboard, fetchElection } from "@/lib/ecasvoteApi";
-import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../../components/header";
 
 ChartJS.register(

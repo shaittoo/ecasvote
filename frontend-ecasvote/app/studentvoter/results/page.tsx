@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Bell, Settings, HelpCircle } from "lucide-react";
 import { fetchElection, fetchResults } from "@/lib/ecasvoteApi";
-import { StudentVoterSidebar } from "@/components/sidebars/Sidebar";
+import { StudentVoterSidebar } from "@/components/Sidebar";
 import StudentVoterHeader from "../components/header";
 
 // Register Chart.js components

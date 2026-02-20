@@ -10,7 +10,9 @@ interface AdminHeaderProps {
 export default function AdminHeader({ title, subtitle, sidebarOpen, actions }: AdminHeaderProps) {
   return (
     <header
-      className={`bg-white border-b border-gray-200 px-6 py-${subtitle ? '2.5' : '5'} flex items-center justify-between transition-all duration-300 ${
+      className={`bg-white border-b border-gray-200 px-6 ${
+        subtitle ? "py-2.5" : "py-5"
+      } flex items-center justify-between transition-all duration-300 ${
         sidebarOpen ? "ml-64" : "ml-20"
       }`}
     >

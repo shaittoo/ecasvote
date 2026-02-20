@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Search, Bell, Settings, HelpCircle, Menu, LogOut, User, ChevronDown, ChevronRight, Home, BookOpen, Vote, Users, BarChart3, FolderOpen, FileText, Grid } from "lucide-react";
 import { fetchDashboard, fetchElection, openElection } from "@/lib/ecasvoteApi";
-import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "./components/header";
 
 // Register Chart.js components

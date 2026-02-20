@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Edit2, Trash2 } from "lucide-react";
 import { fetchElection, fetchPositions, createCandidates, updateElection } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
-import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../components/header";
 
 const ELECTION_ID = 'election-2025';

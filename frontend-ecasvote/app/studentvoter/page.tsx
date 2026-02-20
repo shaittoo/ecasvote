@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Search, Bell, Settings, HelpCircle } from "lucide-react";
 import { fetchDashboard } from "@/lib/ecasvoteApi";
-import { StudentVoterSidebar } from "@/components/sidebars/Sidebar";
+import { StudentVoterSidebar } from "@/components/Sidebar";
 import StudentVoterHeader from "./components/header";
 
 const ELECTION_ID = 'election-2025';
@@ -75,8 +75,14 @@ export default function DashboardPage() {
       }`}>
         <StudentVoterHeader 
           title="Student Dashboard" 
-          subtitle="Welcome to your voting dashboard"
           sidebarOpen={sidebarOpen}
+          actions={
+            voterInfo?.studentNumber && (
+              <div className="px-3 py-1 bg-gray-100 rounded-md text-sm text-gray-600">
+                Student Number: {voterInfo.studentNumber}
+              </div>
+            )
+          }
         />
         {/* Main Content Area */}
         <main className="flex-1 p-2 overflow-y-auto">

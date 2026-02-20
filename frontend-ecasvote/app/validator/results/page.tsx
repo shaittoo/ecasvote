@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { fetchPositions, fetchResults } from "@/lib/ecasvoteApi";
 import type { Position, ResultsJson } from "@/lib/ecasvoteApi";
-import { ValidatorSidebar } from "@/components/sidebars/Sidebar";
+import { ValidatorSidebar } from "@/components/Sidebar";
 import ValidatorHeader from "../components/header";
 
 import { Bar } from "react-chartjs-2";

@@ -15,7 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { fetchDashboard, fetchElection, fetchPositions, fetchResults, fetchAuditLogs, fetchIntegrityCheck } from "@/lib/ecasvoteApi";
 import type { Position, AuditLog, IntegrityCheckData } from "@/lib/ecasvoteApi";
-import { ValidatorSidebar } from "@/components/sidebars/Sidebar";
+import { ValidatorSidebar } from "@/components/Sidebar";
 import ValidatorHeader from "./components/header";
 
 // Register Chart.js components
