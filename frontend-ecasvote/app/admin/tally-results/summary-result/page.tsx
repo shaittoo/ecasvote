@@ -2,23 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import Image from "next/image";
-import Link from "next/link";
-import {
-  Menu,
-  ChevronDown,
-  ChevronRight,
-  User,
-  LogOut,
-  Home,
-  BookOpen,
-  Vote,
-  Users,
-  BarChart3,
-  FolderOpen,
-  Download,
-  Printer,
-} from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,8 +15,9 @@ import {
   Legend,
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
+import { Download, Printer } from "lucide-react";
 import { fetchElection, fetchResults } from "@/lib/ecasvoteApi";
-import Sidebar from "../../components/sidebar";
+import { AdminSidebar } from "@/components/sidebars/Sidebar";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -43,12 +27,6 @@ export default function ResultsSummaryPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
-    election: false,
-    voter: false,
-    tally: true,
-    audit: false,
-  });
   const [election, setElection] = useState<any>(null);
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -87,6 +65,10 @@ export default function ResultsSummaryPage() {
     }
     loadData();
   }, []);
+
+  const handleLogout = () => {
+    router.push("/login");
+  };
 
   // Transform results data for charts
   const getChartData = () => {
@@ -225,12 +207,22 @@ export default function ResultsSummaryPage() {
           }
         }
       `}</style>
-      <Sidebar />
+      <AdminSidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((prev) => !prev)}
+        active="tally"
+        userName="John"
+        onLogout={handleLogout}
+        fixed
+        pathname={pathname}
+      />
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-2.5 flex items-center justify-between">
+        <header className={`bg-white border-b border-gray-200 px-6 py-2.5 flex items-center justify-between transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           <div>
             <h1 className="text-2xl font-semibold text-gray-900">Results Summary</h1>
             <p className="text-xs text-gray-600 mt-1">Comprehensive election results overview</p>
@@ -260,7 +252,9 @@ export default function ResultsSummaryPage() {
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 p-6 overflow-y-auto">
+        <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           {loading ? (
             <div className="text-center py-12">
               <p className="text-muted-foreground">Loading election results...</p>

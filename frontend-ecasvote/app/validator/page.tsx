@@ -15,7 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { fetchDashboard, fetchElection, fetchPositions, fetchResults, fetchAuditLogs, fetchIntegrityCheck } from "@/lib/ecasvoteApi";
 import type { Position, AuditLog, IntegrityCheckData } from "@/lib/ecasvoteApi";
-import Sidebar from "./components/sidebar";
+import { ValidatorSidebar } from "@/components/sidebars/Sidebar";
 
 // Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
@@ -126,10 +126,20 @@ export default function ValidatorDashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
+      <ValidatorSidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((prev) => !prev)}
+        active="overview"
+        userName={sidebarUserName}
+        onLogout={handleLogout}
+        fixed
+        pathname={pathname}
+      />
 
       {/* Main Content */}
-      <main className="flex-1 p-2 overflow-y-auto">
+      <main className={`flex-1 p-2 overflow-y-auto transition-all duration-300 ${
+        sidebarOpen ? "ml-64" : "ml-20"
+      }`}>
           <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="space-y-6">
               <Card>
@@ -213,5 +223,5 @@ export default function ValidatorDashboardPage() {
   );
 }
 
-                  
+
 

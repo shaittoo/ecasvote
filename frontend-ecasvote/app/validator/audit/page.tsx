@@ -1,15 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Sidebar from "../components/sidebar";
+import { useRouter, usePathname } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { fetchAuditLogs } from "@/lib/ecasvoteApi";
 import type { AuditLog } from "@/lib/ecasvoteApi";
+import { ValidatorSidebar } from "@/components/sidebars/Sidebar";
 
 const ELECTION_ID = "election-2025";
 
 export default function ValidatorAuditLogsPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -29,13 +33,27 @@ export default function ValidatorAuditLogsPage() {
     loadLogs();
   }, []);
 
+  const handleLogout = () => {
+    router.push("/login");
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
+      <ValidatorSidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((prev) => !prev)}
+        active="audit"
+        userName="Validator"
+        onLogout={handleLogout}
+        fixed
+        pathname={pathname}
+      />
 
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-3">
+        <header className={`bg-white border-b border-gray-200 px-6 py-3 transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           <h1 className="text-2xl font-semibold text-gray-900">
             Audit Logs
             <p className="text-xs text-gray-500">
@@ -45,7 +63,9 @@ export default function ValidatorAuditLogsPage() {
         </header>
 
         {/* Main */}
-        <main className="p-6">
+        <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           <Card>
             <CardContent>
               {loading ? (

@@ -2,33 +2,14 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import Image from "next/image";
-import Link from "next/link";
-import {
-  Menu,
-  ChevronDown,
-  ChevronRight,
-  User,
-  LogOut,
-  Plus,
-  Edit2,
-  Trash2,
-} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  Home,
-  BookOpen,
-  Vote,
-  Users,
-  BarChart3,
-  FolderOpen,
-} from "lucide-react";
+import { Plus, Edit2, Trash2 } from "lucide-react";
 import { fetchElection, fetchPositions, createCandidates, updateElection } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
-import Sidebar from "../components/sidebar";
+import { AdminSidebar } from "@/components/sidebars/Sidebar";
 
 const ELECTION_ID = 'election-2025';
 
@@ -50,13 +31,11 @@ export default function ElectionManagementPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
-    election: true,
-    voter: false,
-    tally: false,
-    audit: false,
-  });
   const [adminInfo, setAdminInfo] = useState<any>(null);
+
+  const handleLogout = () => {
+    router.push("/login");
+  };
 
   useEffect(() => {
     // Load admin info from localStorage
@@ -284,12 +263,22 @@ export default function ElectionManagementPage() {
         button { cursor: pointer; }
         aside nav a { pointer-events: auto !important; cursor: pointer !important; }
       `}</style>
-      <Sidebar />
+      <AdminSidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((prev) => !prev)}
+        active="election"
+        userName="John"
+        onLogout={handleLogout}
+        fixed
+        pathname={pathname}
+      />
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
         {/* Main Content Area */}
-        <main className="flex-1 p-6 overflow-y-auto">
+        <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           <div className="w-full max-w-6xl mx-auto space-y-6">
             {/* Election List Section */}
             <Card>
