@@ -253,7 +253,7 @@ const studentVoterItems: SidebarItem[] = [
     icon: Home,
   },
   { key: "onboarding", name: "Onboarding", href: "#", icon: BookOpen },
-  { key: "vote", name: "Cast Vote", href: "/vote", icon: CheckSquare },
+  { key: "vote", name: "Cast Vote", href: "/studentvoter/castvote", icon: CheckSquare },
   { key: "privacy", name: "Privacy Statement", href: "#", icon: Shield },
   { key: "results", name: "Election Results", href: "/results", icon: BarChart3 },
 ];
