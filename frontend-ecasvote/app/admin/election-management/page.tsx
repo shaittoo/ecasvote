@@ -10,6 +10,7 @@ import { Plus, Edit2, Trash2 } from "lucide-react";
 import { fetchElection, fetchPositions, createCandidates, updateElection } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import AdminHeader from "../components/header";
 
 const ELECTION_ID = 'election-2025';
 
@@ -275,6 +276,11 @@ export default function ElectionManagementPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
+        <AdminHeader 
+          title="Election Management" 
+          subtitle="Configure elections, positions, and candidates"
+          sidebarOpen={sidebarOpen}
+        />
         {/* Main Content Area */}
         <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
           sidebarOpen ? "ml-64" : "ml-20"

@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Search, Bell, Settings, HelpCircle } from "lucide-react";
 import { fetchDashboard } from "@/lib/ecasvoteApi";
 import { StudentVoterSidebar } from "@/components/sidebars/Sidebar";
+import StudentVoterHeader from "./components/header";
 
 const ELECTION_ID = 'election-2025';
 
@@ -72,6 +73,11 @@ export default function DashboardPage() {
       <div className={`flex-1 flex flex-col transition-all duration-300 ${
         sidebarOpen ? "ml-64" : "ml-20"
       }`}>
+        <StudentVoterHeader 
+          title="Student Dashboard" 
+          subtitle="Welcome to your voting dashboard"
+          sidebarOpen={sidebarOpen}
+        />
         {/* Main Content Area */}
         <main className="flex-1 p-2 overflow-y-auto">
           <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

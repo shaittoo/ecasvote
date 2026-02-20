@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { fetchDashboard, fetchElection, fetchPositions, fetchResults, fetchAuditLogs, fetchIntegrityCheck } from "@/lib/ecasvoteApi";
 import type { Position, AuditLog, IntegrityCheckData } from "@/lib/ecasvoteApi";
 import { ValidatorSidebar } from "@/components/sidebars/Sidebar";
+import ValidatorHeader from "./components/header";
 
 // Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
@@ -137,9 +138,15 @@ export default function ValidatorDashboardPage() {
       />
 
       {/* Main Content */}
-      <main className={`flex-1 p-2 overflow-y-auto transition-all duration-300 ${
-        sidebarOpen ? "ml-64" : "ml-20"
-      }`}>
+      <div className="flex-1 flex flex-col">
+        <ValidatorHeader 
+          title="Validator Dashboard" 
+          subtitle="Monitor and verify election integrity"
+          sidebarOpen={sidebarOpen}
+        />
+        <main className={`flex-1 p-2 overflow-y-auto transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}>
           <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="space-y-6">
               <Card>
@@ -220,6 +227,7 @@ export default function ValidatorDashboardPage() {
           </div>
         </main>
       </div>
+    </div>
   );
 }
 

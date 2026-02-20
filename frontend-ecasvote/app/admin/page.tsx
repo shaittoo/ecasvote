@@ -22,6 +22,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Search, Bell, Settings, HelpCircle, Menu, LogOut, User, ChevronDown, ChevronRight, Home, BookOpen, Vote, Users, BarChart3, FolderOpen, FileText, Grid } from "lucide-react";
 import { fetchDashboard, fetchElection, openElection } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import AdminHeader from "./components/header";
 
 // Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
@@ -197,6 +198,11 @@ export default function AdminDashboardPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
+        <AdminHeader 
+          title="Admin Dashboard" 
+          subtitle="Overview of election activities and statistics"
+          sidebarOpen={sidebarOpen}
+        />
         {/* Main Content Area */}
         <main className={`flex-1 p-2 overflow-y-auto transition-all duration-300 ${
           sidebarOpen ? "ml-64" : "ml-20"

@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { fetchElection, fetchPositions, fetchIntegrityCheck } from "@/lib/ecasvoteApi";
 import type { Position, IntegrityCheckData } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import AdminHeader from "../../components/header";
 
 const ELECTION_ID = 'election-2025';
 
@@ -98,15 +99,11 @@ export default function AdminIntegrityCheckPage() {
       
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <header className={`bg-white border-b border-gray-200 px-6 py-2.5 flex items-center justify-between transition-all duration-300 ${
-          sidebarOpen ? "ml-64" : "ml-20"
-        }`}>
-          <div>
-            <h1 className="text-2xl font-semibold text-gray-900">Integrity Check</h1>
-            <p className="text-xs text-gray-600 mt-1">Verify blockchain and database synchronization</p>
-          </div>
-        </header>
+        <AdminHeader 
+          title="Integrity Check" 
+          subtitle="Verify blockchain and database synchronization"
+          sidebarOpen={sidebarOpen} 
+        />
 
         {/* Main Content Area */}
         <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${

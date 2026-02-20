@@ -18,6 +18,7 @@ import { Bar } from "react-chartjs-2";
 import { Download, Printer } from "lucide-react";
 import { fetchElection, fetchResults } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import AdminHeader from "../../components/header";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -219,37 +220,35 @@ export default function ResultsSummaryPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <header className={`bg-white border-b border-gray-200 px-6 py-2.5 flex items-center justify-between transition-all duration-300 ${
-          sidebarOpen ? "ml-64" : "ml-20"
-        }`}>
-          <div>
-            <h1 className="text-2xl font-semibold text-gray-900">Results Summary</h1>
-            <p className="text-xs text-gray-600 mt-1">Comprehensive election results overview</p>
-          </div>
-          <div className="flex items-center gap-3 no-print">
-            <Button 
-              variant="outline" 
-              size="sm"
-              className="cursor-pointer"
-              onClick={handleExport}
-              disabled={!results || Object.keys(results).length === 0}
-            >
-              <Download className="h-4 w-4 mr-2" />
-              Export CSV
-            </Button>
-            <Button 
-              variant="outline" 
-              size="sm"
-              className="cursor-pointer"
-              onClick={handlePrint}
-              disabled={!results || Object.keys(results).length === 0}
-            >
-              <Printer className="h-4 w-4 mr-2" />
-              Print
-            </Button>
-          </div>
-        </header>
+        <AdminHeader 
+          title="Results Summary" 
+          subtitle="Comprehensive election results overview"
+          sidebarOpen={sidebarOpen}
+          actions={
+            <div className="no-print">
+              <Button 
+                variant="outline" 
+                size="sm"
+                className="cursor-pointer mr-2"
+                onClick={handleExport}
+                disabled={!results || Object.keys(results).length === 0}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Export CSV
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm"
+                className="cursor-pointer"
+                onClick={handlePrint}
+                disabled={!results || Object.keys(results).length === 0}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                Print
+              </Button>
+            </div>
+          }
+        />
 
         {/* Main Content Area */}
         <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${

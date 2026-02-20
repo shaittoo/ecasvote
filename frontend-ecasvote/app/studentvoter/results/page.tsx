@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Bell, Settings, HelpCircle } from "lucide-react";
 import { fetchElection, fetchResults } from "@/lib/ecasvoteApi";
 import { StudentVoterSidebar } from "@/components/sidebars/Sidebar";
+import StudentVoterHeader from "../components/header";
 
 // Register Chart.js components
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
@@ -208,6 +209,11 @@ export default function ResultsPage() {
       <div className={`flex-1 flex flex-col transition-all duration-300 ${
         sidebarOpen ? "ml-64" : "ml-20"
       }`}>
+        <StudentVoterHeader 
+          title="Election Results" 
+          subtitle="View the final tallies and outcomes"
+          sidebarOpen={sidebarOpen}
+        />
         {/* Main Content Area */}
         <main className="flex-1 p-2 overflow-y-auto">
           <div className="w-full max-w-8xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

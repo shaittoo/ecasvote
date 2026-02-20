@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Search, Download, Printer } from "lucide-react";
 import StatCard from "../../components/statcard";
 import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import AdminHeader from "../../components/header";
 
 interface SystemLog {
   timestamp: string;
@@ -67,12 +68,7 @@ export default function SystemActivityLogs() {
       />
 
       <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <header className={`bg-white border-b border-gray-200 px-6 py-5 flex items-center justify-between transition-all duration-300 ${
-          sidebarOpen ? "ml-64" : "ml-20"
-        }`}>
-          <h1 className="text-2xl font-semibold text-gray-900">System Activity Logs</h1>
-        </header>
+        <AdminHeader title="System Activity Logs" sidebarOpen={sidebarOpen} />
 
         {/* Main */}
         <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
