@@ -73,7 +73,7 @@ export default function Sidebar({ userName = "Validator" }: SidebarProps) {
         ) : (
           <div className="w-full flex justify-center">
             <Image
-              src="/ecasvotelogo.jpeg"
+              src="/eCASVote_minimizedlogo.png"
               alt="eCASVote"
               width={40}
               height={40}
