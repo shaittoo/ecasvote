@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { fetchPositions } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
 import { ValidatorSidebar } from "@/components/sidebars/Sidebar";
+import ValidatorHeader from "../components/header";
 
 const ELECTION_ID = "election-2025";
 
@@ -49,14 +50,7 @@ export default function ValidatorCandidatesPage() {
       />
 
       <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <header className={`bg-white border-b border-gray-200 px-6 py-5 transition-all duration-300 ${
-          sidebarOpen ? "ml-64" : "ml-20"
-        }`}>
-          <h1 className="text-2xl font-semibold text-gray-900">
-            Candidates
-          </h1>
-        </header>
+        <ValidatorHeader title="Candidates" sidebarOpen={sidebarOpen} />
 
         {/* Main Content */}
         <main className={`flex-1 p-6 space-y-6 overflow-y-auto transition-all duration-300 ${

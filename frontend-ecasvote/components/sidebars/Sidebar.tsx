@@ -255,7 +255,7 @@ const studentVoterItems: SidebarItem[] = [
   { key: "onboarding", name: "Onboarding", href: "#", icon: BookOpen },
   { key: "vote", name: "Cast Vote", href: "/studentvoter/castvote", icon: CheckSquare },
   { key: "privacy", name: "Privacy Statement", href: "#", icon: Shield },
-  { key: "results", name: "Election Results", href: "/results", icon: BarChart3 },
+  { key: "results", name: "Election Results", href: "/studentvoter/results", icon: BarChart3 },
 ];
 
 export function StudentVoterSidebar(props: {

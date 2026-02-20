@@ -18,6 +18,7 @@ import {
 import { Doughnut, Bar, Line } from "react-chartjs-2";
 import { fetchDashboard, fetchElection } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import AdminHeader from "../../components/header";
 
 ChartJS.register(
   ArcElement,
@@ -223,12 +224,7 @@ export default function VoterTurnoutPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <header className={`bg-white border-b border-gray-200 px-6 py-5 flex items-center justify-between transition-all duration-300 ${
-          sidebarOpen ? "ml-64" : "ml-20"
-        }`}>
-          <h1 className="text-2xl font-semibold text-gray-900">Voter Turnout</h1>
-        </header>
+        <AdminHeader title="Voter Turnout" sidebarOpen={sidebarOpen} />
 
         {/* Main Content Area */}
         <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${

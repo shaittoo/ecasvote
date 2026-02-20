@@ -9,6 +9,7 @@ import { StudentVoterSidebar } from "@/components/sidebars/Sidebar";
 import { User, XCircle } from "lucide-react";
 import { VoteModals } from "./modal";
 import { VoteInstructions } from "./instructions";
+import StudentVoterHeader from "../components/header";
 
 const ELECTION_ID = "election-2025";
 
@@ -387,19 +388,17 @@ export default function VotePage() {
       <div className={`flex-1 flex flex-col transition-all duration-300 ${
         sidebarOpen ? "ml-64" : "ml-20"
       }`}>
-        {/* Top Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold text-gray-900">Cast Vote</h1>
-            <div className="flex items-center gap-4">
-              {studentNumber && (
-                <div className="px-3 py-1 bg-gray-100 rounded-md text-sm text-gray-600">
-                  Student Number: {studentNumber}
-                </div>
-              )}
-            </div>
-          </div>
-        </header>
+        <StudentVoterHeader 
+          title="Cast Vote" 
+          sidebarOpen={sidebarOpen}
+          actions={
+            studentNumber && (
+              <div className="px-3 py-1 bg-gray-100 rounded-md text-sm text-gray-600">
+                Student Number: {studentNumber}
+              </div>
+            )
+          }
+        />
 
         {/* Main Content Area */}
         <main className="flex-1 p-6 overflow-y-auto">

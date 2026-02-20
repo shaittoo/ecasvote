@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { fetchAuditLogs } from "@/lib/ecasvoteApi";
 import type { AuditLog } from "@/lib/ecasvoteApi";
 import { ValidatorSidebar } from "@/components/sidebars/Sidebar";
+import ValidatorHeader from "../components/header";
 
 const ELECTION_ID = "election-2025";
 
@@ -50,17 +51,11 @@ export default function ValidatorAuditLogsPage() {
       />
 
       <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <header className={`bg-white border-b border-gray-200 px-6 py-3 transition-all duration-300 ${
-          sidebarOpen ? "ml-64" : "ml-20"
-        }`}>
-          <h1 className="text-2xl font-semibold text-gray-900">
-            Audit Logs
-            <p className="text-xs text-gray-500">
-                Complete transaction history and system activities
-            </p>
-          </h1>
-        </header>
+        <ValidatorHeader 
+          title="Audit Logs" 
+          subtitle="Complete transaction history and system activities"
+          sidebarOpen={sidebarOpen} 
+        />
 
         {/* Main */}
         <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${

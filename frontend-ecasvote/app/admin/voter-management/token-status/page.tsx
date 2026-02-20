@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search, Plus } from "lucide-react";
 import { AdminSidebar } from "@/components/sidebars/Sidebar";
+import AdminHeader from "../../components/header";
 
 interface Token {
   studentNumber: string;
@@ -61,12 +62,7 @@ export default function TokenStatusPage() {
       />
 
       <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <header className={`bg-white border-b border-gray-200 px-6 py-5 flex items-center justify-between transition-all duration-300 ${
-          sidebarOpen ? "ml-64" : "ml-20"
-        }`}>
-          <h1 className="text-2xl font-semibold text-gray-900">Token Status</h1>
-        </header>
+        <AdminHeader title="Token Status" sidebarOpen={sidebarOpen} />
 
         {/* Main */}
         <main className={`flex-1 p-2 overflow-y-auto transition-all duration-300 ${
