@@ -17,6 +17,7 @@ import { fetchDashboard, fetchElection, fetchPositions, fetchResults, fetchAudit
 import type { Position, AuditLog, IntegrityCheckData } from "@/lib/ecasvoteApi";
 import { ValidatorSidebar } from "@/components/Sidebar";
 import ValidatorHeader from "./components/header";
+import GreetingCard from "@/components/greeting-card";
 
 // Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
@@ -149,27 +150,15 @@ export default function ValidatorDashboardPage() {
         }`}>
           <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="space-y-6">
+              <GreetingCard name="Validator" role="Validator" roleColor="#3B82F6" />
+              
+              {/* Election Information */}
               <Card>
                 <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <CardTitle>Hello, Validator!</CardTitle>
-                    <Badge variant="secondary" className="bg-blue-500 text-white">
-                      Validator
-                    </Badge>
-                  </div>
-                  <CardDescription>
-                  Welcome to UPV CAS Student Council's Online Voting System
-                  </CardDescription>
+                  <CardTitle>Election Information</CardTitle>
                 </CardHeader>
-              </Card>
-
-              {/* Election Information */}
-              {election && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Election Information</CardTitle>
-                  </CardHeader>
-                  <CardContent>
+                <CardContent>
+                  {election ? (
                     <div className="space-y-4">
                       <div>
                         <p className="text-sm text-gray-600">Election Name</p>
@@ -194,9 +183,7 @@ export default function ValidatorDashboardPage() {
 
                         <div>
                           <p className="text-sm text-gray-600">Description</p>
-                          <p className="font-medium">
-                            {election.description || "N/A"}
-                          </p>
+                          <p className="font-medium">{election.description || "N/A"}</p>
                         </div>
                       </div>
 
@@ -220,9 +207,13 @@ export default function ValidatorDashboardPage() {
                         </div>
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
-              )}
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-gray-500">No active elections at this time.</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </div>
           </div>
         </main>

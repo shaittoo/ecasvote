@@ -10,9 +10,13 @@ interface ValidatorHeaderProps {
 
 export default function ValidatorHeader({ title, subtitle, sidebarOpen, actions }: ValidatorHeaderProps) {
   return (
-    <header className={`bg-white border-b border-gray-200 px-6 py-5 transition-all duration-300 ${
-      sidebarOpen ? "ml-64" : "ml-20"
-    }`}>
+    <header
+      className={`bg-white border-b border-gray-200 px-6 ${
+        subtitle ? "py-5" : "py-6.5"
+      } flex items-center justify-between transition-all duration-300 ${
+        sidebarOpen ? "ml-64" : "ml-20"
+      }`}
+    >
       <div className="flex items-center justify-between w-full">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">{title}</h1>

@@ -31,7 +31,8 @@ export default function GreetingCard({
           <CardTitle>Hello, {name}!</CardTitle>
           <Badge
             variant="secondary"
-            className={hasVoted !== undefined ? badgeClass : `bg-[${roleColor}] text-white`}
+            className={hasVoted !== undefined ? badgeClass : `text-white`}
+            style={hasVoted === undefined ? { backgroundColor: roleColor } : undefined}
           >
             {hasVoted !== undefined ? (hasVoted ? "Voted" : "Not Voted") : role}
           </Badge>

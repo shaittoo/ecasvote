@@ -113,7 +113,7 @@ function SidebarShell({
             />
           </div>
         ) : null}
-        <Button variant="ghost" size="icon" onClick={onToggle}>
+        <Button variant="ghost" size="icon" onClick={onToggle} className="cursor-pointer">
           <Menu className="h-5 w-5" />
         </Button>
       </div>
