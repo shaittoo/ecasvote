@@ -23,6 +23,7 @@ import { Search, Bell, Settings, HelpCircle, Menu, LogOut, User, ChevronDown, Ch
 import { fetchDashboard, fetchElection, openElection } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "./components/header";
+import GreetingCard from "@/components/greeting-card";
 
 // Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
@@ -209,19 +210,7 @@ export default function AdminDashboardPage() {
         }`}>
           <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <CardTitle>Hello, John!</CardTitle>
-                    <Badge variant="secondary" className="bg-[#7A0019] text-white">
-                      SEB Admin
-                    </Badge>
-                  </div>
-                  <CardDescription>
-                    Welcome to UPV CAS Student Council's Online Voting System
-                  </CardDescription>
-                </CardHeader>
-              </Card>
+              <GreetingCard name="John" role="SEB Admin" roleColor="#7A0019" />
 
               {/* Ongoing Elections Card */}
               <Card>

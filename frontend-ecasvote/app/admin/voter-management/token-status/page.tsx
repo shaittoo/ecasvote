@@ -65,7 +65,7 @@ export default function TokenStatusPage() {
         <AdminHeader title="Token Status" sidebarOpen={sidebarOpen} />
 
         {/* Main */}
-        <main className={`flex-1 p-2 overflow-y-auto transition-all duration-300 ${
+        <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
           sidebarOpen ? "ml-64" : "ml-20"
         }`}>
           {loading ? (
