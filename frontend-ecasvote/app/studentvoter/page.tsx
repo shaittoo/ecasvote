@@ -12,6 +12,7 @@ import { Search, Bell, Settings, HelpCircle } from "lucide-react";
 import { fetchDashboard } from "@/lib/ecasvoteApi";
 import { StudentVoterSidebar } from "@/components/Sidebar";
 import StudentVoterHeader from "./components/header";
+import GreetingCard from "@/components/greeting-card";
 
 const ELECTION_ID = 'election-2025';
 
@@ -88,23 +89,11 @@ export default function DashboardPage() {
         <main className="flex-1 p-2 overflow-y-auto">
           <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="space-y-6">
-              {/* Welcome Card with Voting Status */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle>Hello, {voterInfo?.fullName?.split(' ')[0] || 'User'}!</CardTitle>
-                    <Badge 
-                      variant={voterInfo?.hasVoted ? "default" : "secondary"}
-                      className={voterInfo?.hasVoted ? "bg-green-600 text-white" : ""}
-                    >
-                      {voterInfo?.hasVoted ? "Voted" : "Not Voted"}
-                    </Badge>
-                  </div>
-                  <CardDescription>
-                    Welcome to UPV CAS Student Council's Online Voting System
-                  </CardDescription>
-                </CardHeader>
-              </Card>
+              <GreetingCard
+                name={voterInfo?.fullName?.split(" ")[0] || "User"}
+                role=""
+                hasVoted={voterInfo?.hasVoted}
+              />
 
               {/* Election Status Card */}
               {loading ? (

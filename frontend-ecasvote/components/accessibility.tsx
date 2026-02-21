@@ -97,7 +97,7 @@ export default function AccessibilityPanel({ sizeClass = "h-20 w-20" }: { sizeCl
         size="icon"
         onClick={() => setIsOpen(!isOpen)}
         title="Accessibility options"
-        className={`text-gray-700 hover:bg-gray-100 ${sizeClass}`}
+        className={`text-gray-700 hover:bg-gray-100 cursor-pointer ${sizeClass}`}
       >
         <AccessibilityIcon className={sizeClass} />
       </Button>
@@ -108,7 +108,7 @@ export default function AccessibilityPanel({ sizeClass = "h-20 w-20" }: { sizeCl
             <h2 className="text-lg font-semibold text-gray-900">Accessibility</h2>
             <button
               onClick={() => setIsOpen(false)}
-              className="text-gray-400 hover:text-gray-600"
+              className="text-gray-400 hover:text-gray-600 cursor-pointer"
               aria-label="Close accessibility panel"
             >
               <X className="h-5 w-5" />
@@ -125,7 +125,7 @@ export default function AccessibilityPanel({ sizeClass = "h-20 w-20" }: { sizeCl
                 <button
                   key={size}
                   onClick={() => handleTextSizeChange(size)}
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors cursor-pointer ${
                     textSize === size
                       ? "bg-[#7A0019] text-white"
                       : "bg-gray-100 text-gray-700 hover:bg-gray-200"
@@ -144,7 +144,7 @@ export default function AccessibilityPanel({ sizeClass = "h-20 w-20" }: { sizeCl
                 type="checkbox"
                 checked={highContrast}
                 onChange={handleHighContrastToggle}
-                className="w-4 h-4 rounded border-gray-300"
+                className="w-4 h-4 rounded border-gray-300 cursor-pointer"
               />
               <span className="text-sm font-medium text-gray-700">
                 High Contrast Mode
@@ -159,7 +159,7 @@ export default function AccessibilityPanel({ sizeClass = "h-20 w-20" }: { sizeCl
                 type="checkbox"
                 checked={dyslexiaFont}
                 onChange={handleDyslexiaFontToggle}
-                className="w-4 h-4 rounded border-gray-300"
+                className="w-4 h-4 rounded border-gray-300 cursor-pointer"
               />
               <span className="text-sm font-medium text-gray-700">
                 Dyslexia-Friendly Font
@@ -175,7 +175,7 @@ export default function AccessibilityPanel({ sizeClass = "h-20 w-20" }: { sizeCl
             <select
               value={colorBlindMode}
               onChange={(e) => handleColorBlindModeChange(e.target.value as ColorBlindMode)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#7A0019]"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#7A0019] cursor-pointer"
             >
               <option value="none">Off</option>
               <option value="protanopia">Protanopia (Red-Blind)</option>
