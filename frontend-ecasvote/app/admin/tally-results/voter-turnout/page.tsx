@@ -19,6 +19,8 @@ import { Doughnut, Bar, Line } from "react-chartjs-2";
 import { fetchDashboard, fetchElection } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../../components/header";
+import VoterTurnoutOverall from "../../components/voter-turnout/overall-turnout";
+import VoterTurnoutBreakdown from "../../components/voter-turnout/breakdown-turnout";
 
 ChartJS.register(
   ArcElement,
@@ -244,35 +246,11 @@ export default function VoterTurnoutPage() {
                     <CardTitle className="text-lg">Overall</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="flex flex-col items-center justify-center">
-                      <div className="relative w-56 h-56 flex items-center justify-center">
-                        <div className="absolute inset-0 flex items-center justify-center z-10">
-                          <div className="text-center">
-                            <div className="text-4xl font-bold text-green-600">
-                              {votedPercentage}%
-                            </div>
-                            <div className="text-xs text-gray-600">Voted</div>
-                          </div>
-                        </div>
-                        <Doughnut
-                          data={doughnutData}
-                          options={{
-                            responsive: true,
-                            maintainAspectRatio: true,
-                            cutout: "70%",
-                            plugins: {
-                              legend: {
-                                display: true,
-                                position: "bottom" as const,
-                              },
-                            },
-                          }}
-                        />
-                      </div>
-                      <div className="mt-6 text-center text-sm text-gray-700">
-                        {votedCount} out of {totalVoters} CAS Students
-                      </div>
-                    </div>
+                    <VoterTurnoutOverall
+                      totalVoters={totalVoters}
+                      votedCount={votedCount}
+                      notVotedCount={notVotedCount}
+                    />
                   </CardContent>
                 </Card>
 
@@ -282,37 +260,7 @@ export default function VoterTurnoutPage() {
                     <CardTitle className="text-lg">Breakdown</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-3">
-                      {groupsData.map((group) => {
-                        const percentage = group.total > 0 ? ((group.voted / group.total) * 100).toFixed(0) : '0';
-                        return (
-                          <div key={group.name} className="flex items-center gap-3">
-                            <div className="flex-1">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-sm font-medium text-gray-700">
-                                  {group.name}
-                                </span>
-                                <span className="text-xs text-gray-600">
-                                  {percentage}%
-                                </span>
-                              </div>
-                              <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                                <div
-                                  className="h-full rounded-full"
-                                  style={{
-                                    backgroundColor: group.color,
-                                    width: `${percentage}%`,
-                                  }}
-                                />
-                              </div>
-                              <div className="text-xs text-gray-600 mt-1">
-                                {group.voted} out of {group.total}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <VoterTurnoutBreakdown groups={groupsData} />
                     <div className="mt-4 text-center text-sm text-gray-700">
                       {votedCount} out of {totalVoters} CAS Students
                     </div>

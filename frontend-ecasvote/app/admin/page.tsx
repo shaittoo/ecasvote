@@ -24,6 +24,7 @@ import { fetchDashboard, fetchElection, openElection } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "./components/header";
 import GreetingCard from "@/components/greeting-card";
+import VoterTurnoutTabs from "./components/voter-turnout/tabs-turnout";
 
 // Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
@@ -281,104 +282,7 @@ export default function AdminDashboardPage() {
               </Card>
 
               {/* Voter Turnout Card */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle>Voter Turnout</CardTitle>
-
-                    <Tabs
-                      value={activeTab}
-                      onValueChange={(val) => setActiveTab(val as "overall" | "breakdown")}
-                      className="w-auto"
-                    >
-                      <TabsList>
-                        <TabsTrigger
-                          value="overall"
-                          className={activeTab === "overall" ? "cursor-default" : "cursor-pointer"}
-                        >
-                          Overall
-                        </TabsTrigger>
-
-                        <TabsTrigger
-                          value="breakdown"
-                          className={activeTab === "breakdown" ? "cursor-default" : "cursor-pointer"}
-                        >
-                          Breakdown
-                        </TabsTrigger>
-                      </TabsList>
-                    </Tabs>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <Tabs defaultValue="overall">
-                    <TabsContent value="overall" className="mt-4">
-                      <div className="flex flex-col items-center justify-center md:flex-row items-center gap-6">
-                        <div className="relative items-center justify-center w-48 h-48 mx-auto">
-                          <Doughnut
-                            data={{
-                              labels: ["Voted", "Not Yet Voted"],
-                              datasets: [
-                                {
-                                  data: [stats.votedCount, stats.notVotedCount],
-                                  backgroundColor: ["#0C8C3F", "#e5e7eb"],
-                                  borderWidth: 0,
-                                },
-                              ],
-                            }}
-                            options={{
-                              responsive: true,
-                              maintainAspectRatio: true,
-                              cutout: "70%",
-                              plugins: {
-                                legend: { display: false },
-                              },
-                            }}
-                          />
-                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <div className="text-center">
-                              <div className="text-3xl font-bold">{stats.votedCount}</div>
-                              <div className="text-sm text-muted-foreground">Voted</div>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex-1 w-full">
-                          <p className="text-lg font-semibold mb-4" style={{ color: "#0C8C3F" }}>
-                            {stats.votedCount} out of {stats.totalVoters} CAS Students
-                          </p>
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 rounded" style={{ backgroundColor: "#0C8C3F" }}></div>
-                              <span className="text-sm text-muted-foreground">Voted {stats.votedCount}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 bg-muted rounded"></div>
-                              <span className="text-sm text-muted-foreground">Not Yet Voted {stats.notVotedCount}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </TabsContent>
-                    <TabsContent value="breakdown" className="mt-4">
-                      <div className="space-y-4">
-                        <GroupBreakdownChart groups={groups} />
-                        <div className="space-y-3">
-                          {groups.map((group) => (
-                            <div key={group.name} className="flex items-center justify-between p-3 border rounded-lg">
-                              <div className="flex items-center gap-3">
-                                <div className="w-4 h-4 rounded" style={{ backgroundColor: group.color }}></div>
-                                <span className="font-medium">{group.name}</span>
-                              </div>
-                              <span className="text-sm text-muted-foreground">
-                                {group.voted} out of {group.total}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </TabsContent>
-                  </Tabs>
-                </CardContent>
-              </Card>
+              <VoterTurnoutTabs stats={stats} groups={groups} />
             </div>
           </div>
         </main>
