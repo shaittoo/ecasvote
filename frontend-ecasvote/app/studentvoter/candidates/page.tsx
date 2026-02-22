@@ -5,12 +5,12 @@ import { useRouter, usePathname } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { fetchPositions } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
-import { ValidatorSidebar } from "@/components/Sidebar";
-import ValidatorHeader from "../components/header";
+import { StudentVoterSidebar } from "@/components/Sidebar";
+import StudentVoterHeader from "../components/header";
 
 const ELECTION_ID = "election-2025";
 
-export default function ValidatorCandidatesPage() {
+export default function StudentVoterCandidatesPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -39,18 +39,20 @@ export default function ValidatorCandidatesPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <ValidatorSidebar
+      <StudentVoterSidebar
         open={sidebarOpen}
         onToggle={() => setSidebarOpen((prev) => !prev)}
         active="candidates"
-        userName="Validator"
+        userName="Student Voter"
         onLogout={handleLogout}
         fixed
         pathname={pathname}
       />
 
       <div className="flex-1 flex flex-col">
-        <ValidatorHeader title="Candidates" sidebarOpen={sidebarOpen} />
+        <div className={`transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-20"}`}>
+          <StudentVoterHeader title="Candidates" subtitle="Review all candidates and their information" sidebarOpen={sidebarOpen} />
+        </div>
 
         {/* Main Content */}
         <main className={`flex-1 p-6 space-y-6 overflow-y-auto transition-all duration-300 ${

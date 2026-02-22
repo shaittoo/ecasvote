@@ -7,7 +7,7 @@ import { AccessibilityIcon, X } from "lucide-react";
 type TextSize = "small" | "normal" | "large";
 type ColorBlindMode = "none" | "protanopia" | "deuteranopia" | "tritanopia";
 
-export default function AccessibilityPanel({ sizeClass = "h-20 w-20" }: { sizeClass?: string }) {
+export default function AccessibilityPanel({ sizeClass = "h-40 w-40" }: { sizeClass?: string }) {
   const [isOpen, setIsOpen] = useState(false);
   const [textSize, setTextSize] = useState<TextSize>("normal");
   const [highContrast, setHighContrast] = useState(false);
@@ -97,7 +97,7 @@ export default function AccessibilityPanel({ sizeClass = "h-20 w-20" }: { sizeCl
         size="icon"
         onClick={() => setIsOpen(!isOpen)}
         title="Accessibility options"
-        className={`text-gray-700 hover:bg-gray-100 cursor-pointer ${sizeClass}`}
+        className={`bg-[#7A0019] text-white hover:bg-[#5a0014] cursor-pointer ${sizeClass}`}
       >
         <AccessibilityIcon className={sizeClass} />
       </Button>
