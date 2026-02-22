@@ -143,46 +143,46 @@ export class ECASVoteContract extends Contract {
     const candidatesMap: Record<string, Array<{ name: string; party: string; program: string; yearLevel: string }>> = {
       'usc-councilor': [
         { name: 'Maria Santos', party: 'PMB', program: 'BS Computer Science', yearLevel: '3rd Year' },
-        { name: 'Juan Dela Cruz', party: 'Samasa', program: 'BS Mathematics', yearLevel: '2nd Year' },
+        { name: 'Juan Dela Cruz', party: 'SAMASA', program: 'BS Mathematics', yearLevel: '2nd Year' },
         { name: 'Ana Garcia', party: 'Independent', program: 'BS Biology', yearLevel: '4th Year' },
         { name: 'Carlos Reyes', party: 'PMB', program: 'BS Chemistry', yearLevel: '3rd Year' },
       ],
       'cas-rep-usc': [
-        { name: 'Patricia Lopez', party: 'Samasa', program: 'BS Computer Science', yearLevel: '4th Year' },
+        { name: 'Patricia Lopez', party: 'SAMASA', program: 'BS Computer Science', yearLevel: '4th Year' },
         { name: 'Roberto Tan', party: 'PMB', program: 'BS Mathematics', yearLevel: '3rd Year' },
       ],
       'cas-chairperson': [
         { name: 'Sofia Martinez', party: 'PMB', program: 'BS Biology', yearLevel: '4th Year' },
-        { name: 'Miguel Fernandez', party: 'Samasa', program: 'BS Computer Science', yearLevel: '4th Year' },
+        { name: 'Miguel Fernandez', party: 'SAMASA', program: 'BS Computer Science', yearLevel: '4th Year' },
         { name: 'Isabella Cruz', party: 'Independent', program: 'BS Chemistry', yearLevel: '3rd Year' },
       ],
       'cas-vice-chairperson': [
         { name: 'Diego Ramos', party: 'PMB', program: 'BS Mathematics', yearLevel: '3rd Year' },
-        { name: 'Elena Torres', party: 'Samasa', program: 'BS Biology', yearLevel: '3rd Year' },
+        { name: 'Elena Torres', party: 'SAMASA', program: 'BS Biology', yearLevel: '3rd Year' },
       ],
       'cas-councilor': [
         { name: 'Gabriel Villanueva', party: 'PMB', program: 'BS Computer Science', yearLevel: '2nd Year' },
-        { name: 'Lucia Mendoza', party: 'Samasa', program: 'BS Mathematics', yearLevel: '3rd Year' },
+        { name: 'Lucia Mendoza', party: 'SAMASA', program: 'BS Mathematics', yearLevel: '3rd Year' },
         { name: 'Fernando Castro', party: 'Independent', program: 'BS Biology', yearLevel: '2nd Year' },
         { name: 'Valentina Ortega', party: 'PMB', program: 'BS Chemistry', yearLevel: '4th Year' },
-        { name: 'Ricardo Navarro', party: 'Samasa', program: 'BS Computer Science', yearLevel: '3rd Year' },
+        { name: 'Ricardo Navarro', party: 'SAMASA', program: 'BS Computer Science', yearLevel: '3rd Year' },
         { name: 'Camila Silva', party: 'Independent', program: 'BS Mathematics', yearLevel: '2nd Year' },
       ],
       'clovers-governor': [
         { name: 'Alejandro Morales', party: 'PMB', program: 'BS Computer Science', yearLevel: '3rd Year' },
-        { name: 'Daniela Herrera', party: 'Samasa', program: 'BS Biology', yearLevel: '2nd Year' },
+        { name: 'Daniela Herrera', party: 'SAMASA', program: 'BS Biology', yearLevel: '2nd Year' },
       ],
       'elektrons-governor': [
-        { name: 'Nicolas Jimenez', party: 'Samasa', program: 'BS Mathematics', yearLevel: '3rd Year' },
+        { name: 'Nicolas Jimenez', party: 'SAMASA', program: 'BS Mathematics', yearLevel: '3rd Year' },
         { name: 'Adriana Vega', party: 'PMB', program: 'BS Computer Science', yearLevel: '4th Year' },
         { name: 'Sebastian Ruiz', party: 'Independent', program: 'BS Chemistry', yearLevel: '2nd Year' },
       ],
       'redbolts-governor': [
         { name: 'Victoria Paredes', party: 'PMB', program: 'BS Biology', yearLevel: '3rd Year' },
-        { name: 'Andres Moreno', party: 'Samasa', program: 'BS Computer Science', yearLevel: '2nd Year' },
+        { name: 'Andres Moreno', party: 'SAMASA', program: 'BS Computer Science', yearLevel: '2nd Year' },
       ],
       'skimmers-governor': [
-        { name: 'Olivia Cordero', party: 'Samasa', program: 'BS Mathematics', yearLevel: '4th Year' },
+        { name: 'Olivia Cordero', party: 'SAMASA', program: 'BS Mathematics', yearLevel: '4th Year' },
         { name: 'Mateo Salazar', party: 'PMB', program: 'BS Chemistry', yearLevel: '3rd Year' },
         { name: 'Emma Gutierrez', party: 'Independent', program: 'BS Biology', yearLevel: '2nd Year' },
       ],
