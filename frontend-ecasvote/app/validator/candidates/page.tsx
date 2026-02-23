@@ -7,6 +7,7 @@ import { fetchPositions } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
 import { ValidatorSidebar } from "@/components/Sidebar";
 import ValidatorHeader from "../components/header";
+import { CandidateCard } from "@/components/candidate-card";
 
 const ELECTION_ID = "election-2025";
 
@@ -71,57 +72,11 @@ export default function ValidatorCandidatesPage() {
                   <CardTitle>{position.name}</CardTitle>
                 </CardHeader>
 
-                <CardContent>
-                  {position.candidates &&
-                  position.candidates.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {position.candidates.map((candidate) => {
-                        let bgColor = '#ffffff';
-                        let borderColor = '#e5e7eb';
-                        if (candidate.party?.toLowerCase() === 'pmb') {
-                          bgColor = '#dbeafe';
-                          borderColor = '#3b82f6';
-                        } else if (candidate.party?.toLowerCase() === 'samasa') {
-                          bgColor = '#fee2e2';
-                          borderColor = '#b80000';
-                        }
-                        return (
-                        <div
-                          key={candidate.id}
-                          style={{ backgroundColor: bgColor, border: `1px solid ${borderColor}` }}
-                          className="rounded-lg p-4 hover:shadow-md transition-shadow"
-                        >
-                          <p className="font-medium text-gray-900">
-                            {candidate.name}
-                          </p>
-
-                          {candidate.party && (
-                            <p className="text-sm text-gray-600 mt-1">
-                              Party: {['samasa', 'pmb'].includes(candidate.party.toLowerCase()) ? candidate.party.toUpperCase() : candidate.party}
-                            </p>
-                          )}
-
-                          {candidate.program && (
-                            <p className="text-sm text-gray-600">
-                              Program: {candidate.program}
-                            </p>
-                          )}
-
-                          {candidate.yearLevel && (
-                            <p className="text-sm text-gray-600">
-                              Year Level: {candidate.yearLevel}
-                            </p>
-                          )}
-                        </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-gray-500">
-                      No candidates registered for this position.
-                    </p>
-                  )}
-                </CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-5 pb-5">
+                  {position.candidates.map((candidate) => (
+                    <CandidateCard key={candidate.id} candidate={candidate} />
+                  ))}
+                </div>
               </Card>
             ))
           )}

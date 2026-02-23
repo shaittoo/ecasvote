@@ -65,7 +65,7 @@ export function VoteInstructions({ onContinue }: VoteInstructionsProps) {
         <div className="mt-8 flex justify-end">
           <Button
             onClick={onContinue}
-            className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8 py-2"
+            className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8 py-2 cursor-pointer"
           >
             Continue
           </Button>
