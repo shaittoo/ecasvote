@@ -11,6 +11,7 @@ import { fetchElection, fetchPositions, createCandidates, updateElection } from 
 import type { Position } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../components/header";
+import PrintableBallot from "./ballot";
 
 const ELECTION_ID = 'election-2025';
 
@@ -493,6 +494,10 @@ export default function ElectionManagementPage() {
                     >
                       Save Draft
                     </Button>
+                    <PrintableBallot 
+                      candidates={candidates} 
+                      election={elections[0] || { title: "UPV CAS SC Elections", academicYear: "2025-2026", semester: "First Semester" }} 
+                    />
                     <Button
                       className="text-white"
                       style={{ backgroundColor: "#0C8C3F" }}
