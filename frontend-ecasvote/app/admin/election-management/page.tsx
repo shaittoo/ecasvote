@@ -15,20 +15,6 @@ import PrintableBallot from "./ballot";
 
 const ELECTION_ID = 'election-2025';
 
-type SubNavItem = {
-  name: string;
-  href: string;
-  active?: boolean;
-};
-
-type NavItem = {
-  name: string;
-  icon: React.ComponentType<any>;
-  href: string;
-  active?: boolean;
-  subItems?: SubNavItem[];
-};
-
 export default function ElectionManagementPage() {
   const router = useRouter();
   const pathname = usePathname();
