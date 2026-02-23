@@ -71,9 +71,9 @@ export function VoteModals({
               <h2 className="text-2xl font-bold text-green-600">Review your Vote</h2>
               <button
                 onClick={() => setShowReviewModal(false)}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
+                className="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
               >
-                <X className="h-6 w-6" />
+                <X className="h-6 w-6 cursor-pointer" />
               </button>
             </div>
 
@@ -166,14 +166,14 @@ export function VoteModals({
                 type="button"
                 variant="outline"
                 onClick={() => setShowReviewModal(false)}
-                className="px-6"
+                className="px-6 cursor-pointer"
               >
                 Cancel Submission
               </Button>
               <Button
                 type="button"
                 onClick={onProceedFromReview}
-                className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8"
+                className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8 cursor-pointer"
               >
                 Proceed
               </Button>
@@ -205,9 +205,9 @@ export function VoteModals({
                   setAuthConfirmed(false);
                   setVoterName("");
                 }}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
+                className="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
               >
-                <X className="h-6 w-6" />
+                <X className="h-6 w-6 cursor-pointer" />
               </button>
             </div>
 
@@ -256,7 +256,7 @@ export function VoteModals({
                   setAuthConfirmed(false);
                   setVoterName("");
                 }}
-                className="px-6"
+                className="px-6 cursor-pointer"
               >
                 Cancel Submission
               </Button>
@@ -264,7 +264,7 @@ export function VoteModals({
                 type="button"
                 onClick={onSubmit}
                 disabled={isSubmitting || !authConfirmed || !voterName.trim()}
-                className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
                 {isSubmitting ? "Submitting…" : "Confirm Submission"}
               </Button>
@@ -290,9 +290,9 @@ export function VoteModals({
                   setShowSuccessModal(false);
                   onNavigateToDashboard();
                 }}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
+                className="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
               >
-                <X className="h-6 w-6" />
+                <X className="h-6 w-6 cursor-pointer" />
               </button>
             </div>
 
@@ -381,7 +381,7 @@ export function VoteModals({
                 onClick={() => setShowErrorModal(false)}
                 className="text-gray-400 hover:text-gray-600 transition-colors"
               >
-                <X className="h-6 w-6" />
+                <X className="h-6 w-6 cursor-pointer" />
               </button>
             </div>
 
@@ -405,7 +405,7 @@ export function VoteModals({
               <Button
                 type="button"
                 onClick={() => setShowErrorModal(false)}
-                className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8"
+                className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8 cursor-pointer"
               >
                 Confirm
               </Button>

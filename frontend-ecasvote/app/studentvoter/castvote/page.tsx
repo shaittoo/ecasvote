@@ -474,7 +474,7 @@ export default function VotePage() {
                             return (
                               <label
                                 key={candidate.id}
-                                className={`flex items-center gap-4 p-4 rounded-lg border-2 transition-all ${
+                                className={`flex items-center gap-4 p-5 rounded-lg border-2 transition-all ${
                                   isAbstaining
                                     ? "border-gray-200 bg-gray-50 cursor-not-allowed opacity-50"
                                     : isSelected
@@ -491,29 +491,23 @@ export default function VotePage() {
                                     }`} />
                                   </div>
                                 </div>
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <p className="font-semibold text-gray-900">
-                                      {index + 1}. {candidate.name.toUpperCase()}
-                                    </p>
-                                    {candidate.party && (
-                                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                        candidate.party.toUpperCase() === "PMB" 
+                                <div className="flex-1 flex items-center gap-1">
+                                  <p className="font-semibold text-gray-900 text-base tracking-wide">
+                                    {index + 1}. {candidate.name.toUpperCase()}
+                                  </p>
+
+                                  {candidate.party && (
+                                    <span
+                                      className={`ml-4 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${
+                                        candidate.party.toUpperCase() === "PMB"
                                           ? "bg-blue-100 text-blue-700"
                                           : candidate.party.toUpperCase() === "SAMASA"
                                           ? "bg-red-100 text-red-700"
-                                          : "bg-gray-100 text-gray-700"
-                                      }`}>
-                                        {candidate.party.toUpperCase()}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {(candidate.program || candidate.yearLevel) && (
-                                    <p className="text-sm text-gray-600">
-                                      {[candidate.program, candidate.yearLevel]
-                                        .filter(Boolean)
-                                        .join(", ")}
-                                    </p>
+                                          : "bg-yellow-100 text-yellow-800"
+                                      }`}
+                                    >
+                                      {candidate.party.toUpperCase()}
+                                    </span>
                                   )}
                                 </div>
                                 <div className="flex-shrink-0">
@@ -593,6 +587,7 @@ export default function VotePage() {
                     <Button
                       type="button"
                       variant="outline"
+                      className="cursor-pointer"
                       onClick={() => setShowInstructions(true)}
                     >
                       ← Back to Instructions
@@ -600,7 +595,7 @@ export default function VotePage() {
                     <Button
                       type="submit"
                       disabled={isSubmitting}
-                      className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8 py-2"
+                      className="bg-[#7A0019] hover:bg-[#8a0019] text-white px-8 py-2 cursor-pointer"
                     >
                       {isSubmitting ? "Submitting…" : "Submit Ballot"}
                     </Button>
