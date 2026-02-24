@@ -4,6 +4,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import VoterTurnoutOverall from "./overall-turnout";
 import VoterTurnoutBreakdown from "./breakdown-turnout";
+import { useState } from "react";
 
 type Props = {
   stats: {
@@ -15,20 +16,31 @@ type Props = {
 };
 
 export default function VoterTurnoutTabs({ stats, groups }: Props) {
+  const [activeTab, setActiveTab] = useState("overall");
+
   return (
-    <Tabs defaultValue="overall">
+    <Tabs defaultValue="overall" value={activeTab} onValueChange={setActiveTab}>
       <Card>
-        {/* Header */}
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Voter Turnout</CardTitle>
 
           <TabsList>
-            <TabsTrigger value="overall">Overall</TabsTrigger>
-            <TabsTrigger value="breakdown">Breakdown</TabsTrigger>
+            <TabsTrigger
+              value="overall"
+              className={activeTab === "overall" ? "cursor-default" : "cursor-pointer"}
+            >
+              Overall
+            </TabsTrigger>
+
+            <TabsTrigger
+              value="breakdown"
+              className={activeTab === "breakdown" ? "cursor-default" : "cursor-pointer"}
+            >
+              Breakdown
+            </TabsTrigger>
           </TabsList>
         </CardHeader>
 
-        {/* Body */}
         <CardContent>
           <TabsContent value="overall">
             <VoterTurnoutOverall {...stats} />

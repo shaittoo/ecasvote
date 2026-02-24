@@ -1,6 +1,8 @@
 "use client";
 
 import React from "react";
+import { notify } from "@/lib/notify";
+import { Download } from "lucide-react";
 
 type Candidate = {
   position: string;
@@ -22,7 +24,10 @@ type PrintableBallotProps = {
 const PrintableBallot: React.FC<PrintableBallotProps> = ({ candidates, election }) => {
   const print = () => {
     if (!candidates || candidates.length === 0) {
-      alert("No candidates to print.");
+      notify.error({
+        title: "Failed to print ballot",
+        description: "No candidates available to print.",
+      });
       return;
     }
 
@@ -83,11 +88,12 @@ const PrintableBallot: React.FC<PrintableBallotProps> = ({ candidates, election 
 
   return (
     <button
-      className="text-white px-3 py-2 rounded"
+      className="flex items-center text-white px-3 py-2 rounded"
       style={{ backgroundColor: "#0C5DA5" }}
       onClick={print}
     >
-      Download / Print Ballot
+      <Download className="h-4 w-4 mr-2" />
+      Export Ballot
     </button>
   );
 };
