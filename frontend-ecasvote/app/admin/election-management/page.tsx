@@ -12,6 +12,7 @@ import type { Position } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../components/header";
 import PrintableBallot from "./ballot";
+import { notify } from "@/lib/notify";
 
 const ELECTION_ID = 'election-2025';
 
@@ -33,7 +34,9 @@ export default function ElectionManagementPage() {
         try {
           setAdminInfo(JSON.parse(storedAdmin));
         } catch (e) {
-          console.error("Failed to parse admin info:", e);
+          notify.error({
+            title: "Failed to parse admin info: ${e}",
+          });
         }
       } else {
         setAdminInfo({ fullName: "SEB Admin" });
@@ -81,7 +84,9 @@ export default function ElectionManagementPage() {
           setCandidates(allCandidates);
         }
       } catch (err) {
-        console.error('Failed to load election data:', err);
+        notify.error({
+        title: `Failed to load election data: ${err}`,
+      });
       }
     }
     loadData();
@@ -171,17 +176,31 @@ export default function ElectionManagementPage() {
       // Check election status to provide appropriate message
       try {
         const electionData = await fetchElection(ELECTION_ID);
-        if (electionData?.status === 'OPEN' || electionData?.status === 'CLOSED') {
-          alert(`Successfully added ${response.count} candidate(s) to database!\n\nNote: Candidates were saved to the database but not registered on blockchain because the election is ${electionData.status}. To register on blockchain, the election must be in DRAFT status.`);
+        if (electionData && (electionData.status === 'OPEN' || electionData.status === 'CLOSED')) {
+          notify.success({
+            title: `Successfully added ${response.count} candidate(s) to database!`,
+            description: `Note: Candidates were saved to the database but not registered on blockchain because the election is ${electionData.status}. To register on blockchain, the election must be in DRAFT status.`,
+          });
+        } else if (electionData) {
+          notify.success({
+            title: `Successfully added ${response.count} candidate(s) to database and blockchain!`,
+            description: `Note: Candidates were saved to the database but not registered on blockchain because the election is ${electionData.status}. To register on blockchain, the election must be in DRAFT status.`,
+          });
         } else {
-          alert(`Successfully added ${response.count} candidate(s) to database and blockchain!`);
+          notify.success({
+            title: `Successfully added ${response.count} candidate(s) to database!`,
+          });
         }
       } catch (e) {
-        alert(`Successfully added ${response.count} candidate(s) to database!`);
+        notify.success({
+          title: `Successfully added ${response.count} candidate(s) to database!`,
+        });
       }
     } catch (err: any) {
-      console.error('Failed to save candidates:', err);
-      alert(`Failed to save candidates: ${err.message || 'Unknown error'}`);
+      notify.error({
+        title: "Failed to save candidates",
+        description: err.message || "Unknown error occurred",
+      });
     }
   };
 
@@ -189,7 +208,9 @@ export default function ElectionManagementPage() {
     if (!editingElection) return;
 
     if (!newTitle || !newStartDate || !newEndDate) {
-      alert('Please fill in all required fields (Title, Start Date & Time, End Date & Time)');
+      notify.error({
+        title: "Please fill in all required fields (Title, Start Date & Time, End Date & Time)",
+      });
       return;
     }
 
@@ -225,10 +246,15 @@ export default function ElectionManagementPage() {
       setNewTitle("");
       setNewStartDate("");
       setNewEndDate("");
-      alert('Election updated successfully on blockchain and database!');
+      notify.success({
+        title: "Election updated",
+        description: "Election updated successfully on blockchain and database.",
+      });
     } catch (err: any) {
-      console.error('Failed to update election:', err);
-      alert(`Failed to update election: ${err.message || 'Unknown error'}`);
+      notify.error({
+        title: "Failed to update election",
+        description: err.message || "Unknown error occurred",
+      });
     }
   };
 
@@ -391,7 +417,9 @@ export default function ElectionManagementPage() {
                                       }
                                     }
                                   } catch (fetchErr) {
-                                    console.warn('Could not fetch election data, using parsed dates:', fetchErr);
+                                    notify.error({
+                                      title: `Could not fetch election data, using parsed dates: ${fetchErr}`,
+                                    });
                                     // Fallback to parsing from startEnd string
                                     if (dateRange.length === 2) {
                                       const start = dateRange[0].trim();
@@ -422,6 +450,7 @@ export default function ElectionManagementPage() {
                                   setNewEndDate(endDate);
                                   setNewStatus(election.status || 'Draft');
                                   setShowEditModal(true);
+                                  
                                 }}
                               >
                                 Edit
@@ -475,7 +504,10 @@ export default function ElectionManagementPage() {
                     <Button 
                       variant="outline"
                       onClick={() => {
-                        alert('Draft saved locally. Click "Add Candidates" to save to database.');
+                        notify.info({
+                          title: "Draft saved",
+                          description: 'Draft saved locally. Click "Add Candidates" to save to database.',
+                        });
                       }}
                     >
                       Save Draft
@@ -508,11 +540,16 @@ export default function ElectionManagementPage() {
                               }
                             });
                             setCandidates(allCandidates);
-                            alert('Candidates refreshed from database!');
+                            notify.info({
+                              title: "Candidates refreshed",
+                              description: "Latest candidates loaded from the database.",
+                            });
                           }
                         } catch (err: any) {
-                          console.error('Failed to refresh candidates:', err);
-                          alert(`Failed to refresh: ${err.message || 'Unknown error'}`);
+                          notify.error({
+                            title: "Failed to save candidates",
+                            description: err.message || "Unknown error occurred",
+                          });
                         }
                       }}
                     >
@@ -691,6 +728,10 @@ export default function ElectionManagementPage() {
                       setNewTitle("");
                       setNewStartDate("");
                       setNewEndDate("");
+                      notify.success({
+                        title: "Election created successfully!",
+                        description: "Election created successfully on blockchain and database.",
+                      });
                     }}
                   >
                     Create Election
