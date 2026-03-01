@@ -251,8 +251,26 @@ app.post('/init', async (_req, res) => {
     // Sync election to database after initialization
     try {
       const electionBuffer = await contract.evaluateTransaction('GetElection', 'election-2025');
-      const election = JSON.parse(electionBuffer.toString());
-      
+      const raw = Buffer.isBuffer(electionBuffer)
+        ? electionBuffer.toString('utf8')
+        : new TextDecoder().decode(electionBuffer);
+      const jsonStr = raw.trim();
+      // Handle possible merged/duplicate response from multiple endorsers: take first valid JSON object
+      let election: any;
+      try {
+        election = JSON.parse(jsonStr);
+      } catch {
+        const firstBrace = jsonStr.indexOf('{');
+        const lastBrace = jsonStr.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace > firstBrace) {
+          election = JSON.parse(jsonStr.slice(firstBrace, lastBrace + 1));
+        } else {
+          throw new Error('Invalid JSON from GetElection');
+        }
+      }
+      if (!election || election.id !== 'election-2025') {
+        throw new Error('GetElection did not return election-2025');
+      }
       await prisma.election.upsert({
         where: { id: 'election-2025' },
         update: {

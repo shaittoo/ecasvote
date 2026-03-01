@@ -1,0 +1,206 @@
+# configtx.yaml - eCASVote 5-org network
+#
+# MSP IDs here MUST match exactly:
+#   - chaincode-ecasvote/src/ecasVote.ts (ALLOWED_SENSITIVE_CALLERS)
+#   - chaincode-ecasvote/collections_config.json (policy strings)
+#
+# Locked-in MSP IDs: OrgSEBMSP, OrgDeptMSP, OrgPMBMSP, OrgSAMASAMSP, OrgAdviserMSP
+
+---
+Organizations:
+  - &OrgSEB
+    Name: OrgSEB
+    ID: OrgSEBMSP
+    MSPDir: ../organizations/peerOrganizations/orgseb.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrgSEBMSP.admin', 'OrgSEBMSP.peer', 'OrgSEBMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrgSEBMSP.admin', 'OrgSEBMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrgSEBMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('OrgSEBMSP.peer')"
+
+  - &OrgDept
+    Name: OrgDept
+    ID: OrgDeptMSP
+    MSPDir: ../organizations/peerOrganizations/orgdept.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrgDeptMSP.admin', 'OrgDeptMSP.peer', 'OrgDeptMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrgDeptMSP.admin', 'OrgDeptMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrgDeptMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('OrgDeptMSP.peer')"
+
+  - &OrgPMB
+    Name: OrgPMB
+    ID: OrgPMBMSP
+    MSPDir: ../organizations/peerOrganizations/orgpmb.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrgPMBMSP.admin', 'OrgPMBMSP.peer', 'OrgPMBMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrgPMBMSP.admin', 'OrgPMBMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrgPMBMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('OrgPMBMSP.peer')"
+
+  - &OrgSAMASA
+    Name: OrgSAMASA
+    ID: OrgSAMASAMSP
+    MSPDir: ../organizations/peerOrganizations/orgsamasa.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrgSAMASAMSP.admin', 'OrgSAMASAMSP.peer', 'OrgSAMASAMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrgSAMASAMSP.admin', 'OrgSAMASAMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrgSAMASAMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('OrgSAMASAMSP.peer')"
+
+  - &OrgAdviser
+    Name: OrgAdviser
+    ID: OrgAdviserMSP
+    MSPDir: ../organizations/peerOrganizations/orgadviser.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrgAdviserMSP.admin', 'OrgAdviserMSP.peer', 'OrgAdviserMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrgAdviserMSP.admin', 'OrgAdviserMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrgAdviserMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('OrgAdviserMSP.peer')"
+
+  - &OrdererOrg
+    Name: OrdererOrg
+    ID: OrdererMSP
+    MSPDir: ../organizations/ordererOrganizations/example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrdererMSP.member')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrdererMSP.member')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrdererMSP.admin')"
+
+Capabilities:
+  Channel: &ChannelCapabilities
+    V2_0: true
+  Orderer: &OrdererCapabilities
+    V2_0: true
+  Application: &ApplicationCapabilities
+    V2_5: true
+
+Application: &ApplicationDefaults
+  Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    LifecycleEndorsement:
+      Type: ImplicitMeta
+      Rule: "ANY Endorsement"
+    Endorsement:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Endorsement"
+  Capabilities:
+    <<: *ApplicationCapabilities
+
+Orderer: &OrdererDefaults
+  Addresses:
+    - orderer.example.com:7050
+  BatchTimeout: 2s
+  BatchSize:
+    MaxMessageCount: 10
+    AbsoluteMaxBytes: 99 MB
+    PreferredMaxBytes: 512 KB
+  Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    BlockValidation:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+
+Channel: &ChannelDefaults
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+  Capabilities:
+    <<: *ChannelCapabilities
+
+Profiles:
+  # Profile for eCASVote channel with all 5 peer orgs + orderer org.
+  EcasVoteChannel:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations:
+        - *OrdererOrg
+      OrdererType: etcdraft
+      EtcdRaft:
+        Consenters:
+          - Host: orderer.example.com
+            Port: 7050
+            ClientTLSCert: ../organizations/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+            ServerTLSCert: ../organizations/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+      Capabilities: *OrdererCapabilities
+    Application:
+      <<: *ApplicationDefaults
+      Organizations:
+        - *OrgSEB
+        - *OrgDept
+        - *OrgPMB
+        - *OrgSAMASA
+        - *OrgAdviser
+      Capabilities: *ApplicationCapabilities
