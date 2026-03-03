@@ -319,7 +319,83 @@ app.post('/init', async (_req, res) => {
   }
 });
 
-// 1) Get election details
+// 0) List all elections (from DB; created via POST /elections or synced from chaincode)
+app.get('/elections', async (_req, res) => {
+  try {
+    const elections = await prisma.election.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(elections);
+  } catch (err: any) {
+    console.error('List elections error:', err);
+    res.status(500).json({ error: err.message || 'Failed to list elections' });
+  }
+});
+
+// 1) Create election (blockchain + DB)
+app.post('/elections', async (req, res) => {
+  const { electionId, name, description, startTime, endTime, createdBy } = req.body || {};
+  if (!electionId || !name || !startTime || !endTime) {
+    return res.status(400).json({
+      error: 'Missing required fields: electionId, name, startTime, endTime',
+    });
+  }
+  try {
+    const contract = await getContract();
+    await contract.submitTransaction(
+      'CreateElection',
+      String(electionId),
+      String(name),
+      String(description ?? ''),
+      String(startTime),
+      String(endTime),
+      String(createdBy ?? 'admin'),
+    );
+    try {
+      await prisma.election.upsert({
+        where: { id: electionId },
+        update: {
+          name: String(name),
+          description: description != null ? String(description) : null,
+          startTime: new Date(startTime),
+          endTime: new Date(endTime),
+          status: 'DRAFT',
+          createdBy: String(createdBy ?? 'admin'),
+        },
+        create: {
+          id: electionId,
+          name: String(name),
+          description: description != null ? String(description) : null,
+          startTime: new Date(startTime),
+          endTime: new Date(endTime),
+          status: 'DRAFT',
+          createdBy: String(createdBy ?? 'admin'),
+        },
+      });
+    } catch (dbErr: any) {
+      console.warn('⚠️ Failed to sync new election to database:', dbErr.message);
+    }
+    const election = {
+      id: electionId,
+      name: String(name),
+      description: description ?? '',
+      startTime: String(startTime),
+      endTime: String(endTime),
+      status: 'DRAFT',
+      createdBy: String(createdBy ?? 'admin'),
+    };
+    res.status(201).json(election);
+  } catch (err: any) {
+    console.error('CreateElection error:', err);
+    const msg = err.message || String(err);
+    if (msg.includes('already exists')) {
+      return res.status(409).json({ error: msg });
+    }
+    res.status(400).json({ error: msg });
+  }
+});
+
+// 2) Get election details
 app.get('/elections/:id', async (req, res) => {
   try {
     const contract = await getContract();
@@ -329,10 +405,22 @@ app.get('/elections/:id', async (req, res) => {
       throw new Error('Empty response from chaincode');
     }
     const election = JSON.parse(responseText);
-    
-    // Auto-close election if end time has passed
     const now = new Date();
+    const startTime = new Date(election.startTime);
     const endTime = new Date(election.endTime);
+
+    // Auto-open: if DRAFT and start time has been reached, open the election
+    if (election.status === 'DRAFT' && now >= startTime) {
+      try {
+        await contract.submitTransaction('OpenElection', req.params.id);
+        election.status = 'OPEN';
+        console.log(`✅ Election ${req.params.id} automatically opened (start time reached)`);
+      } catch (openErr: any) {
+        console.warn(`⚠️ Failed to auto-open election ${req.params.id}:`, openErr.message);
+      }
+    }
+
+    // Auto-close: if OPEN and end time has passed, close the election
     if (election.status === 'OPEN' && now > endTime) {
       try {
         await contract.submitTransaction('CloseElection', req.params.id);
@@ -340,7 +428,6 @@ app.get('/elections/:id', async (req, res) => {
         console.log(`✅ Election ${req.params.id} automatically closed (end time passed)`);
       } catch (closeErr: any) {
         console.warn(`⚠️ Failed to auto-close election ${req.params.id}:`, closeErr.message);
-        // Continue with current status if close fails
       }
     }
     
@@ -371,7 +458,7 @@ app.get('/elections/:id', async (req, res) => {
       // Continue even if database sync fails - return blockchain data
     }
     
-    res.json(election);
+    res.json({ ...election, onChain: true });
   } catch (err: any) {
     console.error('GetElection error:', err);
     const errorMessage = err.message || String(err);

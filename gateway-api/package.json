@@ -10,7 +10,8 @@
     "seed:voters": "ts-node prisma/seed.ts",
     "seed:users": "ts-node prisma/seedUsers.ts",
     "check-db": "ts-node check-prisma-db.ts",
-    "security:test": "ts-node src/securityTests.ts"
+    "security:test": "ts-node src/securityTests.ts",
+    "studio": "prisma studio"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

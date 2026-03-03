@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Edit2, Trash2 } from "lucide-react";
-import { fetchElection, fetchPositions, createCandidates, updateElection } from "@/lib/ecasvoteApi";
+import { fetchElection, fetchElections, createElection as createElectionApi, fetchPositions, createCandidates, updateElection } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../components/header";
@@ -43,23 +43,30 @@ export default function ElectionManagementPage() {
       }
     }
 
-    // Load current election and positions
+    // Load elections list and positions for default election
     async function loadData() {
       try {
-        const [electionData, positionsData] = await Promise.all([
-          fetchElection(ELECTION_ID).catch(() => null),
+        const [electionsList, positionsData] = await Promise.all([
+          fetchElections(),
           fetchPositions(ELECTION_ID).catch(() => []),
         ]);
         
-        if (electionData) {
-          setElections([{
-            id: ELECTION_ID,
-            title: electionData.name || 'CAS Student Council Elections 2025',
-            academicYear: '2025-2026',
-            semester: 'First Semester',
-            status: electionData.status || 'DRAFT',
-            startEnd: `${electionData.startTime ? new Date(electionData.startTime).toLocaleString('en-US', { timeZone: 'Asia/Manila' }) : 'N/A'} - ${electionData.endTime ? new Date(electionData.endTime).toLocaleString('en-US', { timeZone: 'Asia/Manila' }) : 'N/A'}`,
-          }]);
+        if (electionsList && electionsList.length > 0) {
+          const withFreshStatus = await Promise.all(
+            electionsList.map(async (e: any) => {
+              const fresh = await fetchElection(e.id).catch(() => null);
+              const data = fresh || e;
+              return {
+                id: data.id,
+                title: data.name || 'Election',
+                academicYear: new Date(data.startTime).getFullYear() + '-' + (new Date(data.startTime).getFullYear() + 1),
+                semester: 'First Semester',
+                status: data.status || 'DRAFT',
+                startEnd: `${data.startTime ? new Date(data.startTime).toLocaleString('en-US', { timeZone: 'Asia/Manila' }) : 'N/A'} - ${data.endTime ? new Date(data.endTime).toLocaleString('en-US', { timeZone: 'Asia/Manila' }) : 'N/A'}`,
+              };
+            })
+          );
+          setElections(withFreshStatus);
         }
 
         if (positionsData && positionsData.length > 0) {
@@ -714,24 +721,48 @@ export default function ElectionManagementPage() {
                   <Button
                     className="text-white"
                     style={{ backgroundColor: "#7A0019" }}
-                    onClick={() => {
-                      const newElection = {
-                        id: Date.now().toString(),
-                        title: newTitle || "Untitled Election",
-                        academicYear: newAcademicYear,
-                        semester: newSemester,
-                        status: newStatus,
-                        startEnd: `${newStartDate || 'YYYY-MM-DDTHH:mm'} - ${newEndDate || 'YYYY-MM-DDTHH:mm'}`,
-                      };
-                      setElections((prev) => [newElection, ...prev]);
-                      setShowCreateModal(false);
-                      setNewTitle("");
-                      setNewStartDate("");
-                      setNewEndDate("");
-                      notify.success({
-                        title: "Election created successfully!",
-                        description: "Election created successfully on blockchain and database.",
-                      });
+                    onClick={async () => {
+                      const title = newTitle?.trim() || "Untitled Election";
+                      if (!newStartDate || !newEndDate) {
+                        notify.error({
+                          title: "Missing dates",
+                          description: "Please set both Start and End date & time.",
+                        });
+                        return;
+                      }
+                      const electionId = `election-${new Date().getFullYear()}-${Date.now()}`;
+                      try {
+                        await createElectionApi({
+                          electionId,
+                          name: title,
+                          description: `${newAcademicYear} ${newSemester}`,
+                          startTime: new Date(newStartDate).toISOString(),
+                          endTime: new Date(newEndDate).toISOString(),
+                          createdBy: "admin",
+                        });
+                        setShowCreateModal(false);
+                        setNewTitle("");
+                        setNewStartDate("");
+                        setNewEndDate("");
+                        notify.success({
+                          title: "Election created",
+                          description: "Election created on blockchain and database.",
+                        });
+                        const list = await fetchElections();
+                        setElections(list.map((e: any) => ({
+                          id: e.id,
+                          title: e.name || "Election",
+                          academicYear: new Date(e.startTime).getFullYear() + "-" + (new Date(e.startTime).getFullYear() + 1),
+                          semester: "First Semester",
+                          status: e.status || "DRAFT",
+                          startEnd: `${e.startTime ? new Date(e.startTime).toLocaleString("en-US", { timeZone: "Asia/Manila" }) : "N/A"} - ${e.endTime ? new Date(e.endTime).toLocaleString("en-US", { timeZone: "Asia/Manila" }) : "N/A"}`,
+                        })));
+                      } catch (err: any) {
+                        notify.error({
+                          title: "Failed to create election",
+                          description: err?.message || "Check gateway and blockchain.",
+                        });
+                      }
                     }}
                   >
                     Create Election

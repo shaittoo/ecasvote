@@ -83,6 +83,33 @@ export async function fetchElection(
   return handleResponse(res);
 }
 
+export async function fetchElections(): Promise<Election[]> {
+  const res = await fetch(`${API_BASE}/elections`, { cache: "no-store" });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+export interface CreateElectionPayload {
+  electionId: string;
+  name: string;
+  description?: string;
+  startTime: string;
+  endTime: string;
+  createdBy?: string;
+}
+
+export async function createElection(
+  payload: CreateElectionPayload
+): Promise<Election> {
+  const res = await fetch(`${API_BASE}/elections`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse(res);
+}
+
 export async function fetchResults(
   electionId: string
 ): Promise<ResultsJson | null> {
