@@ -22,6 +22,7 @@ import {
   Vote,
   Users,
   FolderOpen,
+  Scan,
 } from "lucide-react";  
 import type { LucideIcon } from "lucide-react";
 
@@ -335,6 +336,7 @@ export type AdminNavKey =
   | "dashboard"
   | "onboarding"
   | "election"
+  | "ballot"
   | "voter"
   | "tally"
   | "audit";
@@ -348,6 +350,7 @@ const adminItems: SidebarItem[] = [
     href: "/admin/election-management",
     icon: Vote,
   },
+  { key: "ballot", name: "Ballot Scanning", href: "/admin/ballot-scanning", icon: Scan },
   {
     key: "voter",
     name: "Voter Management",
