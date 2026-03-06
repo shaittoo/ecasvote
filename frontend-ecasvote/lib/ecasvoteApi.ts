@@ -296,13 +296,26 @@ export async function createCandidates(
   return handleResponse(res);
 }
 
+export interface Selection {
+  positionId: string;
+  candidateId: string;
+}
+
+export interface AuditLogDetails {
+  blockNumber?: number;
+  function?: string;
+  endorsers?: string;
+  validation?: string;
+  selections?: Selection[];
+}
+
 export interface AuditLog {
   id: number;
   electionId: string | null;
   voterId: string | null;
   action: string;
   txId: string | null;
-  details: any;
+  details: AuditLogDetails | null;
   createdAt: string;
 }
 

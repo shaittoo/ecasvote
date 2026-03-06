@@ -7,6 +7,7 @@ import { fetchPositions, fetchResults } from "@/lib/ecasvoteApi";
 import type { Position, ResultsJson } from "@/lib/ecasvoteApi";
 import { ValidatorSidebar } from "@/components/Sidebar";
 import ValidatorHeader from "../components/header";
+import { Button } from "@/components/ui/button";
 
 import { Bar } from "react-chartjs-2";
 import {
@@ -124,11 +125,21 @@ export default function ValidatorResultsPage() {
               ))}
             </div>
           ) : (
-            <Card>
-              <CardContent className="py-12 text-center text-gray-500">
-                No results available yet
-              </CardContent>
-            </Card>
+            <div className="py-12 text-center text-gray-500 space-y-4">
+              <p className="text-lg">
+                No results available yet for this election.
+              </p>
+              <p className="text-sm">
+                Votes may not have been cast yet, or the election has not been closed. 
+              </p>
+              <Button
+                variant="outline"
+                className="mt-2 cursor-pointer"
+                onClick={() => router.push('/validator/audit')}
+              >
+                View Audit Logs
+              </Button>
+            </div>
           )}
         </main>
       </div>

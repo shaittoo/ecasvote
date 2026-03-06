@@ -9,16 +9,9 @@ import { Search, Download, Printer } from "lucide-react";
 import StatCard from "../../components/statcard";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../../components/header";
-
-interface AuditLog {
-  txId: string;
-  block: number;
-  fn: string;
-  endorsers: string;
-  status: "Valid" | "Invalid";
-  time: string;
-  position: string;
-}
+import { fetchAuditLogs } from "@/lib/ecasvoteApi";
+import type { AuditLog } from "@/lib/ecasvoteApi";
+import { exportAuditLogsCSV, printAuditTable } from "./export";
 
 export default function AuditTrailViewer() {
   const router = useRouter();
@@ -27,31 +20,45 @@ export default function AuditTrailViewer() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-  const [selectedElection, setSelectedElection] = useState("CAS SC Elections 2026");
+  const [selectedElection] = useState("election-2025"); // change later
+  const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
+
+  // Fetch logs on mount
+  useEffect(() => {
+    const loadLogs = async () => {
+      try {
+        const res = await fetchAuditLogs(selectedElection);
+        if (res.ok) setAuditLogs(res.logs);
+      } catch (err) {
+        console.error("Failed to load audit logs", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadLogs();
+  }, [selectedElection]);
 
   const stats = {
-    totalTransactions: 0,
-    totalBlocks: 0,
+    totalTransactions: auditLogs.length,
+    totalBlocks: new Set(auditLogs.map((log) => log.details?.blockNumber)).size,
   };
 
-  useEffect(() => {
-    setTimeout(() => {
-      setLoading(false);
-    }, 800);
-  }, []);
+  const handleLogout = () => router.push("/login");
 
-  const handleLogout = () => {
-    router.push("/login");
-  };
+  const filteredLogs = auditLogs.filter((log) => {
+  const dateStr = new Date(log.createdAt).toLocaleString();
+  return `${log.txId} ${log.action} ${log.voterId} ${log.electionId} ${log.details?.selections?.map((s) => `${s.positionId}-${s.candidateId}`).join(", ")} ${log.details?.function} ${dateStr}`
+    .toLowerCase()
+    .includes(search.toLowerCase());
+});
 
-  const filteredLogs = auditLogs.filter((log) =>
-    `${log.txId} ${log.fn} ${log.endorsers} ${log.status} ${log.position}`
-      .toLowerCase()
-      .includes(search.toLowerCase())
+  const [currentPage, setCurrentPage] = useState(1);
+  const rowsPerPage = 15;
+  const totalPages = Math.ceil(filteredLogs.length / rowsPerPage);
+  const paginatedLogs = filteredLogs.slice(
+    (currentPage - 1) * rowsPerPage,
+    currentPage * rowsPerPage
   );
-
-  const handleExportCSV = () => alert("Exporting audit trail as CSV...");
-  const handleExportPDF = () => alert("Exporting audit trail as PDF...");
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -68,10 +75,11 @@ export default function AuditTrailViewer() {
       <div className="flex-1 flex flex-col">
         <AdminHeader title="Audit Trail Viewer" sidebarOpen={sidebarOpen} />
 
-        {/* Main */}
-        <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
-          sidebarOpen ? "ml-64" : "ml-20"
-        }`}>
+        <main
+          className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
+            sidebarOpen ? "ml-64" : "ml-20"
+          }`}
+        >
           {loading ? (
             <div className="text-center py-12 text-gray-500">Loading audit logs...</div>
           ) : (
@@ -79,16 +87,16 @@ export default function AuditTrailViewer() {
               {/* Stats Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <StatCard
-                    title="Total Vote Transactions"
-                    value={stats.totalTransactions}
-                    color="text-gray-700"
+                  title="Total Vote Transactions"
+                  value={stats.totalTransactions}
+                  color="text-gray-700"
                 />
                 <StatCard
-                    title="Total Blocks"
-                    value={stats.totalBlocks}
-                    color="text-gray-700"
+                  title="Total Blocks"
+                  value={stats.totalBlocks}
+                  color="text-gray-700"
                 />
-                </div>
+              </div>
 
               {/* Search + Export + Table Card */}
               <Card>
@@ -110,14 +118,14 @@ export default function AuditTrailViewer() {
                     <div className="flex gap-2 flex-shrink-0">
                       <button
                         className="flex items-center px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer"
-                        onClick={handleExportCSV}
+                        onClick={() => exportAuditLogsCSV(filteredLogs)}
                       >
                         <Download className="h-4 w-4 mr-2" />
                         Export CSV
                       </button>
                       <button
                         className="flex items-center px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer"
-                        onClick={handleExportPDF}
+                        onClick={() => printAuditTable("audit-table", `Audit Trail - ${selectedElection}`)}
                       >
                         <Printer className="h-4 w-4 mr-2" />
                         Print
@@ -128,16 +136,14 @@ export default function AuditTrailViewer() {
 
                 <CardContent>
                   <div className="overflow-x-auto">
-                    <table className="w-full border-collapse text-sm">
+                    <table id="audit-table" className="mx-auto w-full text-center">
                       <thead>
                         <tr className="border-b text-gray-600">
-                          <th className="text-left py-2">Transaction ID</th>
-                          <th className="text-left py-2">Block #</th>
-                          <th className="text-left py-2">Function</th>
-                          <th className="text-left py-2">Endorsements</th>
-                          <th className="text-left py-2">Validation</th>
-                          <th className="text-left py-2">Time Stamp</th>
-                          <th className="text-left py-2">Position</th>
+                          <th className="text-center py-2">Transaction ID</th>
+                          <th className="text-center py-2">Action</th>
+                          <th className="text-center py-2">Voter ID</th>
+                          <th className="text-center py-2">Validation</th>
+                          <th className="text-center py-2">Time Stamp</th>
                         </tr>
                       </thead>
 
@@ -155,17 +161,23 @@ export default function AuditTrailViewer() {
                             </td>
                           </tr>
                         ) : (
-                          filteredLogs.map((log, idx) => (
-                            <tr key={idx} className="border-b hover:bg-gray-50">
-                              <td className="py-2 font-mono">{log.txId}</td>
-                              <td className="py-2">{log.block}</td>
-                              <td className="py-2">{log.fn}</td>
-                              <td className="py-2">{log.endorsers}</td>
-                              <td className="py-2">
-                                <Badge variant="default">{log.status}</Badge>
+                          filteredLogs.map((log) => (
+                            <tr
+                              key={log.id}
+                              className="border-b hover:bg-gray-50 cursor-pointer"
+                              onClick={() => setSelectedLog(log)}
+                            >
+                              <td className="py-2 font-mono">
+                                {log.txId ? `${log.txId.slice(0, 10)}...` : "-"}
                               </td>
-                              <td className="py-2">{log.time}</td>
-                              <td className="py-2">{log.position}</td>
+                              <td className="py-2">{log.details?.function ?? log.action}</td>
+                              <td className="py-2">{log.voterId ?? "-"}</td>
+                              <td className="py-2">
+                                <Badge variant="default">
+                                  {log.details?.validation ?? "VALID"}
+                                </Badge>
+                              </td>
+                              <td className="py-2">{new Date(log.createdAt).toLocaleString()}</td>
                             </tr>
                           ))
                         )}
@@ -174,8 +186,72 @@ export default function AuditTrailViewer() {
                   </div>
 
                   {filteredLogs.length > 0 && (
-                    <div className="flex justify-center mt-4 text-sm text-gray-600">
-                      Prev 10 · 1 · 2 · 3 · Next 10 →
+                    <div className="flex justify-center mt-4 gap-2 text-sm text-gray-600">
+                      <button
+                        disabled={currentPage === 1}
+                        onClick={() => setCurrentPage((p) => p - 1)}
+                        className="px-2 py-1 border rounded disabled:opacity-50"
+                      >
+                        Prev
+                      </button>
+                      {Array.from({ length: totalPages }, (_, i) => (
+                        <button
+                          key={i}
+                          className={`px-2 py-1 border rounded ${currentPage === i + 1 ? "bg-gray-200" : ""}`}
+                          onClick={() => setCurrentPage(i + 1)}
+                        >
+                          {i + 1}
+                        </button>
+                      ))}
+                      <button
+                        disabled={currentPage === totalPages}
+                        onClick={() => setCurrentPage((p) => p + 1)}
+                        className="px-2 py-1 border rounded disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+
+                  {selectedLog && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center">
+                      <div
+                        className="absolute inset-0 bg-black/50"
+                        onClick={() => setSelectedLog(null)}
+                      />
+                      <div className="relative bg-white rounded-lg w-full max-w-2xl p-6 mx-4">
+                        <div className="flex items-start justify-between">
+                          <h3 className="text-2xl font-semibold text-[#7A0019]">
+                            Transaction Details
+                          </h3>
+                          <button
+                            className="text-gray-600 hover:text-gray-900 text-xl font-bold cursor-pointer"
+                            onClick={() => setSelectedLog(null)}
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        <div className="mt-4 space-y-2 text-sm text-gray-700">
+                          <p><strong>TxID:</strong> {selectedLog.txId}</p>
+                          <p><strong>Block:</strong> {selectedLog.details?.blockNumber || "-"}</p>
+                          <p><strong>Function:</strong> {selectedLog.details?.function || selectedLog.action}</p>
+                          <p><strong>Validation:</strong> {selectedLog.details?.validation || "-"}</p>
+                          <p><strong>Time:</strong> {new Date(selectedLog.createdAt).toLocaleString()}</p>
+                          <p><strong>Positions:</strong></p>
+                          {selectedLog.details?.selections?.length ? (
+                            <ul className="list-disc pl-5">
+                              {selectedLog.details.selections.map((sel: any, idx: number) => (
+                                <li key={idx}>
+                                  {sel.positionId} → {sel.candidateId}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p>-</p>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   )}
                 </CardContent>
