@@ -11,11 +11,24 @@ interface AdminHeaderProps {
 export default function AdminHeader({ title, subtitle, sidebarOpen, actions }: AdminHeaderProps) {
   return (
     <header
-      className={`bg-white border-b border-gray-200 px-6 ${
-        subtitle ? "py-5" : "py-6.5"
-      } flex items-center justify-between transition-all duration-300 ${
-        sidebarOpen ? "ml-64" : "ml-20"
-      }`}
+      className={`bg-white border-b border-gray-200 px-6 flex items-center justify-between transition-all duration-300
+        ${sidebarOpen ? "ml-64" : "ml-20"}`}
+      style={{
+        paddingTop: subtitle
+          ? sidebarOpen
+            ? "1.25rem"
+            : "0.62rem"
+          : sidebarOpen
+          ? "1.625rem"
+          : "1rem",
+        paddingBottom: subtitle
+          ? sidebarOpen
+            ? "1.25rem"
+            : "0.62rem"
+          : sidebarOpen
+          ? "1.625rem"
+          : "1rem",
+      }}
     >
       <div>
         <h1 className="text-2xl font-semibold text-gray-1000">{title}</h1>
