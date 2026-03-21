@@ -4,7 +4,6 @@ import bodyParser from 'body-parser';
 import { getContract, getNetwork } from './fabricClient';
 import { prisma } from './prismaClient';
 
-
 const app = express();
 
 // Enable CORS for all routes
@@ -33,6 +32,16 @@ app.post('/login', async (req, res) => {
   const { studentNumber, upEmail } = req.body;
 
   if (!studentNumber && !upEmail) {
+    await prisma.systemActivity.create({
+      data: {
+        user: 'Unknown',
+        role: 'Voter',
+        action: 'Login Attempt',
+        description: 'Missing studentNumber and upEmail',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
     return res.status(400).json({ error: 'studentNumber or upEmail is required' });
   }
 
@@ -48,6 +57,17 @@ app.post('/login', async (req, res) => {
     });
 
     if (!voter) {
+      await prisma.systemActivity.create({
+        data: {
+          user: studentNumber || upEmail,
+          role: 'Voter',
+          action: 'Login Attempt',
+          description: 'User not found in voter list',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(404).json({
         error: 'You are not in the official CAS voter list. Please contact the CAS SEB.',
       });
@@ -55,16 +75,49 @@ app.post('/login', async (req, res) => {
 
     // 2. Enforce CAS + ENROLLED + isEligible
     if (voter.college !== 'CAS') {
+      await prisma.systemActivity.create({
+        data: {
+          user: voter.studentNumber,
+          role: 'Voter',
+          action: 'Login Attempt',
+          description: 'Non-CAS student tried to login',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(403).json({
         error: 'This election is for CAS students only.',
       });
     }
 
     if (voter.status !== 'ENROLLED' || !voter.isEligible) {
+      await prisma.systemActivity.create({
+        data: {
+          user: voter.studentNumber,
+          role: 'Voter',
+          action: 'Login Attempt',
+          description: 'User not eligible to vote',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(403).json({
         error: 'You are currently not eligible to vote. Please contact the CAS SEB.',
       });
     }
+
+    await prisma.systemActivity.create({
+      data: {
+        user: voter.studentNumber,
+        role: 'Voter',
+        action: 'Login',
+        description: `Login successful for ${voter.fullName}`,
+        ipAddress: req.ip,
+        status: 'Success',
+      },
+    });
 
     // 3. If all checks pass → return voter info
     // Note: We allow login even if they've already voted so they can view results
@@ -84,6 +137,18 @@ app.post('/login', async (req, res) => {
     });
   } catch (err: any) {
     console.error('Login error:', err);
+
+    await prisma.systemActivity.create({
+      data: {
+        user: studentNumber || upEmail || 'Unknown',
+        role: 'Voter',
+        action: 'Login Error',
+        description: err.message || 'Login failed',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
     return res.status(500).json({ error: err.message || 'Login failed' });
   }
 });
@@ -93,6 +158,17 @@ app.post('/login/validator', async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
+    await prisma.systemActivity.create({
+      data: {
+        user: email || 'Unknown',
+        role: 'Validator',
+        action: 'Validator Login Attempt',
+        description: 'Missing email or password',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
@@ -103,6 +179,17 @@ app.post('/login/validator', async (req, res) => {
     });
 
     if (!user) {
+      await prisma.systemActivity.create({
+        data: {
+          user: email,
+          role: 'Validator',
+          action: 'Validator Login Attempt',
+          description: 'User not found',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(401).json({
         error: 'Invalid credentials. Please contact the system administrator.',
       });
@@ -110,6 +197,17 @@ app.post('/login/validator', async (req, res) => {
 
     // Check if user is active
     if (!user.isActive) {
+      await prisma.systemActivity.create({
+        data: {
+          user: user.email,
+          role: user.role,
+          action: 'Validator Login Attempt',
+          description: 'Account is deactivated',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(403).json({
         error: 'Your account has been deactivated. Please contact the system administrator.',
       });
@@ -117,6 +215,17 @@ app.post('/login/validator', async (req, res) => {
 
     // Check if user is a validator
     if (user.role !== 'VALIDATOR') {
+      await prisma.systemActivity.create({
+        data: {
+          user: user.email,
+          role: user.role,
+          action: 'Unauthorized Login Attempt',
+          description: 'Non-validator tried to access validator login',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(403).json({
         error: 'Access denied. This login is for validators only.',
       });
@@ -127,6 +236,17 @@ app.post('/login/validator', async (req, res) => {
     const passwordMatch = await bcrypt.compare(password, user.password);
 
     if (!passwordMatch) {
+      await prisma.systemActivity.create({
+        data: {
+          user: user.email,
+          role: user.role,
+          action: 'Validator Login Attempt',
+          description: 'Incorrect password',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(401).json({
         error: 'Invalid credentials. Please check your email and password.',
       });
@@ -136,6 +256,17 @@ app.post('/login/validator', async (req, res) => {
     await prisma.user.update({
       where: { id: user.id },
       data: { lastLogin: new Date() },
+    });
+
+    await prisma.systemActivity.create({
+      data: {
+        user: user.email,
+        role: user.role, // VALIDATOR
+        action: 'Validator Login',
+        description: `Validator ${user.fullName} logged in`,
+        ipAddress: req.ip,
+        status: 'Success',
+      },
     });
 
     // Return validator info
@@ -151,6 +282,18 @@ app.post('/login/validator', async (req, res) => {
     });
   } catch (err: any) {
     console.error('Validator login error:', err);
+
+    await prisma.systemActivity.create({
+      data: {
+        user: email || 'Unknown',
+        role: 'Validator',
+        action: 'Validator Login Error',
+        description: err.message || 'Validator login failed',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
     return res.status(500).json({ error: err.message || 'Validator login failed' });
   }
 });
@@ -160,6 +303,17 @@ app.post('/login/admin', async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
+    await prisma.systemActivity.create({
+      data: {
+        user: email || 'Unknown',
+        role: 'Admin',
+        action: 'Admin Login Attempt',
+        description: 'Missing email or password',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
@@ -175,8 +329,36 @@ app.post('/login/admin', async (req, res) => {
       });
     }
 
+    if (!user) {
+      await prisma.systemActivity.create({
+        data: {
+          user: email,
+          role: 'Admin',
+          action: 'Admin Login Attempt',
+          description: 'User not found',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
+      return res.status(401).json({
+        error: 'Invalid credentials. Please contact the system administrator.',
+      });
+    }
+
     // Check if user is active
     if (!user.isActive) {
+      await prisma.systemActivity.create({
+        data: {
+          user: user.email,
+          role: user.role,
+          action: 'Admin Login Attempt',
+          description: 'Account is deactivated',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(403).json({
         error: 'Your account has been deactivated. Please contact the system administrator.',
       });
@@ -184,6 +366,17 @@ app.post('/login/admin', async (req, res) => {
 
     // Check if user is an admin
     if (user.role !== 'ADMIN') {
+      await prisma.systemActivity.create({
+        data: {
+          user: user.email,
+          role: user.role,
+          action: 'Unauthorized Login Attempt',
+          description: 'Non-admin tried to access admin login',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(403).json({
         error: 'Access denied. This login is for administrators only.',
       });
@@ -194,6 +387,17 @@ app.post('/login/admin', async (req, res) => {
     const passwordMatch = await bcrypt.compare(password, user.password);
 
     if (!passwordMatch) {
+      await prisma.systemActivity.create({
+        data: {
+          user: user.email,
+          role: user.role,
+          action: 'Admin Login Attempt',
+          description: 'Incorrect password',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(401).json({
         error: 'Invalid credentials. Please check your email and password.',
       });
@@ -203,6 +407,17 @@ app.post('/login/admin', async (req, res) => {
     await prisma.user.update({
       where: { id: user.id },
       data: { lastLogin: new Date() },
+    });
+
+    await prisma.systemActivity.create({
+      data: {
+        user: user.email,
+        role: user.role, // ADMIN
+        action: 'Admin Login',
+        description: `Admin ${user.fullName} logged in`,
+        ipAddress: req.ip,
+        status: 'Success',
+      },
     });
 
     // Return admin info
@@ -218,67 +433,109 @@ app.post('/login/admin', async (req, res) => {
     });
   } catch (err: any) {
     console.error('Admin login error:', err);
+
+    await prisma.systemActivity.create({
+      data: {
+        user: email || 'Unknown',
+        role: 'Admin',
+        action: 'Admin Login Error',
+        description: err.message || 'Admin login failed',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
     return res.status(500).json({ error: err.message || 'Admin login failed' });
   }
 });
 
 // Initialize ledger with default election data (calls InitLedger)
-app.post('/init', async (_req, res) => {
+app.post('/init', async (req, res) => {
+  const ip = req.ip || 'unknown';
+
   try {
+    await prisma.systemActivity.create({
+      data: {
+        user: 'system',
+        role: 'System',
+        action: 'Ledger Init Request',
+        description: 'Init ledger endpoint called',
+        ipAddress: ip,
+        status: 'Success',
+      },
+    });
+
     const contract = await getContract();
-    
-    // Check if election already exists
+
+    // Check if election exists
+    let electionExists = false;
+
     try {
       const electionBuffer = await contract.evaluateTransaction('GetElection', 'election-2025');
       const election = JSON.parse(electionBuffer.toString());
+
       if (election && election.id === 'election-2025') {
-        console.log('Election already exists, skipping InitLedger');
-        return res.json({ 
-          ok: true, 
+        electionExists = true;
+
+        await prisma.systemActivity.create({
+          data: {
+            user: 'system',
+            role: 'System',
+            action: 'Ledger Init Skipped',
+            description: 'Election already exists',
+            ipAddress: ip,
+            status: 'Success',
+          },
+        });
+
+        return res.json({
+          ok: true,
           message: 'Ledger already initialized',
-          election: election
+          election,
         });
       }
-    } catch (checkErr) {
-      // Election doesn't exist, proceed with InitLedger
-      console.log('Election not found, initializing ledger...');
+    } catch (err) {
+      // not found → continue
     }
-    
-    console.log('Calling InitLedger...');
+
+    // Init ledger
+    await prisma.systemActivity.create({
+      data: {
+        user: 'system',
+        role: 'System',
+        action: 'InitLedger Started',
+        description: 'Calling InitLedger on blockchain',
+        ipAddress: ip,
+        status: 'Success',
+      },
+    });
+
     await contract.submitTransaction('InitLedger');
-    console.log('InitLedger completed successfully');
-    
-    // Sync election to database after initialization
+
+    await prisma.systemActivity.create({
+      data: {
+        user: 'system',
+        role: 'System',
+        action: 'InitLedger Success',
+        description: 'Ledger initialized successfully',
+        ipAddress: ip,
+        status: 'Success',
+      },
+    });
+
+    // Sync to DB
     try {
       const electionBuffer = await contract.evaluateTransaction('GetElection', 'election-2025');
-      const raw = Buffer.isBuffer(electionBuffer)
-        ? electionBuffer.toString('utf8')
-        : new TextDecoder().decode(electionBuffer);
-      const jsonStr = raw.trim();
-      // Handle possible merged/duplicate response from multiple endorsers: take first valid JSON object
-      let election: any;
-      try {
-        election = JSON.parse(jsonStr);
-      } catch {
-        const firstBrace = jsonStr.indexOf('{');
-        const lastBrace = jsonStr.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace > firstBrace) {
-          election = JSON.parse(jsonStr.slice(firstBrace, lastBrace + 1));
-        } else {
-          throw new Error('Invalid JSON from GetElection');
-        }
-      }
-      if (!election || election.id !== 'election-2025') {
-        throw new Error('GetElection did not return election-2025');
-      }
+      const election = JSON.parse(electionBuffer.toString());
+
       await prisma.election.upsert({
-        where: { id: 'election-2025' },
+        where: { id: election.id },
         update: {
           name: election.name,
           description: election.description || null,
           startTime: new Date(election.startTime),
           endTime: new Date(election.endTime),
-          status: election.status as any,
+          status: election.status,
         },
         create: {
           id: election.id,
@@ -286,36 +543,52 @@ app.post('/init', async (_req, res) => {
           description: election.description || null,
           startTime: new Date(election.startTime),
           endTime: new Date(election.endTime),
-          status: election.status as any,
+          status: election.status,
           createdBy: election.createdBy || 'system',
         },
       });
-      console.log('✅ Election synced to database after InitLedger');
+
+      await prisma.systemActivity.create({
+        data: {
+          user: 'system',
+          role: 'System',
+          action: 'Election Sync',
+          description: 'Election synced to database',
+          ipAddress: ip,
+          status: 'Success',
+        },
+      });
+
     } catch (syncErr: any) {
-      console.warn('⚠️ Failed to sync election to database after InitLedger:', syncErr.message);
-      // Continue - blockchain is initialized
+      await prisma.systemActivity.create({
+        data: {
+          user: 'system',
+          role: 'System',
+          action: 'Election Sync Failed',
+          description: syncErr.message,
+          ipAddress: ip,
+          status: 'Failed',
+        },
+      });
     }
-    
-    res.json({ ok: true, message: 'Ledger initialized successfully' });
+
+    return res.json({ ok: true, message: 'Ledger initialized successfully' });
+
   } catch (err: any) {
     console.error('InitLedger error:', err);
-    const errorMessage = err.message || String(err);
-    
-    // Check if it's an endorsement error
-    if (errorMessage.includes('endorsement') || errorMessage.includes('ABORTED') || errorMessage.includes('ProposalResponsePayloads do not match')) {
-      res.status(400).json({ 
-        error: errorMessage,
-        hint: 'This error indicates that Org1 and Org2 peers are returning different chaincode execution results. This usually means:',
-        possibleCauses: [
-          'Org2 has a different chaincode package installed than Org1',
-          'Org2 has different chaincode state than Org1',
-          'The chaincode packages on both orgs are out of sync'
-        ],
-        solution: 'Ensure both Org1 and Org2 have the exact same chaincode package installed. Run the deploy script to sync both orgs: ./deploy-chaincode.sh'
-      });
-    } else {
-      res.status(400).json({ error: errorMessage });
-    }
+
+    await prisma.systemActivity.create({
+      data: {
+        user: 'system',
+        role: 'System',
+        action: 'InitLedger Error',
+        description: err.message,
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    return res.status(400).json({ error: err.message });
   }
 });
 
@@ -335,13 +608,40 @@ app.get('/elections', async (_req, res) => {
 // 1) Create election (blockchain + DB)
 app.post('/elections', async (req, res) => {
   const { electionId, name, description, startTime, endTime, createdBy } = req.body || {};
+  const ip = req.ip;
+
   if (!electionId || !name || !startTime || !endTime) {
+    await prisma.systemActivity.create({
+      data: {
+        user: createdBy || 'admin',
+        role: 'Admin',
+        action: 'CREATE_ELECTION_FAILED',
+        description: 'Missing required fields',
+        ipAddress: ip,
+        status: 'Failed',
+      },
+    });
+
     return res.status(400).json({
       error: 'Missing required fields: electionId, name, startTime, endTime',
     });
   }
+
   try {
     const contract = await getContract();
+
+    // Log BEFORE blockchain call (attempt)
+    await prisma.systemActivity.create({
+      data: {
+        user: createdBy || 'admin',
+        role: 'Admin',
+        action: 'CREATE_ELECTION_ATTEMPT',
+        description: `Creating election ${electionId}`,
+        ipAddress: ip,
+        status: 'Success',
+      },
+    });
+
     await contract.submitTransaction(
       'CreateElection',
       String(electionId),
@@ -351,6 +651,8 @@ app.post('/elections', async (req, res) => {
       String(endTime),
       String(createdBy ?? 'admin'),
     );
+
+    // DB sync
     try {
       await prisma.election.upsert({
         where: { id: electionId },
@@ -373,8 +675,20 @@ app.post('/elections', async (req, res) => {
         },
       });
     } catch (dbErr: any) {
+      await prisma.systemActivity.create({
+        data: {
+          user: createdBy || 'admin',
+          role: 'Admin',
+          action: 'ELECTION_DB_SYNC_FAILED',
+          description: dbErr.message,
+          ipAddress: ip,
+          status: 'Failed',
+        },
+      });
+
       console.warn('⚠️ Failed to sync new election to database:', dbErr.message);
     }
+
     const election = {
       id: electionId,
       name: String(name),
@@ -384,14 +698,42 @@ app.post('/elections', async (req, res) => {
       status: 'DRAFT',
       createdBy: String(createdBy ?? 'admin'),
     };
-    res.status(201).json(election);
+
+    // Success log AFTER everything succeeds
+    await prisma.systemActivity.create({
+      data: {
+        user: createdBy || 'admin',
+        role: 'Admin',
+        action: 'CREATE_ELECTION_SUCCESS',
+        description: `Election ${electionId} created successfully`,
+        ipAddress: ip,
+        status: 'Success',
+      },
+    });
+
+    return res.status(201).json(election);
+
   } catch (err: any) {
     console.error('CreateElection error:', err);
+
     const msg = err.message || String(err);
+
+    await prisma.systemActivity.create({
+      data: {
+        user: createdBy || 'admin',
+        role: 'Admin',
+        action: 'CREATE_ELECTION_FAILED',
+        description: msg,
+        ipAddress: ip,
+        status: 'Failed',
+      },
+    });
+
     if (msg.includes('already exists')) {
       return res.status(409).json({ error: msg });
     }
-    res.status(400).json({ error: msg });
+
+    return res.status(400).json({ error: msg });
   }
 });
 
@@ -414,8 +756,38 @@ app.get('/elections/:id', async (req, res) => {
       try {
         await contract.submitTransaction('OpenElection', req.params.id);
         election.status = 'OPEN';
+        await prisma.systemActivity.create({
+          data: {
+            user: 'system',
+            role: 'Admin',
+            action: 'AUTO_OPEN_ELECTION',
+            description: `Election ${req.params.id} auto-opened (start time reached)`,
+            ipAddress: req.ip,
+            status: 'Success',
+          },
+        });
         console.log(`✅ Election ${req.params.id} automatically opened (start time reached)`);
+        await prisma.systemActivity.create({
+          data: {
+            user: 'system',
+            role: 'Admin',
+            action: 'AUTO_OPEN_ELECTION',
+            description: `Election ${req.params.id} auto-opened (start time reached)`,
+            ipAddress: req.ip,
+            status: 'Success',
+          },
+        });
       } catch (openErr: any) {
+        await prisma.systemActivity.create({
+          data: {
+            user: 'system',
+            role: 'Admin',
+            action: 'AUTO_OPEN_ELECTION_FAILED',
+            description: openErr.message,
+            ipAddress: req.ip,
+            status: 'Failed',
+          },
+        });
         console.warn(`⚠️ Failed to auto-open election ${req.params.id}:`, openErr.message);
       }
     }
@@ -425,8 +797,38 @@ app.get('/elections/:id', async (req, res) => {
       try {
         await contract.submitTransaction('CloseElection', req.params.id);
         election.status = 'CLOSED';
+        await prisma.systemActivity.create({
+          data: {
+            user: 'system',
+            role: 'Admin',
+            action: 'AUTO_CLOSE_ELECTION',
+            description: `Election ${req.params.id} auto-closed (end time passed)`,
+            ipAddress: req.ip,
+            status: 'Success',
+          },
+        });
         console.log(`✅ Election ${req.params.id} automatically closed (end time passed)`);
+        await prisma.systemActivity.create({
+          data: {
+            user: 'system',
+            role: 'Admin',
+            action: 'AUTO_CLOSE_ELECTION',
+            description: `Election ${req.params.id} auto-closed (end time passed)`,
+            ipAddress: req.ip,
+            status: 'Success',
+          },
+        });
       } catch (closeErr: any) {
+        await prisma.systemActivity.create({
+          data: {
+            user: 'system',
+            role: 'Admin',
+            action: 'AUTO_CLOSE_ELECTION_FAILED',
+            description: closeErr.message,
+            ipAddress: req.ip,
+            status: 'Failed',
+          },
+        });
         console.warn(`⚠️ Failed to auto-close election ${req.params.id}:`, closeErr.message);
       }
     }
@@ -454,6 +856,16 @@ app.get('/elections/:id', async (req, res) => {
       });
       console.log(`✅ Election ${req.params.id} synced to database`);
     } catch (dbErr: any) {
+      await prisma.systemActivity.create({
+        data: {
+          user: 'system',
+          role: 'Admin',
+          action: 'ELECTION_SYNC_FAILED',
+          description: dbErr.message,
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
       console.warn(`⚠️ Failed to sync election ${req.params.id} to database:`, dbErr.message);
       // Continue even if database sync fails - return blockchain data
     }
@@ -468,6 +880,17 @@ app.get('/elections/:id', async (req, res) => {
       return res.status(404).json({ error: 'No election configured' });
     }
     
+    await prisma.systemActivity.create({
+      data: {
+        user: 'system',
+        role: 'Admin',
+        action: 'GET_ELECTION_FAILED',
+        description: errorMessage,
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
     res.status(400).json({ error: errorMessage || 'GetElection failed' });
   }
 });
@@ -500,10 +923,22 @@ app.get('/elections/:id/positions', async (req, res) => {
     );
 
     res.json(positionsWithCandidates);
-  } catch (err: any) {
-    console.error('GetPositions error:', err);
-    res.status(400).json({ error: err.message || 'GetPositions failed' });
-  }
+    } catch (err: any) {
+      console.error('GetPositions error:', err);
+
+      await prisma.systemActivity.create({
+        data: {
+          user: 'system',
+          role: 'Admin',
+          action: 'GET_POSITIONS_FAILED',
+          description: err.message || 'GetPositions failed',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
+      res.status(400).json({ error: err.message || 'GetPositions failed' });
+    }
 });
 
 // 2b) Get candidates for a position (from blockchain)
@@ -518,7 +953,19 @@ app.get('/elections/:id/positions/:positionId/candidates', async (req, res) => {
     }
     res.json(JSON.parse(responseText));
   } catch (err: any) {
-    console.error('GetCandidatesByPosition error:', err);
+  console.error('GetCandidatesByPosition error:', err);
+
+  await prisma.systemActivity.create({
+    data: {
+        user: 'system',
+        role: 'Admin',
+        action: 'GET_CANDIDATES_FAILED',
+        description: err.message || 'GetCandidatesByPosition failed',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
     res.status(400).json({ error: err.message || 'GetCandidatesByPosition failed' });
   }
 });
@@ -529,6 +976,17 @@ app.post('/elections/:id/candidates', async (req, res) => {
   const { candidates } = req.body; // Array of { positionName, name, party, yearLevel, program? }
 
   if (!Array.isArray(candidates) || candidates.length === 0) {
+    await prisma.systemActivity.create({
+      data: {
+        user: 'admin',
+        role: 'Admin',
+        action: 'CREATE_CANDIDATES_FAILED',
+        description: 'Candidates array is missing or empty',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
     return res.status(400).json({ error: 'candidates array is required' });
   }
 
@@ -551,7 +1009,16 @@ app.post('/elections/:id/candidates', async (req, res) => {
 
       const position = positionMap.get(positionName);
       if (!position) {
-        console.warn(`Position "${positionName}" not found for election ${id}`);
+        await prisma.systemActivity.create({
+          data: {
+            user: 'admin',
+            role: 'Admin',
+            action: 'CREATE_CANDIDATE_FAILED',
+            description: `Position "${positionName}" not found in election ${id}`,
+            ipAddress: req.ip,
+            status: 'Failed',
+          },
+        });
         continue;
       }
 
@@ -610,6 +1077,17 @@ app.post('/elections/:id/candidates', async (req, res) => {
           }
         }
       } catch (blockchainErr: any) {
+        await prisma.systemActivity.create({
+          data: {
+            user: 'admin',
+            role: 'Admin',
+            action: 'BLOCKCHAIN_REGISTER_CANDIDATE_FAILED',
+            description: `Candidate ${candidateId}: ${blockchainErr.message}`,
+            ipAddress: req.ip,
+            status: 'Failed',
+          },
+        });
+
         console.warn(`⚠️ Failed to register candidate ${candidateId} on blockchain:`, blockchainErr.message);
         // Continue even if blockchain registration fails - candidate is in database
       }
@@ -617,8 +1095,29 @@ app.post('/elections/:id/candidates', async (req, res) => {
       createdCandidates.push(candidate);
     }
 
+    await prisma.systemActivity.create({
+      data: {
+        user: 'admin',
+        role: 'Admin',
+        action: 'CREATE_CANDIDATES',
+        description: `Added ${createdCandidates.length} candidates to election ${id}`,
+        ipAddress: req.ip,
+        status: 'Success',
+      },
+    });
+
     res.json({ ok: true, candidates: createdCandidates, count: createdCandidates.length });
   } catch (err: any) {
+    await prisma.systemActivity.create({
+      data: {
+        user: 'admin',
+        role: 'Admin',
+        action: 'CREATE_CANDIDATES_FAILED',
+        description: err.message || 'CreateCandidates failed',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
     console.error('CreateCandidates error:', err);
     res.status(400).json({ error: err.message || 'CreateCandidates failed' });
   }
@@ -629,21 +1128,34 @@ app.put('/elections/:id', async (req, res) => {
   const { id } = req.params;
   const { name, description, startTime, endTime } = req.body;
 
+  // Validation
   if (!name || !startTime || !endTime) {
-    return res.status(400).json({ error: 'name, startTime, and endTime are required' });
+    await prisma.systemActivity.create({
+      data: {
+        user: 'admin',
+        role: 'Admin',
+        action: 'UPDATE_ELECTION_FAILED',
+        description: 'Missing required fields',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    return res.status(400).json({
+      error: 'name, startTime, and endTime are required',
+    });
   }
 
   try {
     const contract = await getContract();
-    
-    // Retry logic for MVCC_READ_CONFLICT (up to 3 attempts)
+
+    // Retry logic for MVCC conflict
     let lastError: any = null;
     let success = false;
     const maxRetries = 3;
-    
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        // Update on blockchain
         await contract.submitTransaction(
           'UpdateElection',
           id,
@@ -652,18 +1164,31 @@ app.put('/elections/:id', async (req, res) => {
           startTime,
           endTime
         );
+
         success = true;
-        break; // Success, exit retry loop
+        break;
       } catch (err: any) {
         lastError = err;
-        // Check if it's an MVCC_READ_CONFLICT error (code 11)
+
+        // MVCC conflict handling
         if (err.code === 11 && attempt < maxRetries) {
           console.warn(`⚠️ MVCC_READ_CONFLICT on attempt ${attempt}, retrying...`);
-          // Wait a bit before retrying (exponential backoff)
-          await new Promise(resolve => setTimeout(resolve, 200 * attempt));
+
+          await prisma.systemActivity.create({
+            data: {
+              user: 'admin',
+              role: 'Admin',
+              action: 'UPDATE_ELECTION_RETRY',
+              description: `MVCC conflict on election ${id}, attempt ${attempt}`,
+              ipAddress: req.ip,
+              status: 'Failed',
+            },
+          });
+
+          await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
           continue;
         }
-        // If not MVCC_READ_CONFLICT or max retries reached, throw
+
         throw err;
       }
     }
@@ -672,7 +1197,7 @@ app.put('/elections/:id', async (req, res) => {
       throw lastError;
     }
 
-    // Only update database after successful blockchain transaction
+    // Database update (after blockchain success)
     try {
       await prisma.election.upsert({
         where: { id },
@@ -692,71 +1217,216 @@ app.put('/elections/:id', async (req, res) => {
           createdBy: 'admin',
         },
       });
+
       console.log(`✅ Election ${id} updated in database`);
     } catch (dbErr: any) {
-      console.warn(`⚠️ Failed to update election ${id} in database:`, dbErr.message);
-      // Continue even if database update fails - blockchain is updated
+      await prisma.systemActivity.create({
+        data: {
+          user: 'admin',
+          role: 'Admin',
+          action: 'ELECTION_DB_UPDATE_FAILED',
+          description: dbErr.message,
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
+      console.warn(
+        `⚠️ Failed to update election ${id} in database:`,
+        dbErr.message
+      );
+      // Continue since blockchain update succeeded
     }
 
+    // Send response first
     res.json({ ok: true, message: 'Election updated successfully' });
+
+    // Log success asynchronously
+    prisma.systemActivity
+      .create({
+        data: {
+          user: 'admin',
+          role: 'Admin',
+          action: 'UPDATE_ELECTION',
+          description: `Election ${id} updated successfully`,
+          ipAddress: req.ip,
+          status: 'Success',
+        },
+      })
+      .catch(console.error);
+
   } catch (err: any) {
+    // ✅ Log failure
+    await prisma.systemActivity.create({
+      data: {
+        user: 'admin',
+        role: 'Admin',
+        action: 'UPDATE_ELECTION_FAILED',
+        description: err.message || 'UpdateElection failed',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
     console.error('UpdateElection error:', err);
-    
-    // Provide helpful error message for MVCC_READ_CONFLICT
+
+    // MVCC conflict response
     if (err.code === 11) {
-      return res.status(409).json({ 
-        error: 'Transaction conflict: Another update is in progress. Please try again in a moment.',
+      return res.status(409).json({
+        error:
+          'Transaction conflict: Another update is in progress. Please try again in a moment.',
         code: 'MVCC_READ_CONFLICT',
-        hint: 'This usually happens when multiple updates occur simultaneously. Retry the request.'
+        hint: 'This usually happens when multiple updates occur simultaneously. Retry the request.',
       });
     }
-    
-    res.status(400).json({ error: err.message || 'UpdateElection failed' });
+
+    res.status(400).json({
+      error: err.message || 'UpdateElection failed',
+    });
   }
 });
 
 // 3) Open election (change status from DRAFT to OPEN)
 app.post('/elections/:id/open', async (req, res) => {
   const { id } = req.params;
+
   try {
     const contract = await getContract();
     await contract.submitTransaction('OpenElection', id);
+
     res.json({ ok: true });
+
+    // Success log
+    await prisma.systemActivity.create({
+      data: {
+        user: 'admin',
+        role: 'Admin',
+        action: 'OPEN_ELECTION',
+        description: `Election ${id} opened`,
+        ipAddress: req.ip,
+        status: 'Success',
+      },
+    });
   } catch (err: any) {
     console.error('OpenElection error:', err);
-    res.status(400).json({ error: err.message || 'OpenElection failed' });
+
+    // Failure log
+    await prisma.systemActivity.create({
+      data: {
+        user: 'admin',
+        role: 'Admin',
+        action: 'OPEN_ELECTION_FAILED',
+        description: err.message || 'OpenElection failed',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    res.status(400).json({
+      error: err.message || 'OpenElection failed',
+    });
   }
 });
+
 
 // 3.5) Close election (change status from OPEN to CLOSED)
 app.post('/elections/:id/close', async (req, res) => {
   const { id } = req.params;
+
   try {
     const contract = await getContract();
     await contract.submitTransaction('CloseElection', id);
+
     res.json({ ok: true });
+
+    // Success log
+    await prisma.systemActivity.create({
+      data: {
+        user: 'admin',
+        role: 'Admin',
+        action: 'CLOSE_ELECTION',
+        description: `Election ${id} closed`,
+        ipAddress: req.ip,
+        status: 'Success',
+      },
+    });
   } catch (err: any) {
     console.error('CloseElection error:', err);
-    res.status(400).json({ error: err.message || 'CloseElection failed' });
+
+    // Failure log
+    await prisma.systemActivity.create({
+      data: {
+        user: 'admin',
+        role: 'Admin',
+        action: 'CLOSE_ELECTION_FAILED',
+        description: err.message || 'CloseElection failed',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    res.status(400).json({
+      error: err.message || 'CloseElection failed',
+    });
   }
 });
+
 
 // 4) Register voter
 app.post('/elections/:id/voters', async (req, res) => {
   const { id } = req.params;
-  const { voterId } = req.body; // e.g., UP mail or student ID
+  const { voterId } = req.body;
 
   if (!voterId) {
+    await prisma.systemActivity.create({
+      data: {
+        user: 'admin',
+        role: 'Admin',
+        action: 'REGISTER_VOTER_FAILED',
+        description: 'voterId is required',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
     return res.status(400).json({ error: 'voterId is required' });
   }
 
   try {
     const contract = await getContract();
     await contract.submitTransaction('RegisterVoter', id, voterId);
+
     res.json({ ok: true });
+
+    // Success log
+    await prisma.systemActivity.create({
+      data: {
+        user: 'admin',
+        role: 'Admin',
+        action: 'REGISTER_VOTER',
+        description: `Voter ${voterId} registered to election ${id}`,
+        ipAddress: req.ip,
+        status: 'Success',
+      },
+    });
   } catch (err: any) {
     console.error(err);
-    res.status(400).json({ error: err.message || 'RegisterVoter failed' });
+
+    // Failure log
+    await prisma.systemActivity.create({
+      data: {
+        user: 'admin',
+        role: 'Admin',
+        action: 'REGISTER_VOTER_FAILED',
+        description: err.message || 'RegisterVoter failed',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    res.status(400).json({
+      error: err.message || 'RegisterVoter failed',
+    });
   }
 });
 
@@ -764,57 +1434,91 @@ app.post('/elections/:id/voters', async (req, res) => {
 app.post('/elections/:id/votes', async (req, res) => {
   const { id } = req.params;
   const { studentNumber, selections } = req.body;
-  // selections = [{ positionId, candidateId }, ...]
 
   if (!studentNumber || !Array.isArray(selections)) {
-    return res.status(400).json({ error: 'studentNumber and selections[] are required' });
+    await prisma.systemActivity.create({
+      data: {
+        user: studentNumber || 'Unknown',
+        role: 'Voter',
+        action: 'CAST_VOTE_FAILED',
+        description: 'Missing studentNumber or selections',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    return res.status(400).json({
+      error: 'studentNumber and selections[] are required',
+    });
   }
 
   try {
-    // --- 1) OFF-CHAIN: Verify voter exists and is eligible ---
+    // --- 1) OFF-CHAIN VALIDATION ---
     const voter = await prisma.voter.findUnique({
       where: { studentNumber },
     });
 
     if (!voter) {
+      await prisma.systemActivity.create({
+        data: {
+          user: studentNumber,
+          role: 'Voter',
+          action: 'CAST_VOTE_FAILED',
+          description: 'Voter not found',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(404).json({ error: 'Voter not found in registry' });
     }
 
     if (voter.college !== 'CAS') {
+      await prisma.systemActivity.create({
+        data: {
+          user: studentNumber,
+          role: 'Voter',
+          action: 'CAST_VOTE_FAILED',
+          description: 'Invalid college',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(403).json({ error: 'This election is for CAS students only' });
     }
 
     if (voter.status !== 'ENROLLED' || !voter.isEligible) {
+      await prisma.systemActivity.create({
+        data: {
+          user: studentNumber,
+          role: 'Voter',
+          action: 'CAST_VOTE_FAILED',
+          description: 'Voter not eligible',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(403).json({ error: 'Voter is not eligible to vote' });
     }
 
     if (voter.hasVoted) {
+      await prisma.systemActivity.create({
+        data: {
+          user: studentNumber,
+          role: 'Voter',
+          action: 'CAST_VOTE_FAILED',
+          description: 'Already voted',
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       return res.status(403).json({ error: 'Voter has already cast their vote' });
     }
 
-    // --- Validate department governor restriction ---
-    const voterDepartment = voter.department.toLowerCase();
-    const governorPositions = ['clovers-governor', 'elektrons-governor', 'redbolts-governor', 'skimmers-governor'];
-    
-    for (const selection of selections) {
-      const { positionId } = selection;
-      
-      // Check if this is a governor position
-      if (governorPositions.includes(positionId)) {
-        // Extract department from position ID (e.g., "clovers-governor" -> "clovers")
-        const positionDepartment = positionId.split('-')[0].toLowerCase();
-        
-        // Verify the position matches the voter's department
-        if (positionDepartment !== voterDepartment) {
-          return res.status(403).json({ 
-            error: `You can only vote for ${voter.department} Governor. You attempted to vote for ${positionId.replace('-governor', '').charAt(0).toUpperCase() + positionId.replace('-governor', '').slice(1)} Governor.` 
-          });
-        }
-      }
-    }
-
-    // Update voter as voted
-    console.log(`[Vote] Marking voter ${studentNumber} as voted...`);
+    // --- Mark voter as voted ---
     await prisma.voter.update({
       where: { studentNumber },
       data: {
@@ -822,68 +1526,59 @@ app.post('/elections/:id/votes', async (req, res) => {
         votedAt: new Date(),
       },
     });
-    console.log(`[Vote] ✅ Voter ${studentNumber} marked as voted`);
 
-    // --- 2) ON-CHAIN: call ECASVote chaincode (CastVote) ---
-    console.log(`[Vote] Submitting vote to blockchain...`);
+    // --- 2) BLOCKCHAIN ---
     const contract = await getContract();
     const selectionsJson = JSON.stringify(selections);
-    
+
     let transactionId: string;
+
     try {
-      // Create proposal to get transaction ID, then endorse and submit
-      // Use studentNumber as voterId for chaincode
       const proposal = contract.newProposal('CastVote', {
         arguments: [id, studentNumber, selectionsJson],
       });
+
       transactionId = proposal.getTransactionId();
-      console.log(`[Vote] Created proposal with transaction ID: ${transactionId}`);
-      
-      // Endorse the proposal to get a transaction
-      console.log(`[Vote] Endorsing proposal...`);
+
       const transaction = await proposal.endorse();
-      console.log(`[Vote] ✅ Proposal endorsed successfully`);
-      
-      // Submit the transaction
-      console.log(`[Vote] Submitting transaction...`);
       await transaction.submit();
-      console.log(`[Vote] ✅ Vote submitted to blockchain with transaction ID: ${transactionId}`);
+
     } catch (blockchainErr: any) {
-      console.error('[Vote] Blockchain error details:', {
-        message: blockchainErr.message,
-        code: blockchainErr.code,
-        details: blockchainErr.details,
-        cause: blockchainErr.cause,
+      // rollback voter
+      await prisma.voter.update({
+        where: { studentNumber },
+        data: {
+          hasVoted: false,
+          votedAt: null,
+        },
       });
-      // Rollback: Mark voter as not voted if blockchain failed
-      try {
-        await prisma.voter.update({
-          where: { studentNumber },
-          data: {
-            hasVoted: false,
-            votedAt: null,
-          },
-        });
-        console.log(`[Vote] Rolled back voter ${studentNumber} status`);
-      } catch (rollbackErr) {
-        console.error('[Vote] Failed to rollback voter status:', rollbackErr);
-      }
+
+      await prisma.systemActivity.create({
+        data: {
+          user: studentNumber,
+          role: 'Voter',
+          action: 'CAST_VOTE_BLOCKCHAIN_FAILED',
+          description: blockchainErr.message,
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
       throw blockchainErr;
     }
 
-    // --- 3) Store vote in database ---
+    // --- 3) Save vote ---
     const vote = await prisma.vote.create({
       data: {
         electionId: id,
         voterId: studentNumber,
-        selections: selections,
+        selections,
         txId: transactionId,
         castAt: new Date(),
       },
     });
-    console.log(`[Vote] ✅ Vote saved to database: ${vote.id}`);
 
-    // --- 4) Store transaction ID in audit log ---
+    // --- 4) Audit log (already correct) ---
     await prisma.auditLog.create({
       data: {
         electionId: id,
@@ -891,87 +1586,144 @@ app.post('/elections/:id/votes', async (req, res) => {
         action: 'CAST_VOTE',
         txId: transactionId,
         details: {
-          selections: selections,
+          selections,
           voteId: vote.id,
         },
       },
     });
 
-    return res.json({
+    // ✅ Success log
+    res.json({
       ok: true,
-      message: 'Vote recorded on-chain and stored in database.',
-      transactionId: transactionId,
+      message: 'Vote recorded successfully',
+      transactionId,
       voteId: vote.id,
     });
+
+    prisma.systemActivity.create({
+      data: {
+        user: studentNumber,
+        role: 'Voter',
+        action: 'CAST_VOTE',
+        description: `Vote cast in election ${id}`,
+        ipAddress: req.ip,
+        status: 'Success',
+      },
+    }).catch(console.error);
+
   } catch (err: any) {
-    console.error('[Vote] Error:', err);
-    const errorMessage = err.message ?? 'Internal server error';
-    
-    // Check if it's a blockchain error
-    if (errorMessage.includes('endorsement') || errorMessage.includes('ABORTED') || err.code === 10) {
-      // Rollback: Mark voter as not voted if blockchain failed
-      // Note: studentNumber should be extracted from request body if available
-      const requestBody = req.body;
-      if (requestBody?.studentNumber) {
-        try {
-          await prisma.voter.update({
-            where: { studentNumber: requestBody.studentNumber },
-            data: {
-              hasVoted: false,
-              votedAt: null,
-            },
-          });
-          console.log(`[Vote] Rolled back voter ${requestBody.studentNumber} status`);
-        } catch (rollbackErr) {
-          console.error('[Vote] Failed to rollback voter status:', rollbackErr);
-        }
+  console.error('[Vote] Error:', err);
+
+  const errorMessage = err.message ?? 'Internal server error';
+
+  // 🔥 Blockchain-specific error handling FIRST
+  if (
+    errorMessage.includes('endorsement') ||
+    errorMessage.includes('ABORTED') ||
+    err.code === 10
+  ) {
+    // 🔁 Rollback voter (extra safety)
+    try {
+      if (studentNumber) {
+        await prisma.voter.update({
+          where: { studentNumber },
+          data: {
+            hasVoted: false,
+            votedAt: null,
+          },
+        });
       }
-      
-      // Provide detailed error information
-      const errorDetails: any = {
-        error: 'Blockchain transaction failed',
-        details: errorMessage,
-        code: err.code,
-      };
-      
-      // Add more details if available
-      if (err.details && Array.isArray(err.details)) {
-        errorDetails.endorsementDetails = err.details;
-      }
-      
-      if (err.cause) {
-        errorDetails.cause = err.cause.message || String(err.cause);
-      }
-      
-      errorDetails.solution = 'This usually means the chaincode needs to be redeployed or the network peers are out of sync. Try redeploying the chaincode.';
-      
-      return res.status(500).json(errorDetails);
+    } catch (rollbackErr: any) {
+      console.error('[Vote] Rollback failed:', rollbackErr);
+
+      await prisma.systemActivity.create({
+        data: {
+          user: studentNumber,
+          role: 'Voter',
+          action: 'VOTE_ROLLBACK_FAILED',
+          description: rollbackErr.message,
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
     }
-    
-    return res.status(500).json({ error: errorMessage });
+
+    // ❌ Blockchain failure log
+    await prisma.systemActivity.create({
+      data: {
+        user: studentNumber || 'Unknown',
+        role: 'Voter',
+        action: 'CAST_VOTE_BLOCKCHAIN_FAILED',
+        description: errorMessage,
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    return res.status(500).json({
+      error: 'Blockchain transaction failed',
+      details: errorMessage,
+      code: err.code,
+    });
+  }
+
+  // ❌ General failure log (ONLY once)
+  await prisma.systemActivity.create({
+    data: {
+      user: studentNumber || 'Unknown',
+      role: 'Voter',
+      action: 'CAST_VOTE_FAILED',
+      description: errorMessage,
+      ipAddress: req.ip,
+      status: 'Failed',
+    },
+  });
+
+  return res.status(500).json({
+    error: errorMessage,
+  });
   }
 });
 
 // 6) Get results
 app.get('/elections/:id/results', async (req, res) => {
   const { id } = req.params;
+
   try {
     const contract = await getContract();
     const bytes = await contract.evaluateTransaction('GetElectionResults', id);
     const responseText = Buffer.from(bytes).toString('utf8').trim();
+
     if (!responseText) {
       throw new Error('Empty response from chaincode');
     }
+
     res.json(JSON.parse(responseText));
+
   } catch (err: any) {
     console.error('GetElectionResults error:', err);
-    res.status(400).json({ error: err.message || 'GetElectionResults failed' });
+
+    await prisma.systemActivity.create({
+      data: {
+        user: 'system',
+        role: 'Admin',
+        action: 'GET_ELECTION_RESULTS_FAILED',
+        description: err.message || 'Failed to fetch election results',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    res.status(400).json({
+      error: err.message || 'GetElectionResults failed',
+    });
   }
 });
 
 // 7) Get transaction ID for a voter's vote
 app.get('/elections/:id/voters/:voterId/transaction', async (req, res) => {
   const { id, voterId } = req.params;
+
   try {
     const auditLog = await prisma.auditLog.findFirst({
       where: {
@@ -985,7 +1737,20 @@ app.get('/elections/:id/voters/:voterId/transaction', async (req, res) => {
     });
 
     if (!auditLog || !auditLog.txId) {
-      return res.status(404).json({ error: 'Transaction ID not found for this voter' });
+      await prisma.systemActivity.create({
+        data: {
+          user: voterId,
+          role: 'Admin',
+          action: 'GET_TRANSACTION_NOT_FOUND',
+          description: `No transaction found for voter ${voterId}`,
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
+
+      return res.status(404).json({
+        error: 'Transaction ID not found for this voter',
+      });
     }
 
     res.json({
@@ -995,15 +1760,30 @@ app.get('/elections/:id/voters/:voterId/transaction', async (req, res) => {
       castAt: auditLog.createdAt,
       details: auditLog.details,
     });
+
   } catch (err: any) {
     console.error('GetTransactionId error:', err);
-    res.status(400).json({ error: err.message || 'GetTransactionId failed' });
+
+    await prisma.systemActivity.create({
+      data: {
+        user: voterId || 'Unknown',
+        role: 'Admin',
+        action: 'GET_TRANSACTION_FAILED',
+        description: err.message || 'Failed to fetch transaction ID',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    res.status(400).json({
+      error: err.message || 'GetTransactionId failed',
+    });
   }
 });
 
-// 8) Get dashboard statistics for an election
 app.get('/elections/:id/dashboard', async (req, res) => {
   const { id } = req.params;
+
   try {
     // Get total CAS enrolled voters
     const totalVoters = await prisma.voter.count({
@@ -1026,63 +1806,109 @@ app.get('/elections/:id/dashboard', async (req, res) => {
 
     // Get election info from blockchain
     let election: any = null;
+
     try {
       const contract = await getContract();
       const bytes = await contract.evaluateTransaction('GetElection', id);
       const responseText = Buffer.from(bytes).toString('utf8').trim();
+
       if (responseText) {
         election = JSON.parse(responseText);
-        
-        // Auto-close election if end time has passed
+
         const now = new Date();
         const endTime = new Date(election.endTime);
+
+        // Auto-close election if expired
         if (election.status === 'OPEN' && now > endTime) {
           try {
             await contract.submitTransaction('CloseElection', id);
             election.status = 'CLOSED';
-            console.log(`✅ Election ${id} automatically closed in dashboard (end time passed)`);
-          } catch (closeErr: any) {
-            console.warn(`⚠️ Failed to auto-close election ${id} in dashboard:`, closeErr.message);
-            // Continue with current status if close fails
-          }
-        }
-        
-        // Sync election to database when fetched
-        if (election) {
-          try {
-            await prisma.election.upsert({
-              where: { id },
-              update: {
-                name: election.name,
-                description: election.description || null,
-                startTime: new Date(election.startTime),
-                endTime: new Date(election.endTime),
-                status: election.status as any,
-              },
-              create: {
-                id: election.id,
-                name: election.name,
-                description: election.description || null,
-                startTime: new Date(election.startTime),
-                endTime: new Date(election.endTime),
-                status: election.status as any,
-                createdBy: election.createdBy || 'system',
+
+            await prisma.systemActivity.create({
+              data: {
+                user: 'system',
+                role: 'Admin',
+                action: 'AUTO_CLOSE_ELECTION',
+                description: `Election ${id} auto-closed (end time passed)`,
+                ipAddress: req.ip,
+                status: 'Success',
               },
             });
-          } catch (syncErr: any) {
-            console.warn(`⚠️ Failed to sync election ${id} to database in dashboard:`, syncErr.message);
+
+          } catch (closeErr: any) {
+            console.warn(`⚠️ Failed to auto-close election ${id}:`, closeErr.message);
+
+            await prisma.systemActivity.create({
+              data: {
+                user: 'system',
+                role: 'Admin',
+                action: 'AUTO_CLOSE_ELECTION_FAILED',
+                description: closeErr.message,
+                ipAddress: req.ip,
+                status: 'Failed',
+              },
+            });
           }
         }
+
+        // Sync election to DB
+        try {
+          await prisma.election.upsert({
+            where: { id },
+            update: {
+              name: election.name,
+              description: election.description || null,
+              startTime: new Date(election.startTime),
+              endTime: new Date(election.endTime),
+              status: election.status as any,
+            },
+            create: {
+              id: election.id,
+              name: election.name,
+              description: election.description || null,
+              startTime: new Date(election.startTime),
+              endTime: new Date(election.endTime),
+              status: election.status as any,
+              createdBy: election.createdBy || 'system',
+            },
+          });
+
+        } catch (syncErr: any) {
+          console.warn(`⚠️ Failed to sync election ${id}:`, syncErr.message);
+
+          await prisma.systemActivity.create({
+            data: {
+              user: 'system',
+              role: 'Admin',
+              action: 'ELECTION_SYNC_FAILED',
+              description: syncErr.message,
+              ipAddress: req.ip,
+              status: 'Failed',
+            },
+          });
+        }
       }
-    } catch (err) {
-      console.warn('Could not fetch election from blockchain:', err);
+
+    } catch (err: any) {
+      console.warn('Could not fetch election from blockchain:', err.message);
+
+      await prisma.systemActivity.create({
+        data: {
+          user: 'system',
+          role: 'Admin',
+          action: 'FETCH_ELECTION_BLOCKCHAIN_FAILED',
+          description: err.message,
+          ipAddress: req.ip,
+          status: 'Failed',
+        },
+      });
     }
 
-    // Get recent announcements (from audit logs)
+    // Get recent announcements
     const announcements = await prisma.auditLog.findMany({
       where: {
         electionId: id,
-        action: { not: 'CAST_VOTE' }, // Exclude vote actions
+        action: { not: 'CAST_VOTE' },
       },
       orderBy: {
         createdAt: 'desc',
@@ -1104,23 +1930,35 @@ app.get('/elections/:id/dashboard', async (req, res) => {
         createdAt: log.createdAt,
       })),
     });
+
   } catch (err: any) {
     console.error('GetDashboard error:', err);
-    res.status(400).json({ error: err.message || 'GetDashboard failed' });
+
+    await prisma.systemActivity.create({
+      data: {
+        user: 'system',
+        role: 'Admin',
+        action: 'GET_DASHBOARD_FAILED',
+        description: err.message || 'Dashboard fetch failed',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    res.status(400).json({
+      error: err.message || 'GetDashboard failed',
+    });
   }
 });
 
 // 9) Get all audit logs for an election (for validators)
 app.get('/elections/:id/audit-logs', async (req, res) => {
   const { id } = req.params;
+
   try {
     const auditLogs = await prisma.auditLog.findMany({
-      where: {
-        electionId: id,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      where: { electionId: id },
+      orderBy: { createdAt: 'desc' },
     });
 
     res.json({
@@ -1136,17 +1974,32 @@ app.get('/elections/:id/audit-logs', async (req, res) => {
       })),
       count: auditLogs.length,
     });
+
   } catch (err: any) {
     console.error('GetAuditLogs error:', err);
-    res.status(400).json({ error: err.message || 'GetAuditLogs failed' });
+
+    await prisma.systemActivity.create({
+      data: {
+        user: 'system',
+        role: 'Admin',
+        action: 'GET_AUDIT_LOGS_FAILED',
+        description: err.message || 'Failed to fetch audit logs',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    res.status(400).json({
+      error: err.message || 'GetAuditLogs failed',
+    });
   }
 });
 
 // 10) Get detailed voter turnout statistics
 app.get('/elections/:id/turnout', async (req, res) => {
   const { id } = req.params;
+
   try {
-    // Get total CAS enrolled voters
     const totalVoters = await prisma.voter.count({
       where: { 
         college: 'CAS',
@@ -1155,7 +2008,6 @@ app.get('/elections/:id/turnout', async (req, res) => {
       },
     });
 
-    // Get voters who have voted
     const votedCount = await prisma.voter.count({
       where: {
         college: 'CAS',
@@ -1165,7 +2017,6 @@ app.get('/elections/:id/turnout', async (req, res) => {
       },
     });
 
-    // Get all eligible voters with their details
     const allVoters = await prisma.voter.findMany({
       where: {
         college: 'CAS',
@@ -1180,8 +2031,9 @@ app.get('/elections/:id/turnout', async (req, res) => {
       },
     });
 
-    // Calculate breakdown by department
+    // Department breakdown
     const departmentMap = new Map<string, { total: number; voted: number }>();
+
     allVoters.forEach(voter => {
       const dept = voter.department || 'Unknown';
       if (!departmentMap.has(dept)) {
@@ -1189,9 +2041,7 @@ app.get('/elections/:id/turnout', async (req, res) => {
       }
       const stats = departmentMap.get(dept)!;
       stats.total++;
-      if (voter.hasVoted) {
-        stats.voted++;
-      }
+      if (voter.hasVoted) stats.voted++;
     });
 
     const byDepartment = Array.from(departmentMap.entries()).map(([name, stats]) => ({
@@ -1201,8 +2051,9 @@ app.get('/elections/:id/turnout', async (req, res) => {
       notVoted: stats.total - stats.voted,
     }));
 
-    // Calculate breakdown by year level
+    // Year level breakdown
     const yearLevelMap = new Map<number, { total: number; voted: number }>();
+
     allVoters.forEach(voter => {
       const year = voter.yearLevel || 0;
       if (!yearLevelMap.has(year)) {
@@ -1210,9 +2061,7 @@ app.get('/elections/:id/turnout', async (req, res) => {
       }
       const stats = yearLevelMap.get(year)!;
       stats.total++;
-      if (voter.hasVoted) {
-        stats.voted++;
-      }
+      if (voter.hasVoted) stats.voted++;
     });
 
     const byYearLevel = Array.from(yearLevelMap.entries())
@@ -1224,8 +2073,9 @@ app.get('/elections/:id/turnout', async (req, res) => {
       }))
       .sort((a, b) => a.yearLevel - b.yearLevel);
 
-    // Calculate breakdown by program
+    // Program breakdown
     const programMap = new Map<string, { total: number; voted: number }>();
+
     allVoters.forEach(voter => {
       const program = voter.program || 'Unknown';
       if (!programMap.has(program)) {
@@ -1233,9 +2083,7 @@ app.get('/elections/:id/turnout', async (req, res) => {
       }
       const stats = programMap.get(program)!;
       stats.total++;
-      if (voter.hasVoted) {
-        stats.voted++;
-      }
+      if (voter.hasVoted) stats.voted++;
     });
 
     const byProgram = Array.from(programMap.entries()).map(([program, stats]) => ({
@@ -1253,28 +2101,43 @@ app.get('/elections/:id/turnout', async (req, res) => {
       byYearLevel,
       byProgram,
     });
+
   } catch (err: any) {
     console.error('GetTurnout error:', err);
-    res.status(400).json({ error: err.message || 'GetTurnout failed' });
+
+    await prisma.systemActivity.create({
+      data: {
+        user: 'system',
+        role: 'Admin',
+        action: 'GET_TURNOUT_FAILED',
+        description: err.message || 'Failed to compute turnout statistics',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    res.status(400).json({
+      error: err.message || 'GetTurnout failed',
+    });
   }
 });
 
-// 11) Get hourly participation data for an election
 app.get('/elections/:id/hourly-participation', async (req, res) => {
   const { id } = req.params;
   const { date } = req.query; // Optional date filter (YYYY-MM-DD format)
-  
+
   try {
-    // Get all votes for this election from the Vote table
     const votes = await (prisma as any).vote.findMany({
       where: {
         electionId: id,
-        ...(date ? {
-          castAt: {
-            gte: new Date(date as string),
-            lt: new Date(new Date(date as string).getTime() + 24 * 60 * 60 * 1000),
-          },
-        } : {}),
+        ...(date
+          ? {
+              castAt: {
+                gte: new Date(date as string),
+                lt: new Date(new Date(date as string).getTime() + 24 * 60 * 60 * 1000),
+              },
+            }
+          : {}),
       },
       select: {
         castAt: true,
@@ -1284,7 +2147,7 @@ app.get('/elections/:id/hourly-participation', async (req, res) => {
       },
     });
 
-    // Initialize hourly buckets (24 hours)
+    // Initialize hourly buckets
     const hourlyCounts = new Map<number, number>();
     for (let i = 0; i < 24; i++) {
       hourlyCounts.set(i, 0);
@@ -1296,7 +2159,6 @@ app.get('/elections/:id/hourly-participation', async (req, res) => {
       hourlyCounts.set(hour, (hourlyCounts.get(hour) || 0) + 1);
     });
 
-    // Convert to array format
     const hourlyData = Array.from(hourlyCounts.entries())
       .map(([hour, count]) => ({
         hour: hour.toString().padStart(2, '0') + ':00',
@@ -1304,16 +2166,18 @@ app.get('/elections/:id/hourly-participation', async (req, res) => {
       }))
       .sort((a, b) => a.hour.localeCompare(b.hour));
 
-    // Find peak and slowest hours (handle empty data)
     let peakHour = { hour: '00:00', count: 0 };
     let slowestHour = { hour: '00:00', count: 0 };
-    
+
     if (hourlyData.length > 0) {
-      peakHour = hourlyData.reduce((max, item) => 
-        item.count > max.count ? item : max, hourlyData[0]
+      peakHour = hourlyData.reduce((max, item) =>
+        item.count > max.count ? item : max,
+        hourlyData[0]
       );
-      slowestHour = hourlyData.reduce((min, item) => 
-        item.count < min.count ? item : min, hourlyData[0]
+
+      slowestHour = hourlyData.reduce((min, item) =>
+        item.count < min.count ? item : min,
+        hourlyData[0]
       );
     }
 
@@ -1329,9 +2193,22 @@ app.get('/elections/:id/hourly-participation', async (req, res) => {
       },
       totalVotes: votes.length,
     });
+
   } catch (err: any) {
     console.error('GetHourlyParticipation error:', err);
-    res.status(400).json({ 
+
+    await prisma.systemActivity.create({
+      data: {
+        user: 'system',
+        role: 'Admin',
+        action: 'GET_HOURLY_PARTICIPATION_FAILED',
+        description: err.message || 'Failed to compute hourly participation',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    res.status(400).json({
       error: err.message || 'GetHourlyParticipation failed',
       hourlyData: [],
       peakHour: { time: '00:00', count: 0 },
@@ -1341,9 +2218,9 @@ app.get('/elections/:id/hourly-participation', async (req, res) => {
   }
 });
 
-// 12) Get integrity check data (blockchain vs database comparison)
 app.get('/elections/:id/integrity-check', async (req, res) => {
   const { id } = req.params;
+
   try {
     // Get results from blockchain
     const contract = await getContract();
@@ -1351,20 +2228,18 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
     const responseText = Buffer.from(bytes).toString('utf8').trim();
     const blockchainResults = responseText ? JSON.parse(responseText) : {};
 
-    // Get vote counts from database (Prisma Vote table)
+    // Get vote counts from database
     const dbVotes = await (prisma as any).vote.findMany({
-      where: {
-        electionId: id,
-      },
-      select: {
-        selections: true,
-      },
+      where: { electionId: id },
+      select: { selections: true },
     });
 
-    // Count votes by position and candidate in database
+    // Count database votes
     const dbResults: Record<string, Record<string, number>> = {};
+
     dbVotes.forEach((vote: any) => {
       const selections = vote.selections as Array<{ positionId: string; candidateId: string }>;
+
       selections.forEach((sel) => {
         if (!dbResults[sel.positionId]) {
           dbResults[sel.positionId] = {};
@@ -1376,7 +2251,7 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
       });
     });
 
-    // Compare blockchain vs database
+    // Build comparison sets
     const comparison: Array<{
       position: string;
       candidate: string;
@@ -1385,7 +2260,6 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
       match: boolean;
     }> = [];
 
-    // Get all positions and candidates
     const allPositions = new Set<string>();
     const allCandidates = new Map<string, Set<string>>();
 
@@ -1411,12 +2285,14 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
       });
     });
 
-    // Build comparison
+    // Build comparison results
     allPositions.forEach((positionId) => {
       const candidates = allCandidates.get(positionId) || new Set();
+
       candidates.forEach((candidateId) => {
         const blockchainCount = blockchainResults[positionId]?.[candidateId] || 0;
         const databaseCount = dbResults[positionId]?.[candidateId] || 0;
+
         comparison.push({
           position: positionId,
           candidate: candidateId,
@@ -1427,13 +2303,16 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
       });
     });
 
-    // Calculate totals
+    // Totals
     const totalBlockchainVotes = Object.values(blockchainResults).reduce((sum: number, pos: any) => {
       return sum + Object.values(pos).reduce((posSum: number, count: any) => posSum + count, 0);
     }, 0);
+
     const totalDatabaseVotes = dbVotes.length;
 
-    const hasMismatch = comparison.some((item) => !item.match) || totalBlockchainVotes !== totalDatabaseVotes;
+    const hasMismatch =
+      comparison.some((item) => !item.match) ||
+      totalBlockchainVotes !== totalDatabaseVotes;
 
     res.json({
       blockchainResults,
@@ -1447,23 +2326,53 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
       hasMismatch,
       timestamp: new Date().toISOString(),
     });
+
   } catch (err: any) {
     console.error('GetIntegrityCheck error:', err);
-    res.status(400).json({ error: err.message || 'GetIntegrityCheck failed' });
+
+    await prisma.systemActivity.create({
+      data: {
+        user: 'system',
+        role: 'Admin',
+        action: 'INTEGRITY_CHECK_FAILED',
+        description: err.message || 'Integrity check failed',
+        ipAddress: req.ip,
+        status: 'Failed',
+      },
+    });
+
+    res.status(400).json({
+      error: err.message || 'GetIntegrityCheck failed',
+    });
   }
-});
+}); 
 
 const PORT = process.env.PORT || 4000;
-
-// Start the server
 let server: any;
+
 try {
-  server = app.listen(PORT, () => {
+  server = app.listen(PORT, async () => {
     console.log(`eCASVote gateway API listening on http://localhost:${PORT}`);
     console.log('Server is running. Press Ctrl+C to stop.');
+
+    // Log startup (safe async inside callback)
+    try {
+      await prisma.systemActivity.create({
+        data: {
+          user: 'system',
+          role: 'Admin',
+          action: 'SERVER_STARTED',
+          description: `Server started on port ${PORT}`,
+          ipAddress: 'localhost',
+          status: 'Success',
+        },
+      });
+    } catch (logErr) {
+      console.error('Failed to log server startup:', logErr);
+    }
   });
 
-  // Handle server errors (like port already in use)
+  // ❗ IMPORTANT: Do NOT use async here
   server.on('error', (error: any) => {
     if (error.syscall !== 'listen') {
       throw error;
@@ -1471,30 +2380,98 @@ try {
 
     const bind = typeof PORT === 'string' ? 'Pipe ' + PORT : 'Port ' + PORT;
 
+    let description = '';
+
     switch (error.code) {
       case 'EACCES':
-        console.error(`${bind} requires elevated privileges`);
+        description = `${bind} requires elevated privileges`;
+        console.error(description);
+
+        prisma.systemActivity.create({
+          data: {
+            user: 'system',
+            role: 'Admin',
+            action: 'SERVER_START_EACCES',
+            description,
+            ipAddress: 'localhost',
+            status: 'Failed',
+          },
+        }).catch(console.error);
+
         process.exit(1);
-        break;
+
       case 'EADDRINUSE':
-        console.error(`${bind} is already in use`);
-        console.error('Please stop the existing server or use a different port.');
+        description = `${bind} is already in use`;
+        console.error(description);
+
+        prisma.systemActivity.create({
+          data: {
+            user: 'system',
+            role: 'Admin',
+            action: 'SERVER_START_PORT_IN_USE',
+            description,
+            ipAddress: 'localhost',
+            status: 'Failed',
+          },
+        }).catch(console.error);
+
         process.exit(1);
-        break;
+
       default:
         throw error;
     }
   });
+
 } catch (error: any) {
   console.error('Failed to start server:', error);
-  process.exit(1);
+
+  // ❗ No top-level await → wrap in async IIFE
+  (async () => {
+    try {
+      await prisma.systemActivity.create({
+        data: {
+          user: 'system',
+          role: 'Admin',
+          action: 'SERVER_START_FAILED',
+          description: error.message || 'Unknown server startup error',
+          ipAddress: 'localhost',
+          status: 'Failed',
+        },
+      });
+    } catch (logErr) {
+      console.error('Logging failed:', logErr);
+    } finally {
+      process.exit(1);
+    }
+  })();
 }
 
-// Handle graceful shutdown
 const gracefulShutdown = async (signal: string) => {
   console.log(`\n${signal} signal received: closing HTTP server`);
+
+  try {
+    await prisma.systemActivity.create({
+      data: {
+        user: 'system',
+        role: 'Admin',
+        action: 'SERVER_SHUTDOWN_INITIATED',
+        description: `Shutdown triggered by ${signal}`,
+        ipAddress: 'localhost',
+        status: 'Success',
+      },
+    });
+  } catch (logErr) {
+    console.error('Failed to log shutdown initiation:', logErr);
+  }
+
+  if (!server) {
+    process.exit(0);
+    return;
+  }
+
   server.close(() => {
     console.log('HTTP server closed');
+
     prisma.$disconnect()
       .then(() => {
         console.log('Database connection closed');
@@ -1502,22 +2479,51 @@ const gracefulShutdown = async (signal: string) => {
       })
       .catch((err) => {
         console.error('Error closing database connection:', err);
+
+        prisma.systemActivity.create({
+          data: {
+            user: 'system',
+            role: 'Admin',
+            action: 'DATABASE_DISCONNECT_FAILED',
+            description: err.message || 'Failed to disconnect database',
+            ipAddress: 'localhost',
+            status: 'Failed',
+          },
+        }).catch(console.error);
+
         process.exit(1);
       });
   });
 };
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-// Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // Don't exit on unhandled rejection - log it instead
+
+  prisma.systemActivity.create({
+    data: {
+      user: 'system',
+      role: 'Admin',
+      action: 'UNHANDLED_REJECTION',
+      description: `Reason: ${reason}`,
+      ipAddress: 'localhost',
+      status: 'Failed',
+    },
+  }).catch(console.error);
 });
 
-// Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
+
+  prisma.systemActivity.create({
+    data: {
+      user: 'system',
+      role: 'Admin',
+      action: 'UNCAUGHT_EXCEPTION',
+      description: error.message || 'Unexpected server crash',
+      ipAddress: 'localhost',
+      status: 'Failed',
+    },
+  }).catch(console.error);
+
   gracefulShutdown('uncaughtException');
 });

@@ -361,3 +361,27 @@ export async function fetchIntegrityCheck(
   });
   return handleResponse(res);
 }
+
+export interface SystemActivity {
+  id: number;
+  timestamp: string;
+  user: string | null;
+  role: string | null;
+  action: string;
+  description: string;
+  ipAddress: string | null;
+  status: string;
+}
+
+export interface SystemActivityResponse {
+  ok: boolean;
+  logs: SystemActivity[];
+  count: number;
+}
+
+export async function fetchSystemActivity(): Promise<SystemActivityResponse> {
+  const res = await fetch(`${API_BASE}/system-activity`, {
+    cache: "no-store",
+  });
+  return handleResponse(res);
+}
