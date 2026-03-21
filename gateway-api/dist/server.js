@@ -1213,6 +1213,26 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
         res.status(400).json({ error: err.message || 'GetIntegrityCheck failed' });
     }
 });
+//13. System activity
+app.get('/system-activity', async (req, res) => {
+  try {
+    const logs = await prisma.systemActivity.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({
+      ok: true,
+      logs,
+    });
+  } catch (err) {
+    console.error('GetSystemLogs error:', err);
+    res.status(500).json({
+      error: err.message || 'Failed to fetch system logs',
+    });
+  }
+});
+
+
 const PORT = process.env.PORT || 4000;
 // Start the server
 let server;

@@ -117,3 +117,15 @@ model AuditLog {
   details    Json?    // any extra metadata
   createdAt  DateTime @default(now())
 }
+
+model SystemActivity {
+  id          Int      @id @default(autoincrement())
+  timestamp   DateTime @default(now())
+  user        String?
+  role        String?
+  action      String
+  description String
+  ipAddress   String?
+  status      String
+  createdAt   DateTime @default(now())
+}

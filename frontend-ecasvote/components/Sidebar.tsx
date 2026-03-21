@@ -339,7 +339,8 @@ export type AdminNavKey =
   | "ballot"
   | "voter"
   | "tally"
-  | "audit";
+  | "audit"
+  | "system-activity";
 
 const adminItems: SidebarItem[] = [
   { key: "dashboard", name: "Dashboard", href: "/admin", icon: Home },
