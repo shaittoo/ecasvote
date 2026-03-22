@@ -12,17 +12,23 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { fetchElection, fetchPositions, fetchIntegrityCheck } from "@/lib/ecasvoteApi";
-import type { Position, IntegrityCheckData } from "@/lib/ecasvoteApi";
+import {
+  fetchElection,
+  fetchElections,
+  fetchPositions,
+  fetchIntegrityCheck,
+} from "@/lib/ecasvoteApi";
+import type { Election, Position, IntegrityCheckData } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../../components/header";
-
-const ELECTION_ID = 'election-2025';
 
 export default function AdminIntegrityCheckPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [elections, setElections] = useState<Election[]>([]);
+  const [electionId, setElectionId] = useState("");
+  const [electionsLoading, setElectionsLoading] = useState(true);
   const [election, setElection] = useState<any>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [integrityData, setIntegrityData] = useState<IntegrityCheckData | null>(null);
@@ -45,41 +51,73 @@ export default function AdminIntegrityCheckPage() {
       }
     }
 
-    async function loadData() {
-      try {
-        const [electionData, positionsData] = await Promise.all([
-          fetchElection(ELECTION_ID).catch(() => null),
-          fetchPositions(ELECTION_ID).catch(() => []),
-        ]);
-        setElection(electionData);
-        setPositions(positionsData || []);
-      } catch (err) {
-        console.error('Failed to load data:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
+    setElectionsLoading(true);
+    fetchElections()
+      .then((list) => {
+        setElections(list);
+        if (list.length > 0) {
+          setElectionId((prev) =>
+            prev && list.some((e) => e.id === prev) ? prev : list[0].id
+          );
+        }
+      })
+      .catch(() => setElections([]))
+      .finally(() => setElectionsLoading(false));
   }, []);
 
-  // Load integrity check data
+  // Load election, positions, and integrity when selection changes
+  useEffect(() => {
+    if (!electionId) {
+      setIntegrityData(null);
+      setElection(null);
+      setPositions([]);
+      if (!electionsLoading) setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setIntegrityLoading(true);
+      try {
+        const [electionData, positionsData, integrityCheckData] = await Promise.all([
+          fetchElection(electionId).catch(() => null),
+          fetchPositions(electionId).catch(() => []),
+          fetchIntegrityCheck(electionId),
+        ]);
+        if (cancelled) return;
+        setElection(electionData);
+        setPositions(positionsData || []);
+        setIntegrityData(integrityCheckData);
+      } catch (err) {
+        console.error("Failed to load integrity check data:", err);
+        if (!cancelled) setIntegrityData(null);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+          setIntegrityLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [electionId, electionsLoading]);
+
   const loadIntegrityData = async () => {
+    if (!electionId) return;
     setIntegrityLoading(true);
     try {
-      const integrityCheckData = await fetchIntegrityCheck(ELECTION_ID);
+      const integrityCheckData = await fetchIntegrityCheck(electionId);
       setIntegrityData(integrityCheckData);
     } catch (err) {
-      console.error('Failed to load integrity check data:', err);
+      console.error("Failed to load integrity check data:", err);
       setIntegrityData(null);
     } finally {
       setIntegrityLoading(false);
     }
   };
-
-  // Auto-load integrity data when component mounts
-  useEffect(() => {
-    loadIntegrityData();
-  }, []);
 
   const handleLogout = () => {
     router.push("/login");
@@ -109,12 +147,47 @@ export default function AdminIntegrityCheckPage() {
         <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
           sidebarOpen ? "ml-64" : "ml-20"
         }`}>
-          {loading ? (
+          <div className="w-full max-w-7xl mx-auto space-y-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4 rounded-lg border bg-white p-4 shadow-sm">
+              <label
+                htmlFor="admin-integrity-election"
+                className="text-sm font-medium text-gray-700 shrink-0"
+              >
+                Election
+              </label>
+              <select
+                id="admin-integrity-election"
+                className="h-10 w-full min-w-0 sm:max-w-md rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer"
+                value={electionId}
+                disabled={electionsLoading || elections.length === 0}
+                onChange={(e) => setElectionId(e.target.value)}
+              >
+                {electionsLoading ? (
+                  <option value="">Loading elections…</option>
+                ) : elections.length === 0 ? (
+                  <option value="">No elections found</option>
+                ) : (
+                  elections.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name || e.id}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+
+          {electionsLoading || loading ? (
             <div className="text-center py-12">
-              <p className="text-muted-foreground">Loading...</p>
+              <p className="text-muted-foreground">
+                {electionsLoading ? "Loading elections…" : "Loading integrity data…"}
+              </p>
+            </div>
+          ) : !electionId ? (
+            <div className="text-center py-12 text-muted-foreground">
+              Select or create an election to run the integrity check.
             </div>
           ) : (
-            <div className="w-full max-w-7xl mx-auto space-y-6">
+            <>
               {/* Summary Card */}
               {integrityLoading ? (
                 <Card>
@@ -341,8 +414,9 @@ export default function AdminIntegrityCheckPage() {
                   </CardContent>
                 </Card>
               )}
-            </div>
+            </>
           )}
+          </div>
         </main>
       </div>
     </div>

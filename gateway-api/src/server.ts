@@ -18,6 +18,21 @@ function generateBallotToken(): string {
   return `TKN-${code}`;
 }
 
+/** Student voter roster for an election (who may participate in that election only). */
+async function getElectionRosterVoterIds(electionId: string): Promise<number[]> {
+  const rows = await prisma.electionVoter.findMany({
+    where: { electionId },
+    select: { voterId: true },
+  });
+  return rows.map((r) => r.voterId);
+}
+
+async function isVoterOnElectionRoster(electionId: string, voterId: number): Promise<boolean> {
+  const row = await prisma.electionVoter.findUnique({
+    where: { electionId_voterId: { electionId, voterId } },
+  });
+  return !!row;
+}
 
 const app = express();
 
@@ -475,6 +490,39 @@ app.get('/elections', async (_req, res) => {
   }
 });
 
+/** Elections where this student is on the voter roster (for student dashboard / eligibility). */
+app.get('/elections/for-voter', async (req, res) => {
+  const studentNumber = String(req.query.studentNumber ?? '');
+  if (!studentNumber) {
+    return res.status(400).json({ error: 'studentNumber query parameter is required' });
+  }
+  try {
+    const voter = await prisma.voter.findUnique({ where: { studentNumber } });
+    if (!voter) {
+      return res.json({ elections: [] });
+    }
+    const memberships = await prisma.electionVoter.findMany({
+      where: { voterId: voter.id },
+      include: { election: true },
+    });
+    res.json({
+      elections: memberships.map((m) => ({
+        id: m.election.id,
+        name: m.election.name,
+        description: m.election.description,
+        startTime: m.election.startTime,
+        endTime: m.election.endTime,
+        status: m.election.status,
+        createdBy: m.election.createdBy,
+        createdAt: m.election.createdAt,
+      })),
+    });
+  } catch (err: any) {
+    console.error('GET /elections/for-voter error:', err);
+    res.status(500).json({ error: err.message || 'failed' });
+  }
+});
+
 // 1) Create election (blockchain + DB)
 app.post('/elections', async (req, res) => {
   const { electionId, name, description, startTime, endTime, createdBy } = req.body || {};
@@ -665,9 +713,19 @@ app.get('/elections/:id/positions', async (req, res) => {
 /** List eligible voters with paper status for an election (Not Issued / Issued / Voted). */
 app.get('/elections/:id/paper-check-in', async (req, res) => {
   const { id: electionId } = req.params;
+  /** full = all CAS-eligible (for issuing tokens). active = only voters with digital vote or paper row for this election. */
+  const scope = String(req.query.scope ?? 'full');
   try {
+    const digitalVotes = await prisma.vote.findMany({
+      where: { electionId },
+      select: { voterId: true },
+    });
+    const votedDigital = new Set(digitalVotes.map((v) => v.voterId));
+
+    const rosterIds = await getElectionRosterVoterIds(electionId);
     const voters = await prisma.voter.findMany({
       where: {
+        id: rosterIds.length > 0 ? { in: rosterIds } : { in: [] },
         college: 'CAS',
         status: 'ENROLLED',
         isEligible: true,
@@ -689,23 +747,31 @@ app.get('/elections/:id/paper-check-in', async (req, res) => {
       u === true || u === 1 || u === BigInt(1);
     const byVoterId = new Map(issRows.map((i) => [i.voterId, i]));
 
-    const rows = voters.map((v) => {
-      const iss = byVoterId.get(v.id);
-      let paperStatus: 'Not Issued' | 'Issued' | 'Voted';
-      if (!iss) paperStatus = 'Not Issued';
-      else if (isUsed(iss.used)) paperStatus = 'Voted';
-      else paperStatus = 'Issued';
+    const rows = voters
+      .map((v) => {
+        const iss = byVoterId.get(v.id);
+        let paperStatus: 'Not Issued' | 'Issued' | 'Voted';
+        if (!iss) paperStatus = 'Not Issued';
+        else if (isUsed(iss.used)) paperStatus = 'Voted';
+        else paperStatus = 'Issued';
 
-      return {
-        voterId: v.id,
-        studentNumber: v.studentNumber,
-        name: v.fullName,
-        paperStatus,
-        ballotToken: iss ? iss.ballotToken : null,
-      };
-    });
+        const digital = votedDigital.has(v.studentNumber);
+        const hasElectionActivity =
+          digital || paperStatus !== 'Not Issued';
 
-    res.json({ electionId, voters: rows });
+        return {
+          voterId: v.id,
+          studentNumber: v.studentNumber,
+          name: v.fullName,
+          paperStatus,
+          ballotToken: iss ? iss.ballotToken : null,
+          votedDigital: digital,
+          hasElectionActivity,
+        };
+      })
+      .filter((row) => (scope === 'active' ? row.hasElectionActivity : true));
+
+    res.json({ electionId, scope, voters: rows });
   } catch (err: any) {
     console.error('GET /elections/:id/paper-check-in error:', err);
     res.status(500).json({ error: err.message || 'paper-check-in failed' });
@@ -729,6 +795,13 @@ app.post('/elections/:id/paper-ballots/issue', async (req, res) => {
     }
     if (voter.college !== 'CAS' || voter.status !== 'ENROLLED' || !voter.isEligible) {
       return res.status(403).json({ error: 'Voter is not eligible for this election' });
+    }
+
+    const onRoster = await isVoterOnElectionRoster(electionId, voter.id);
+    if (!onRoster) {
+      return res.status(403).json({
+        error: 'Voter is not on the student voter roster for this election',
+      });
     }
 
     const existingRows = await prisma.$queryRaw<
@@ -873,10 +946,28 @@ app.post('/elections/:id/paper-tokens/generate-all', async (req, res) => {
   const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v1');
 
   try {
-    const eligible = await prisma.$queryRaw<Array<{ id: number; hasVoted: number | bigint | boolean }>>`
-      SELECT "id", "hasVoted" FROM "Voter"
-      WHERE "college" = 'CAS' AND "status" = 'ENROLLED' AND "isEligible" = 1
-    `;
+    const rosterIds = await getElectionRosterVoterIds(electionId);
+    if (rosterIds.length === 0) {
+      return res.json({
+        ok: true,
+        electionId,
+        created: 0,
+        eligibleVoters: 0,
+        errors: [],
+        errorCount: 0,
+        message: 'No student voters on the roster for this election. Add voters to the election roster first.',
+      });
+    }
+
+    const eligible = await prisma.voter.findMany({
+      where: {
+        id: { in: rosterIds },
+        college: 'CAS',
+        status: 'ENROLLED',
+        isEligible: true,
+      },
+      select: { id: true, hasVoted: true },
+    });
     const issuedRows = await prisma.$queryRaw<Array<{ voterId: number }>>`
       SELECT "voterId" FROM "PaperBallotIssuance" WHERE "electionId" = ${electionId}
     `;
@@ -1310,8 +1401,198 @@ app.post('/elections/:id/close', async (req, res) => {
   }
 });
 
+/**
+ * CAS-eligible voter rows with hasVotedThisElection (digital Vote or paper ballot used for this election).
+ */
+async function augmentVotersWithElectionVoteStatus(
+  electionId: string,
+  voters: Awaited<ReturnType<typeof prisma.voter.findMany>>
+) {
+  const digitalVotes = await prisma.vote.findMany({
+    where: { electionId },
+    select: { voterId: true },
+  });
+  const digitalSet = new Set(digitalVotes.map((v) => v.voterId));
 
-// 4) Register voter
+  const usedPaper = await prisma.paperBallotIssuance.findMany({
+    where: { electionId, used: true },
+    select: { voterId: true },
+  });
+  const paperVoterIds = [...new Set(usedPaper.map((p) => p.voterId))];
+  const paperVoters =
+    paperVoterIds.length === 0
+      ? []
+      : await prisma.voter.findMany({
+          where: { id: { in: paperVoterIds } },
+          select: { studentNumber: true },
+        });
+  const paperVotedSns = new Set(paperVoters.map((v) => v.studentNumber));
+
+  return voters.map((v) => ({
+    ...v,
+    hasVotedThisElection:
+      digitalSet.has(v.studentNumber) || paperVotedSns.has(v.studentNumber),
+  }));
+}
+
+/**
+ * GET /elections/:id/voters — voters for the selected election (not the global /voters registry).
+ * pool=eligible (default): CAS + ENROLLED + isEligible (same cohort as paper-check-in and turnout).
+ * pool=active: only voters with a digital vote or a paper ballot issuance for this election (still CAS-eligible).
+ */
+app.get('/elections/:id/voters', async (req, res) => {
+  const { id: electionId } = req.params;
+  const pool = String(req.query.pool ?? 'eligible');
+  try {
+    const election = await prisma.election.findUnique({ where: { id: electionId } });
+    if (!election) {
+      return res.status(404).json({ error: 'Election not found' });
+    }
+
+    const rosterIds = await getElectionRosterVoterIds(electionId);
+    const rosterFilter =
+      rosterIds.length > 0 ? ({ id: { in: rosterIds } } as const) : ({ id: { in: [] as number[] } } as const);
+
+    const baseWhere = {
+      college: 'CAS' as const,
+      status: 'ENROLLED' as const,
+      isEligible: true,
+    };
+
+    if (pool === 'active') {
+      const voteSns = await prisma.vote.findMany({
+        where: { electionId },
+        select: { voterId: true },
+      });
+      const sns = new Set(voteSns.map((v) => v.voterId));
+
+      const paperIss = await prisma.paperBallotIssuance.findMany({
+        where: { electionId },
+        select: { voterId: true },
+      });
+      const paperVoterIds = [...new Set(paperIss.map((p) => p.voterId))];
+      if (paperVoterIds.length > 0) {
+        const pv = await prisma.voter.findMany({
+          where: { id: { in: paperVoterIds } },
+          select: { studentNumber: true },
+        });
+        pv.forEach((v) => sns.add(v.studentNumber));
+      }
+
+      if (sns.size === 0 || rosterIds.length === 0) {
+        return res.json({ electionId, pool: 'active', voters: [] });
+      }
+
+      const voters = await prisma.voter.findMany({
+        where: {
+          ...baseWhere,
+          ...rosterFilter,
+          studentNumber: { in: [...sns] },
+        },
+        orderBy: { studentNumber: 'asc' },
+      });
+      const augmented = await augmentVotersWithElectionVoteStatus(electionId, voters);
+      return res.json({ electionId, pool: 'active', voters: augmented });
+    }
+
+    const voters = await prisma.voter.findMany({
+      where: {
+        ...baseWhere,
+        ...rosterFilter,
+      },
+      orderBy: { studentNumber: 'asc' },
+    });
+    const augmented = await augmentVotersWithElectionVoteStatus(electionId, voters);
+    res.json({ electionId, pool: 'eligible', voters: augmented });
+  } catch (err: any) {
+    console.error('GET /elections/:id/voters error:', err);
+    res.status(500).json({ error: err.message || 'failed to load election voters' });
+  }
+});
+
+/** Add all CAS enrolled eligible voters to this election roster (idempotent). */
+app.post('/elections/:id/voters/roster/sync-cas-eligible', async (req, res) => {
+  const { id: electionId } = req.params;
+  try {
+    const election = await prisma.election.findUnique({ where: { id: electionId } });
+    if (!election) {
+      return res.status(404).json({ error: 'Election not found' });
+    }
+    const voters = await prisma.voter.findMany({
+      where: { college: 'CAS', status: 'ENROLLED', isEligible: true },
+      select: { id: true },
+    });
+    let added = 0;
+    for (const v of voters) {
+      try {
+        await prisma.electionVoter.create({
+          data: { electionId, voterId: v.id },
+        });
+        added += 1;
+      } catch (e: unknown) {
+        const code = (e as { code?: string })?.code;
+        if (code !== 'P2002') throw e;
+      }
+    }
+    const count = await prisma.electionVoter.count({ where: { electionId } });
+    res.json({ ok: true, electionId, added, totalOnRoster: count });
+  } catch (err: any) {
+    console.error('POST sync-cas-eligible error:', err);
+    res.status(500).json({ error: err.message || 'sync failed' });
+  }
+});
+
+app.delete('/elections/:id/voters/roster/:voterId', async (req, res) => {
+  const { id: electionId, voterId: vid } = req.params;
+  const voterId = Number(vid);
+  if (!Number.isFinite(voterId)) {
+    return res.status(400).json({ error: 'Invalid voterId' });
+  }
+  try {
+    await prisma.electionVoter.deleteMany({
+      where: { electionId, voterId },
+    });
+    res.json({ ok: true, electionId, voterId });
+  } catch (err: any) {
+    console.error('DELETE roster error:', err);
+    res.status(500).json({ error: err.message || 'delete failed' });
+  }
+});
+
+app.post('/elections/:id/voters/roster', async (req, res) => {
+  const { id: electionId } = req.params;
+  const voterIds = req.body?.voterIds;
+  if (!Array.isArray(voterIds) || voterIds.length === 0) {
+    return res.status(400).json({ error: 'voterIds (non-empty array) is required' });
+  }
+  const ids = voterIds
+    .map((x: unknown) => Number(x))
+    .filter((n: number) => Number.isFinite(n));
+  try {
+    const election = await prisma.election.findUnique({ where: { id: electionId } });
+    if (!election) {
+      return res.status(404).json({ error: 'Election not found' });
+    }
+    let added = 0;
+    for (const voterId of ids) {
+      try {
+        await prisma.electionVoter.create({
+          data: { electionId, voterId },
+        });
+        added += 1;
+      } catch (e: unknown) {
+        const code = (e as { code?: string })?.code;
+        if (code !== 'P2002') throw e;
+      }
+    }
+    res.json({ ok: true, electionId, added });
+  } catch (err: any) {
+    console.error('POST roster error:', err);
+    res.status(500).json({ error: err.message || 'failed' });
+  }
+});
+
+// 4) Register voter (chaincode) — also adds SQLite roster row when voter exists in registry
 app.post('/elections/:id/voters', async (req, res) => {
   const { id } = req.params;
   const { voterId } = req.body;
@@ -1323,6 +1604,19 @@ app.post('/elections/:id/voters', async (req, res) => {
   try {
     const contract = await getContract();
     await contract.submitTransaction('RegisterVoter', id, voterId);
+
+    const v = await prisma.voter.findUnique({
+      where: { studentNumber: String(voterId).trim() },
+    });
+    if (v) {
+      await prisma.electionVoter.upsert({
+        where: {
+          electionId_voterId: { electionId: id, voterId: v.id },
+        },
+        create: { electionId: id, voterId: v.id },
+        update: {},
+      });
+    }
 
     res.json({ ok: true });
   } catch (err: any) {
@@ -1360,6 +1654,13 @@ app.post('/elections/:id/votes', async (req, res) => {
 
     if (voter.status !== 'ENROLLED' || !voter.isEligible) {
       return res.status(403).json({ error: 'Voter is not eligible to vote' });
+    }
+
+    const onRoster = await isVoterOnElectionRoster(id, voter.id);
+    if (!onRoster) {
+      return res.status(403).json({
+        error: 'You are not registered as a student voter for this election',
+      });
     }
 
     if (voter.hasVoted) {
@@ -1541,8 +1842,17 @@ async function computeElectionTurnout(electionId: string) {
     isEligible: true,
   };
 
+  const rosterIds = await getElectionRosterVoterIds(electionId);
+  const rosterWhere =
+    rosterIds.length > 0
+      ? { id: { in: rosterIds } as const }
+      : { id: { in: [] as number[] } as const };
+
   const allVoters = await prisma.voter.findMany({
-    where: baseWhere,
+    where: {
+      ...baseWhere,
+      ...rosterWhere,
+    },
     select: {
       studentNumber: true,
       department: true,

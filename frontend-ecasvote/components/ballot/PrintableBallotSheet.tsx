@@ -191,10 +191,10 @@ export function PrintableBallotSheet({
       {/* Thick rule before contests */}
       <div className="relative z-[1] mb-2 h-1.5 bg-neutral-400 print:mb-1.5 print:h-1" />
 
-      {/* System ids */}
+      {/* System ids — ballotToken must be the gateway-issued paper token (TKN-…), not student number */}
       <div className="relative z-[1] mb-2 flex flex-wrap justify-center gap-x-4 gap-y-0.5 font-mono text-[6.5px] text-black print:mb-1.5 print:text-[6px]">
         <span>Election ID: {electionId}</span>
-        <span>Ballot Token: {ballotToken || "—"}</span>
+        <span>Ballot Token: {ballotToken?.trim() ? ballotToken : "—"}</span>
         <span>Template: {templateVersion}</span>
       </div>
 

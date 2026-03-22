@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import {
   Card,
@@ -18,52 +18,81 @@ import {
 } from "lucide-react";
 
 import {
+  fetchElections,
   fetchIntegrityCheck,
   fetchPositions,
 } from "@/lib/ecasvoteApi";
 
 import type {
+  Election,
   IntegrityCheckData,
   Position,
 } from "@/lib/ecasvoteApi";
 import { ValidatorSidebar } from "@/components/Sidebar";
 import ValidatorHeader from "../components/header";
 
-const ELECTION_ID = "election-2025";
-
 export default function ValidatorIntegrityPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [elections, setElections] = useState<Election[]>([]);
+  const [electionId, setElectionId] = useState("");
+  const [electionsLoading, setElectionsLoading] = useState(true);
   const [integrityData, setIntegrityData] =
     useState<IntegrityCheckData | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadIntegrityData() {
+  useEffect(() => {
+    setElectionsLoading(true);
+    fetchElections()
+      .then((list) => {
+        setElections(list);
+        if (list.length > 0) {
+          setElectionId((prev) =>
+            prev && list.some((e) => e.id === prev) ? prev : list[0].id
+          );
+        }
+      })
+      .catch(() => setElections([]))
+      .finally(() => setElectionsLoading(false));
+  }, []);
+
+  const loadIntegrityData = useCallback(async () => {
+    if (!electionId) {
+      setIntegrityData(null);
+      setPositions([]);
+      setError(null);
+      if (!electionsLoading) setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       const [integrity, positionsData] = await Promise.all([
-        fetchIntegrityCheck(ELECTION_ID),
-        fetchPositions(ELECTION_ID),
+        fetchIntegrityCheck(electionId),
+        fetchPositions(electionId),
       ]);
 
       setIntegrityData(integrity);
       setPositions(positionsData || []);
-    } catch (error) {
-      console.error("Failed to load integrity data:", error);
-      setError(error instanceof Error ? error.message : "Failed to load integrity check data");
+    } catch (err) {
+      console.error("Failed to load integrity data:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load integrity check data"
+      );
       setIntegrityData(null);
     } finally {
       setLoading(false);
     }
-  }
+  }, [electionId, electionsLoading]);
 
   useEffect(() => {
     loadIntegrityData();
-  }, []);
+  }, [loadIntegrityData]);
 
   const handleLogout = () => {
     router.push("/login");
@@ -88,8 +117,49 @@ export default function ValidatorIntegrityPage() {
         <main className={`flex-1 p-6 space-y-6 overflow-y-auto transition-all duration-300 ${
           sidebarOpen ? "ml-64" : "ml-20"
         }`}>
-          {/* Summary Card */}
-          {loading ? (
+          <div className="max-w-7xl mx-auto w-full space-y-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4 rounded-lg border bg-white p-4 shadow-sm">
+              <label
+                htmlFor="validator-integrity-election"
+                className="text-sm font-medium text-gray-700 shrink-0"
+              >
+                Election
+              </label>
+              <select
+                id="validator-integrity-election"
+                className="h-10 w-full min-w-0 sm:max-w-md rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer"
+                value={electionId}
+                disabled={electionsLoading || elections.length === 0}
+                onChange={(e) => setElectionId(e.target.value)}
+              >
+                {electionsLoading ? (
+                  <option value="">Loading elections…</option>
+                ) : elections.length === 0 ? (
+                  <option value="">No elections found</option>
+                ) : (
+                  elections.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name || e.id}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+
+          {electionsLoading ? (
+            <Card>
+              <CardContent className="py-12 text-center text-gray-500">
+                Loading elections…
+              </CardContent>
+            </Card>
+          ) : !electionId ? (
+            <Card>
+              <CardContent className="py-12 text-center text-muted-foreground">
+                No elections available. Create an election first, or select one above when
+                the list loads.
+              </CardContent>
+            </Card>
+          ) : loading ? (
             <Card>
               <CardContent className="py-12 text-center">
                 <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-4"></div>
@@ -407,6 +477,7 @@ export default function ValidatorIntegrityPage() {
               </CardContent>
             </Card>
           )}
+          </div>
         </main>
       </div>
     </div>

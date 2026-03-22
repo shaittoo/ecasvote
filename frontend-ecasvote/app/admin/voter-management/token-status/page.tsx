@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search } from "lucide-react";
+import { Plus, RefreshCw, Search } from "lucide-react";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../../components/header";
 import {
@@ -246,95 +246,112 @@ export default function TokenStatusPage() {
             <div className="text-center py-12 text-gray-500">Loading elections…</div>
           ) : (
             <div className="max-w-7xl mx-auto space-y-6">
-              {loading ? (
-                <div className="text-center py-12 text-gray-500">Loading…</div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <StatCard
-                      title="Total issued"
-                      value={stats.totalIssued}
-                      color="text-gray-600"
-                    />
-                    <StatCard
-                      title="Tokens used"
-                      value={stats.used}
-                      color="text-green-700"
-                    />
-                    <StatCard
-                      title="Token unused"
-                      value={stats.unused}
-                      color="text-amber-700"
-                    />
-                    <StatCard
-                      title="Election ID"
-                      valueLabel={electionId || "—"}
-                      color="text-blue-800"
-                    />
+              {!loading && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <StatCard
+                    title="Total issued"
+                    value={stats.totalIssued}
+                    color="text-gray-600"
+                  />
+                  <StatCard
+                    title="Tokens used"
+                    value={stats.used}
+                    color="text-green-700"
+                  />
+                  <StatCard
+                    title="Token unused"
+                    value={stats.unused}
+                    color="text-amber-700"
+                  />
+                  <StatCard
+                    title="Selected election"
+                    valueLabel={
+                      electionId
+                        ? elections.find((e) => e.id === electionId)?.name || electionId
+                        : "—"
+                    }
+                    color="text-blue-800"
+                  />
+                </div>
+              )}
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Voter Token Status</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Toolbar below section title */}
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:flex-nowrap">
+                    <div className="relative min-h-10 min-w-0 flex-1 basis-[min(100%,20rem)] sm:min-w-[12rem]">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        placeholder="Search name, student no., token, status…"
+                        className="h-10 w-full pl-9 pr-[5.5rem]"
+                        value={searchVoters}
+                        onChange={(e) => setSearchVoters(e.target.value)}
+                        aria-label="Search voters and tokens"
+                      />
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground tabular-nums">
+                        {filteredVoters.length} results
+                      </span>
+                    </div>
+
+                    <label htmlFor="token-status-election" className="sr-only">
+                      Election
+                    </label>
+                    <select
+                      id="token-status-election"
+                      className="h-10 w-full min-w-0 shrink-0 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-[min(100%,16rem)] sm:max-w-xs"
+                      value={electionId}
+                      disabled={electionsLoading || elections.length === 0}
+                      onChange={(e) => setElectionId(e.target.value)}
+                    >
+                      {electionsLoading ? (
+                        <option value="">Loading elections…</option>
+                      ) : elections.length === 0 ? (
+                        <option value="">No elections</option>
+                      ) : (
+                        elections.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {e.name || e.id}
+                          </option>
+                        ))
+                      )}
+                    </select>
+
+                    <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+                      <Button
+                        type="button"
+                        className="h-10 shrink-0 inline-flex items-center gap-1.5 bg-[#7A0019] hover:bg-[#5c0013] text-white"
+                        disabled={!electionId || bulkGenerating || loading}
+                        onClick={handleGenerateAll}
+                      >
+                        {bulkGenerating ? (
+                          "Generating…"
+                        ) : (
+                          <>
+                            <Plus className="h-4 w-4 shrink-0" aria-hidden />
+                            Generate tokens for all
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 shrink-0"
+                        onClick={() => loadAll(electionId)}
+                        disabled={!electionId || loading}
+                      >
+                        <RefreshCw className="h-4 w-4 mr-1.5 shrink-0" aria-hidden />
+                        Refresh
+                      </Button>
+                    </div>
                   </div>
 
-                  <Card>
-                    <CardHeader className="space-y-4">
-                      <CardTitle className="text-base">Voters Tokens</CardTitle>
-                      <div className="flex flex-row flex-wrap items-center gap-2">
-                        <div className="relative min-w-0 w-full flex-1 basis-[min(100%,18rem)] max-w-xl pr-10">
-                          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                          <Input
-                            placeholder="Search name, student no., token, status…"
-                            className="h-10 pl-9"
-                            value={searchVoters}
-                            onChange={(e) => setSearchVoters(e.target.value)}
-                            aria-label="Search voters and tokens"
-                          />
-                        </div>
-                        <label htmlFor="token-status-election" className="sr-only">
-                          Election
-                        </label>
-                        Select election:
-                        <select
-                          id="token-status-election"
-                          className="h-10 min-w-[12rem] max-w-md shrink-0 rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer sm:min-w-[14rem]"
-                          value={electionId}
-                          onChange={(e) => setElectionId(e.target.value)}
-                        >
-                          {elections.length === 0 ? (
-                            <option value="">No elections</option>
-                          ) : (
-                            elections.map((e) => (
-                              <option key={e.id} value={e.id}>
-                                {e.name || e.id}
-                              </option>
-                            ))
-                          )}
-                        </select>
-                        <Button
-                          type="button"
-                          className="shrink-0 inline-flex items-center gap-1.5 bg-[#7A0019] hover:bg-[#5c0013] text-white"
-                          disabled={!electionId || bulkGenerating || loading}
-                          onClick={handleGenerateAll}
-                        >
-                          {bulkGenerating ? (
-                            "Generating…"
-                          ) : (
-                            <>
-                              <Plus className="h-4 w-4 shrink-0" aria-hidden />
-                              Generate tokens for all
-                            </>
-                          )}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-10 shrink-0"
-                          onClick={() => loadAll(electionId)}
-                          disabled={!electionId || loading}
-                        >
-                          Refresh
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
+                  {loading ? (
+                    <div className="text-center py-12 text-gray-500">Loading…</div>
+                  ) : (
+                    <>
                       <div className="overflow-x-auto border rounded-md">
                         <table className="w-full text-sm">
                           <thead>
@@ -470,10 +487,10 @@ export default function TokenStatusPage() {
                           </button>
                         </div>
                       )}
-                    </CardContent>
-                  </Card>
-                </>
-              )}
+                    </>
+                  )}
+                </CardContent>
+              </Card>
             </div>
           )}
         </main>

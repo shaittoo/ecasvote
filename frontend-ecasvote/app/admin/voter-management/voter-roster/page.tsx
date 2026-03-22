@@ -13,7 +13,7 @@ import AdminHeader from "../../components/header";
 import {
   deleteVoter,
   fetchElections,
-  fetchVoters,
+  fetchElectionVoters,
   importVoters,
   updateVoter,
   type Election,
@@ -21,6 +21,11 @@ import {
 } from "@/lib/ecasvoteApi";
 import { parseVoterCsv, VOTER_CSV_EXAMPLE_HEADER } from "@/lib/voterCsv";
 import { notify } from "@/lib/notify";
+
+function votedInSelectedElection(v: VoterRecord): boolean {
+  if (typeof v.hasVotedThisElection === "boolean") return v.hasVotedThisElection;
+  return v.hasVoted;
+}
 
 export default function VoterRosterPage() {
   const router = useRouter();
@@ -31,7 +36,8 @@ export default function VoterRosterPage() {
   const [voters, setVoters] = useState<VoterRecord[]>([]);
   const [search, setSearch] = useState("");
   const [printElections, setPrintElections] = useState<Election[]>([]);
-  const [printElectionId, setPrintElectionId] = useState("election-2025");
+  const [printElectionId, setPrintElectionId] = useState("");
+  const [electionsLoading, setElectionsLoading] = useState(true);
   const [editingVoter, setEditingVoter] = useState<VoterRecord | null>(null);
   const [editForm, setEditForm] = useState({
     studentNumber: "",
@@ -49,9 +55,14 @@ export default function VoterRosterPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadVoters = useCallback(async () => {
+    if (!printElectionId) {
+      setVoters([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const data = await fetchVoters();
+      const data = await fetchElectionVoters(printElectionId, "eligible");
       setVoters(Array.isArray(data) ? data : []);
     } catch (e: unknown) {
       notify.error({
@@ -62,21 +73,31 @@ export default function VoterRosterPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [printElectionId]);
 
   useEffect(() => {
+    if (electionsLoading) return;
     loadVoters();
-  }, [loadVoters]);
+  }, [electionsLoading, loadVoters]);
 
   useEffect(() => {
-    fetchElections().then((list) => {
-      setPrintElections(list);
-      if (list.length > 0) {
-        setPrintElectionId((prev) =>
-          list.some((e) => e.id === prev) ? prev : list[0].id
-        );
-      }
-    });
+    setElectionsLoading(true);
+    fetchElections()
+      .then((list) => {
+        setPrintElections(list);
+        if (list.length > 0) {
+          setPrintElectionId((prev) =>
+            prev && list.some((e) => e.id === prev) ? prev : list[0].id
+          );
+        } else {
+          setPrintElectionId("");
+        }
+      })
+      .catch(() => {
+        setPrintElections([]);
+        setPrintElectionId("");
+      })
+      .finally(() => setElectionsLoading(false));
   }, []);
 
   const rowsPerPage = 15;
@@ -105,7 +126,7 @@ export default function VoterRosterPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [search]);
+  }, [search, printElectionId]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -284,9 +305,9 @@ export default function VoterRosterPage() {
             onChange={handleFileChange}
           />
 
-          {loading ? (
+          {electionsLoading || loading ? (
             <div className="text-center py-12 text-gray-500">
-              Loading voter roster...
+              {electionsLoading ? "Loading elections…" : "Loading voter roster…"}
             </div>
           ) : (
             <div className="max-w-7xl mx-auto space-y-6">
@@ -294,9 +315,9 @@ export default function VoterRosterPage() {
                 <CardHeader className="space-y-4">
                   <CardTitle className="text-lg">Registered Student Voters</CardTitle>
 
-                  {/* Toolbar: search full width on small screens; controls align on larger */}
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-4">
-                    <div className="relative min-h-10 w-full min-w-0 flex-1 lg:max-w-md xl:max-w-xl">
+                  {/* One row (wraps on narrow screens): search · election · template · import */}
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:flex-nowrap">
+                    <div className="relative min-h-10 min-w-0 flex-1 basis-[min(100%,20rem)] sm:min-w-[12rem]">
                       <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         type="text"
@@ -310,51 +331,45 @@ export default function VoterRosterPage() {
                       </span>
                     </div>
 
-                    <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between lg:w-auto lg:min-w-0 lg:shrink-0 lg:justify-end lg:gap-4">
-                      <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:min-w-[18rem] sm:flex-row sm:items-center sm:gap-4">
-                        <label
-                          htmlFor="voter-roster-print-election"
-                          className="shrink-0 text-sm font-medium leading-none text-foreground sm:whitespace-nowrap"
-                        >
-                          Select election
-                        </label>
-                        <select
-                          id="voter-roster-print-election"
-                          className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-w-[14rem] cursor-pointer"
-                          value={printElectionId}
-                          onChange={(e) => setPrintElectionId(e.target.value)}
-                        >
-                          {printElections.length === 0 ? (
-                            <option value="election-2025">election-2025 (default)</option>
-                          ) : (
-                            printElections.map((e) => (
-                              <option key={e.id} value={e.id}>
-                                {e.name || e.id}
-                              </option>
-                            ))
-                          )}
-                        </select>
-                      </div>
+                    <label htmlFor="voter-roster-print-election" className="sr-only">
+                      Election
+                    </label>
+                    <select
+                      id="voter-roster-print-election"
+                      className="h-10 w-full min-w-0 shrink-0 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-[min(100%,16rem)] sm:max-w-xs"
+                      value={printElectionId}
+                      disabled={electionsLoading || printElections.length === 0}
+                      onChange={(e) => setPrintElectionId(e.target.value)}
+                    >
+                      {printElections.length === 0 ? (
+                        <option value="">No elections</option>
+                      ) : (
+                        printElections.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {e.name || e.id}
+                          </option>
+                        ))
+                      )}
+                    </select>
 
-                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="h-10 shrink-0 cursor-pointer"
-                          onClick={downloadTemplate}
-                        >
-                          Download template
-                        </Button>
-                        <Button
-                          type="button"
-                          className="h-10 shrink-0 bg-green-600 text-white hover:bg-green-700 cursor-ponter"
-                          onClick={handleImportClick}
-                          disabled={importing}
-                        >
-                          <Upload className="mr-2 h-4 w-4" />
-                          {importing ? "Importing…" : "Import roster"}
-                        </Button>
-                      </div>
+                    <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 shrink-0 cursor-pointer"
+                        onClick={downloadTemplate}
+                      >
+                        Download template
+                      </Button>
+                      <Button
+                        type="button"
+                        className="h-10 shrink-0 bg-green-600 text-white hover:bg-green-700 cursor-pointer"
+                        onClick={handleImportClick}
+                        disabled={importing}
+                      >
+                        <Upload className="mr-2 h-4 w-4" />
+                        {importing ? "Importing…" : "Import roster"}
+                      </Button>
                     </div>
                   </div>
                 </CardHeader>
@@ -392,8 +407,9 @@ export default function VoterRosterPage() {
                               colSpan={7}
                               className="text-center py-10 text-gray-500"
                             >
-                              No voter roster available. Import a CSV or run the gateway seed (
-                              <code className="text-xs">npm run seed:voters</code>).
+                              {!printElectionId
+                                ? "Create an election or wait for elections to load."
+                                : "No student voters on this election’s list yet. Import students into the registry, then ensure they are assigned to this election in the gateway."}
                             </td>
                           </tr>
                         ) : (
@@ -410,17 +426,17 @@ export default function VoterRosterPage() {
                               <td className="py-2">
                                 <span
                                   className={`px-2 py-1 rounded text-xs font-medium ${
-                                    voter.hasVoted
+                                    votedInSelectedElection(voter)
                                       ? "bg-green-100 text-green-700"
                                       : "bg-gray-100 text-gray-600"
                                   }`}
                                 >
-                                  {voter.hasVoted ? "Voted" : "Not Voted"}
+                                  {votedInSelectedElection(voter) ? "Voted" : "Not Voted"}
                                 </span>
                               </td>
                               <td className="py-2">
                                 <div className="flex flex-wrap items-center gap-1.5">
-                                  {!voter.hasVoted ? (
+                                  {!votedInSelectedElection(voter) ? (
                                     <Link
                                       href={ballotPrintHref(voter)}
                                       target="_blank"
@@ -518,7 +534,7 @@ export default function VoterRosterPage() {
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Voter ID {editingVoter.id}
-                  {editingVoter.hasVoted ? (
+                  {votedInSelectedElection(editingVoter) ? (
                     <span className="ml-2 font-medium text-amber-700">
                       (has voted — student no. / email change carefully)
                     </span>

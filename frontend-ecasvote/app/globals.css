@@ -122,4 +122,16 @@ body {
     page-break-inside: avoid;
     break-inside: avoid;
   }
+
+  /* Voter turnout report: hide admin chrome, full-width content */
+  .voter-turnout-print-root > aside {
+    display: none !important;
+  }
+  .voter-turnout-print-root > div > header {
+    display: none !important;
+  }
+  .voter-turnout-print-root main {
+    margin-left: 0 !important;
+    overflow: visible !important;
+  }
 }

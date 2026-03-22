@@ -49,6 +49,8 @@ model Election {
   status      ElectionStatus
   createdBy   String
   createdAt   DateTime        @default(now())
+  /** Which registered voters may participate in this election (roster is per election). */
+  electionVoters ElectionVoter[]
 }
 
 model Position {
@@ -86,6 +88,22 @@ model Voter {
   updatedAt     DateTime @updatedAt
   user          User?               // Link to User table
   paperIssuances PaperBallotIssuance[]
+  electionVoters ElectionVoter[]
+}
+
+/** Student voter roster for a specific election (who may vote / appear in admin lists for that election). */
+model ElectionVoter {
+  id         Int      @id @default(autoincrement())
+  electionId String
+  voterId    Int
+  createdAt  DateTime @default(now())
+
+  election Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  voter    Voter    @relation(fields: [voterId], references: [id], onDelete: Cascade)
+
+  @@unique([electionId, voterId])
+  @@index([electionId])
+  @@index([voterId])
 }
 
 /** PRIVATE: voter ↔ paper ballot token (QR identifies this; selections never in QR). */

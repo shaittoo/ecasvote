@@ -2,9 +2,15 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw } from "lucide-react";
+import { FileDown, RefreshCw } from "lucide-react";
 import {
   Chart as ChartJS,
   ArcElement,
@@ -219,8 +225,13 @@ export default function VoterTurnoutPage() {
   const peakTicks =
     hourlyData && hourlyData.peakHour.count > 10 ? 5 : 1;
 
+  const exportPdf = () => {
+    if (typeof window === "undefined") return;
+    window.print();
+  };
+
   return (
-    <div className="min-h-screen bg-muted/40 flex">
+    <div className="voter-turnout-print-root min-h-screen bg-muted/40 flex">
       <AdminSidebar
         open={sidebarOpen}
         onToggle={() => setSidebarOpen((prev) => !prev)}
@@ -239,51 +250,85 @@ export default function VoterTurnoutPage() {
         />
 
         <main
-          className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
+          className={`flex-1 p-6 overflow-y-auto transition-all duration-300 print:p-4 print:overflow-visible ${
             sidebarOpen ? "ml-64" : "ml-20"
-          }`}
+          } print:!ml-0`}
         >
           {loading ? (
             <div className="text-center py-12">
               <p className="text-muted-foreground">Loading voter turnout data...</p>
             </div>
           ) : (
-            <div className="w-full max-w-7xl mx-auto space-y-6">
-              <div className="flex flex-wrap items-end gap-3 print:hidden">
-                <div className="min-w-[min(100%,16rem)] flex-1 sm:flex-initial">
-                  <label
-                    htmlFor="turnout-election"
-                    className="block text-sm font-medium text-foreground mb-1.5"
-                  >
-                    Election
-                  </label>
-                  <select
-                    id="turnout-election"
-                    className="h-10 w-full min-w-[12rem] rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    value={electionId}
-                    onChange={(e) => setElectionId(e.target.value)}
-                  >
-                    {elections.length === 0 ? (
-                      <option value={electionId}>{electionName || electionId}</option>
-                    ) : (
-                      elections.map((e) => (
-                        <option key={e.id} value={e.id}>
-                          {e.name}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 gap-2 shrink-0"
-                  onClick={() => loadData()}
-                >
-                  <RefreshCw className="h-4 w-4" aria-hidden />
-                  Refresh
-                </Button>
+            <div
+              id="voter-turnout-report"
+              className="w-full max-w-7xl mx-auto space-y-6 print:max-w-none"
+            >
+              {/* Visible in PDF only */}
+              <div className="hidden print:block border-b border-border pb-4 mb-2">
+                <h2 className="text-xl font-semibold text-foreground">Voter turnout report</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  <span className="font-medium text-foreground">{electionName || electionId}</span>
+                  {" · "}
+                  Hourly date: {formatDateForDisplay(selectedDate)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Generated {new Date().toLocaleString()}
+                  {adminInfo?.fullName ? ` · ${adminInfo.fullName}` : ""}
+                </p>
               </div>
+
+              <Card className="border-border/80 shadow-sm print:hidden">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg font-semibold tracking-tight">
+                    Election &amp; export
+                  </CardTitle>
+                  <CardDescription>
+                    Choose an election, reload turnout, or save a PDF of this page.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
+                    <div className="min-w-0 flex-1 space-y-1.5 sm:max-w-md lg:max-w-lg">
+                      <select
+                        id="turnout-election"
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        value={electionId}
+                        onChange={(e) => setElectionId(e.target.value)}
+                      >
+                        {elections.length === 0 ? (
+                          <option value={electionId}>{electionName || electionId}</option>
+                        ) : (
+                          elections.map((e) => (
+                            <option key={e.id} value={e.id}>
+                              {e.name}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 gap-2"
+                        onClick={() => loadData()}
+                      >
+                        <RefreshCw className="h-4 w-4 shrink-0" aria-hidden />
+                        Refresh
+                      </Button>
+                      <Button
+                        type="button"
+                        className="h-10 gap-2 bg-[#7A0019] hover:bg-[#5c0013] text-white"
+                        onClick={exportPdf}
+                        title="Opens the print dialog — choose Save as PDF or Microsoft Print to PDF."
+                      >
+                        <FileDown className="h-4 w-4 shrink-0" aria-hidden />
+                        Export PDF
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
 
               {error ? (
                 <div
@@ -294,8 +339,8 @@ export default function VoterTurnoutPage() {
                 </div>
               ) : null}
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Card className="border-border/80 shadow-sm">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 print:gap-4">
+                <Card className="border-border/80 shadow-sm print:break-inside-avoid print:shadow-none">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-lg font-semibold">Overall</CardTitle>
                     <p className="text-sm text-muted-foreground font-normal leading-relaxed">
@@ -311,7 +356,7 @@ export default function VoterTurnoutPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="border-border/80 shadow-sm">
+                <Card className="border-border/80 shadow-sm print:break-inside-avoid print:shadow-none">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-lg font-semibold">By department</CardTitle>
                     <p className="text-sm text-muted-foreground font-normal">
@@ -337,21 +382,27 @@ export default function VoterTurnoutPage() {
                 </Card>
               </div>
 
-              <Card className="border-border/80 shadow-sm">
-                <CardHeader className="flex flex-row flex-wrap items-start sm:items-center justify-between gap-4 space-y-0">
-                  <div>
+              <Card className="border-border/80 shadow-sm print:break-inside-avoid print:shadow-none">
+                <CardHeader className="flex flex-col gap-4 space-y-0 pb-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div className="space-y-1">
                     <CardTitle className="text-lg font-semibold">Hourly participation</CardTitle>
-                    <p className="text-sm text-muted-foreground font-normal mt-1">
+                    <p className="text-sm text-muted-foreground font-normal">
                       Digital + paper votes by hour (local time)
                     </p>
+                    <p className="hidden print:block text-sm font-medium text-foreground pt-1">
+                      Date: {formatDateForDisplay(selectedDate)}
+                    </p>
                   </div>
-                  <div className="shrink-0 w-full sm:w-auto">
-                    <label htmlFor="turnout-date" className="sr-only">
+                  <div className="w-full shrink-0 space-y-1.5 sm:w-auto sm:min-w-[12rem] print:hidden">
+                    <label
+                      htmlFor="turnout-date"
+                      className="text-sm font-medium leading-none text-foreground"
+                    >
                       Date
                     </label>
                     <select
                       id="turnout-date"
-                      className="h-10 w-full sm:w-auto min-w-[12rem] rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       value={selectedDate}
                       onChange={(e) => setSelectedDate(e.target.value)}
                     >

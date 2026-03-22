@@ -19,7 +19,8 @@
 
 - **`app/admin/ballot-print/page.tsx`** + **`BallotPrintClient.tsx`** — `/admin/ballot-print` loads **real data** via `fetchElection` + `fetchPositions` (gateway).
 - Query: `?electionId=election-2025` (defaults to `election-2025` if omitted).
-- **Ballot Token** on the sheet is a **preview** string (`buildPreviewBallotToken` / `buildVoterPreviewBallotToken`) until the gateway issues a real `TKN-…`.
+- **Ballot Token** on the sheet must be the gateway-issued paper token (`TKN-…`). Voter-specific prints load it from paper check-in / paper-tokens; there is no student-number-based preview token on the sheet.
+- Generic admin preview (no voter) may still use `buildPreviewBallotToken(electionId)` until a real token is passed via URL.
 
 ## Mapping
 

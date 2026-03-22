@@ -422,6 +422,8 @@ export interface VoterRecord {
   status: string;
   isEligible: boolean;
   hasVoted: boolean;
+  /** Present when loaded via GET /elections/:id/voters — vote or paper used for that election. */
+  hasVotedThisElection?: boolean;
   votedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -430,6 +432,57 @@ export interface VoterRecord {
 export async function fetchVoters(): Promise<VoterRecord[]> {
   const res = await fetch(`${getGatewayBase()}/voters`, { cache: "no-store" });
   return handleResponse(res);
+}
+
+/**
+ * Student voter roster for the selected election (who was added to this election only), not the full global registry.
+ * pool=eligible: full roster for this election. pool=active: roster members who have a digital vote or paper issuance.
+ */
+export async function fetchElectionVoters(
+  electionId: string,
+  pool: "eligible" | "active" = "eligible"
+): Promise<VoterRecord[]> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/voters?pool=${pool}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (j?.error) throw new Error(j.error);
+    } catch (e) {
+      if (e instanceof Error && e.message !== "Unexpected token") throw e;
+    }
+    throw new Error(text || `election voters failed (${res.status})`);
+  }
+  const data = (await res.json()) as { voters?: VoterRecord[] };
+  return Array.isArray(data.voters) ? data.voters : [];
+}
+
+/** Add every CAS enrolled eligible student in the registry to this election's roster (idempotent). */
+export async function syncCasEligibleToElectionRoster(electionId: string): Promise<{
+  ok: boolean;
+  added: number;
+  totalOnRoster: number;
+}> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/voters/roster/sync-cas-eligible`,
+    { method: "POST" }
+  );
+  return handleResponse(res);
+}
+
+/** Remove a student from this election's roster only (does not delete the voter from the registry). */
+export async function removeVoterFromElectionRoster(
+  electionId: string,
+  voterId: number
+): Promise<void> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/voters/roster/${voterId}`,
+    { method: "DELETE" }
+  );
+  await handleResponse(res);
 }
 
 export type VoterImportPayload = {
@@ -544,6 +597,10 @@ export interface PaperCheckInVoter {
   name: string;
   paperStatus: "Not Issued" | "Issued" | "Voted";
   ballotToken: string | null;
+  /** Digital vote recorded for this election (off-chain Vote row). */
+  votedDigital?: boolean;
+  /** Digital vote or any paper row for this election (for filtering “in this election”). */
+  hasElectionActivity?: boolean;
 }
 
 export async function fetchPaperCheckIn(

@@ -22,7 +22,6 @@ import { filterPositionsByVoterDepartment } from "@/lib/ballot/filterPositionsBy
 import type { PrintableBallotPosition } from "@/lib/ballot/printableBallotTypes";
 import { BALLOT_TEMPLATE_VERSION } from "@/lib/ballot/ballotTemplate";
 import { buildPreviewBallotToken } from "@/lib/ballot/previewBallotId";
-import { buildVoterPreviewBallotToken } from "@/lib/ballot/buildVoterPaperBallotId";
 
 /** Matches other admin pages until a global config exists */
 export const DEFAULT_BALLOT_PRINT_ELECTION_ID = "election-2025";
@@ -136,13 +135,15 @@ export function BallotPrintClient() {
     ballotTokenFromQuery,
   ]);
 
-  /** Prefer URL → issued TKN from DB → preview-only synthetic id */
+  /**
+   * Prefer URL → paper ballot issued `TKN-…` from gateway (check-in / paper-tokens).
+   * For a named voter, do not show a fake token derived from student number — only the real issued token.
+   * Non–voter-specific admin preview still uses a generic preview id (not tied to a student).
+   */
   const ballotToken =
     ballotTokenFromQuery ||
     issuedBallotToken ||
-    (isVoterSpecific
-      ? buildVoterPreviewBallotToken(electionId, studentNumber)
-      : buildPreviewBallotToken(electionId));
+    (isVoterSpecific ? "" : buildPreviewBallotToken(electionId));
 
   /** Only warn when the API explicitly says this voter has no issuance for this election */
   const showNoIssuanceYet =
