@@ -268,6 +268,28 @@ export class ECASVoteContract extends Contract {
     await ctx.stub.putState(this.electionKey(electionId), new Uint8Array(Buffer.from(JSON.stringify(election))));
   }
 
+  /** Remove election and related world-state keys (positions, candidates, tallies). Does not purge PDC voter/ballot data. */
+  public async DeleteElection(ctx: Context, electionId: string): Promise<void> {
+    this.requireSEB(ctx);
+    if (!(await this.electionExists(ctx, electionId))) {
+      throw new Error(`Election ${electionId} does not exist`);
+    }
+    await this.deleteStateByPrefix(ctx, `POSITION_${electionId}_`);
+    await this.deleteStateByPrefix(ctx, `CANDIDATE_${electionId}_`);
+    await this.deleteStateByPrefix(ctx, `TALLY_${electionId}_`);
+    await ctx.stub.deleteState(this.electionKey(electionId));
+  }
+
+  private async deleteStateByPrefix(ctx: Context, prefix: string): Promise<void> {
+    const iterator = await ctx.stub.getStateByRange(prefix, prefix + '~');
+    for (let res = await iterator.next(); !res.done; res = await iterator.next()) {
+      if (res.value?.key) {
+        await ctx.stub.deleteState(res.value.key);
+      }
+    }
+    await iterator.close();
+  }
+
   public async GetElection(ctx: Context, electionId: string): Promise<string> {
     return JSON.stringify(await this.getElection(ctx, electionId));
   }
