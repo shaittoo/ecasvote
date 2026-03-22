@@ -3,29 +3,34 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Search, Bell, Settings, HelpCircle } from "lucide-react";
 import { fetchDashboard } from "@/lib/ecasvoteApi";
+import type { Election } from "@/lib/ecasvoteApi";
 import { StudentVoterSidebar } from "@/components/Sidebar";
 import StudentVoterHeader from "./components/header";
 import GreetingCard from "@/components/greeting-card";
+import { Loader2 } from "lucide-react";
 
-const ELECTION_ID = 'election-2025';
+const ELECTION_ID = "election-2025";
 
 export default function DashboardPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [dashboardData, setDashboardData] = useState<any>(null);
+  const [dashboardData, setDashboardData] = useState<{
+    election?: Election | null;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [voterInfo, setVoterInfo] = useState<any>(null);
+  const [voterInfo, setVoterInfo] = useState<{
+    fullName?: string;
+    studentNumber?: string;
+    hasVoted?: boolean;
+  } | null>(null);
 
   useEffect(() => {
-    // Load voter info from localStorage
     if (typeof window !== "undefined") {
       const storedVoter = localStorage.getItem("voter");
       if (storedVoter) {
@@ -42,7 +47,7 @@ export default function DashboardPage() {
         const data = await fetchDashboard(ELECTION_ID);
         setDashboardData(data);
       } catch (err) {
-        console.error('Failed to load dashboard data:', err);
+        console.error("Failed to load dashboard data:", err);
       } finally {
         setLoading(false);
       }
@@ -55,7 +60,6 @@ export default function DashboardPage() {
   };
 
   const sidebarUserName = voterInfo?.fullName || "User";
-
   const election = dashboardData?.election;
 
   return (
@@ -70,24 +74,27 @@ export default function DashboardPage() {
         pathname={pathname}
       />
 
-      {/* Main Content */}
-      <div className={`flex-1 flex flex-col transition-all duration-300 ${
-        sidebarOpen ? "ml-64" : "ml-20"
-      }`}>
-        <StudentVoterHeader 
-          title="Student Dashboard" 
+      <div
+        className={`flex-1 flex flex-col transition-all duration-300 ${
+          sidebarOpen ? "ml-64" : "ml-20"
+        }`}
+      >
+        <StudentVoterHeader
+          title="Student Dashboard"
+          subtitle="CAS Student Council elections"
           sidebarOpen={sidebarOpen}
           actions={
-            voterInfo?.studentNumber && (
-              <div className="px-3 py-1 bg-gray-100 rounded-md text-sm text-gray-600">
-                Student Number: {voterInfo.studentNumber}
+            voterInfo?.studentNumber ? (
+              <div className="rounded-md border border-border bg-background px-3 py-1.5 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">Student No.</span>{" "}
+                {voterInfo.studentNumber}
               </div>
-            )
+            ) : undefined
           }
         />
-        {/* Main Content Area */}
-        <main className="flex-1 p-2 overflow-y-auto">
-          <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        <main className="flex-1 overflow-y-auto p-2">
+          <div className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
             <div className="space-y-6">
               <GreetingCard
                 name={voterInfo?.fullName?.split(" ")[0] || "User"}
@@ -95,96 +102,109 @@ export default function DashboardPage() {
                 hasVoted={voterInfo?.hasVoted}
               />
 
-              {/* Election Status Card */}
-              {loading ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Election Status</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-center py-8">
-                      <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-4"></div>
-                      <p className="text-gray-500">Loading election data...</p>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Election information</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {loading ? (
+                    <div className="flex flex-col items-center justify-center gap-4 py-10">
+                      <Loader2
+                        className="h-8 w-8 animate-spin text-[#7A0019]"
+                        aria-hidden
+                      />
+                      <p className="text-sm text-muted-foreground">Loading election data…</p>
                     </div>
-                  </CardContent>
-                </Card>
-              ) : election && election.status === 'OPEN' ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Election Status</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between">
+                  ) : election ? (
+                    <div className="space-y-6">
                       <div>
-                        <h3 className="text-lg font-medium mb-1">
-                          {election.name}
-                        </h3>
-                        <Badge variant="default" className="bg-green-600 text-white">
-                          Open
-                        </Badge>
+                        <p className="text-sm text-gray-600">Election name</p>
+                        <p className="text-lg font-semibold">{election.name}</p>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                          <p className="text-sm text-gray-600">Status</p>
+                          <Badge
+                            className={
+                              election.status === "OPEN"
+                                ? "bg-green-500 text-white hover:bg-green-500"
+                                : election.status === "CLOSED"
+                                  ? "bg-red-500 text-white hover:bg-red-500"
+                                  : "bg-gray-500 text-white hover:bg-gray-500"
+                            }
+                          >
+                            {election.status}
+                          </Badge>
+                        </div>
+
+                        <div>
+                          <p className="text-sm text-gray-600">Description</p>
+                          <p className="font-medium">{election.description || "N/A"}</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                          <p className="text-sm text-gray-600">Start time</p>
+                          <p className="font-medium">
+                            {new Date(election.startTime).toLocaleString("en-US", {
+                              timeZone: "Asia/Manila",
+                            })}
+                          </p>
+                        </div>
+
+                        <div>
+                          <p className="text-sm text-gray-600">End time</p>
+                          <p className="font-medium">
+                            {new Date(election.endTime).toLocaleString("en-US", {
+                              timeZone: "Asia/Manila",
+                            })}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-center border-t pt-6">
+                        {election.status === "OPEN" ? (
+                          <Link
+                            href="/vote"
+                            className={cn(
+                              buttonVariants({ size: "lg" }),
+                              "inline-flex w-full max-w-sm justify-center bg-[#7A0019] text-white hover:bg-[#5c0013] sm:w-auto sm:min-w-[220px]"
+                            )}
+                          >
+                            Cast your vote
+                          </Link>
+                        ) : election.status === "CLOSED" ? (
+                          <Link
+                            href="/studentvoter/results"
+                            className={cn(
+                              buttonVariants({ size: "lg" }),
+                              "inline-flex w-full max-w-sm justify-center bg-[#7A0019] text-white hover:bg-[#5c0013] sm:w-auto sm:min-w-[220px]"
+                            )}
+                          >
+                            View results
+                          </Link>
+                        ) : (
+                          <p className="text-center text-sm text-muted-foreground">
+                            This election is not open for voting yet.
+                          </p>
+                        )}
                       </div>
                     </div>
-                    <Link 
-                      href="/vote" 
-                      className={cn(
-                        buttonVariants({ variant: "default", size: "default" }), 
-                        "w-full text-white inline-block text-center"
-                      )} 
-                      style={{ backgroundColor: "#7A0019" }}
-                    >
-                      Cast Your Vote
-                    </Link>
-                  </CardContent>
-                </Card>
-              ) : election && election.status === 'CLOSED' ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Election Status</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-medium mb-1">
-                          {election.name}
-                        </h3>
-                        <Badge variant="secondary" className="bg-gray-500 text-white">
-                          Closed
-                        </Badge>
-                      </div>
-                    </div>
-                    <Link 
-                      href="/results" 
-                      className={cn(
-                        buttonVariants({ variant: "default", size: "default" }), 
-                        "w-full text-white inline-block text-center"
-                      )} 
-                      style={{ backgroundColor: "#7A0019" }}
-                    >
-                      View Results
-                    </Link>
-                  </CardContent>
-                </Card>
-              ) : (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Election Status</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-center py-8">
+                  ) : (
+                    <div className="py-8 text-center">
                       <p className="text-gray-500">No active elections at this time.</p>
                     </div>
-                  </CardContent>
-                </Card>
-              )}
+                  )}
+                </CardContent>
+              </Card>
 
-              {/* Neutral Thank You Message */}
-              {election && (
-                <div className="text-center pt-2">
-                  <p className="text-sm text-muted-foreground">
-                    Thank you for participating in the CAS Student Council Elections.
-                  </p>
-                </div>
-              )}
+              {election ? (
+                <p className="text-center text-sm text-muted-foreground">
+                  Thank you for participating in the CAS Student Council elections.
+                </p>
+              ) : null}
             </div>
           </div>
         </main>

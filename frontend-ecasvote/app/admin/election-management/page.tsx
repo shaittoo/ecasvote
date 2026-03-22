@@ -1,20 +1,19 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Edit2, Trash2 } from "lucide-react";
+import { Plus, Edit2, Trash2, Printer } from "lucide-react";
 import { fetchElection, fetchElections, createElection as createElectionApi, fetchPositions, createCandidates, updateElection } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../components/header";
-import PrintableBallot from "./ballot";
 import { notify } from "@/lib/notify";
-
-const ELECTION_ID = 'election-2025';
 
 export default function ElectionManagementPage() {
   const router = useRouter();
@@ -25,79 +24,6 @@ export default function ElectionManagementPage() {
   const handleLogout = () => {
     router.push("/login");
   };
-
-  useEffect(() => {
-    // Load admin info from localStorage
-    if (typeof window !== "undefined") {
-      const storedAdmin = localStorage.getItem("admin");
-      if (storedAdmin) {
-        try {
-          setAdminInfo(JSON.parse(storedAdmin));
-        } catch (e) {
-          notify.error({
-            title: "Failed to parse admin info: ${e}",
-          });
-        }
-      } else {
-        setAdminInfo({ fullName: "SEB Admin" });
-      }
-    }
-
-    // Load elections list and positions for default election
-    async function loadData() {
-      try {
-        const [electionsList, positionsData] = await Promise.all([
-          fetchElections(),
-          fetchPositions(ELECTION_ID).catch(() => []),
-        ]);
-        
-        if (electionsList && electionsList.length > 0) {
-          const withFreshStatus = await Promise.all(
-            electionsList.map(async (e: any) => {
-              const fresh = await fetchElection(e.id).catch(() => null);
-              const data = fresh || e;
-              return {
-                id: data.id,
-                title: data.name || 'Election',
-                academicYear: new Date(data.startTime).getFullYear() + '-' + (new Date(data.startTime).getFullYear() + 1),
-                semester: 'First Semester',
-                status: data.status || 'DRAFT',
-                startEnd: `${data.startTime ? new Date(data.startTime).toLocaleString('en-US', { timeZone: 'Asia/Manila' }) : 'N/A'} - ${data.endTime ? new Date(data.endTime).toLocaleString('en-US', { timeZone: 'Asia/Manila' }) : 'N/A'}`,
-              };
-            })
-          );
-          setElections(withFreshStatus);
-        }
-
-        if (positionsData && positionsData.length > 0) {
-          setPositions(positionsData);
-          setBallotPositions(positionsData.map((p: Position) => p.name));
-          
-          // Load candidates from positions
-          const allCandidates: any[] = [];
-          positionsData.forEach((position: Position) => {
-            if (position.candidates && position.candidates.length > 0) {
-              position.candidates.forEach((candidate) => {
-                allCandidates.push({
-                  id: candidate.id,
-                  position: position.name,
-                  name: candidate.name,
-                  party: candidate.party || 'Independent',
-                  yearLevel: candidate.yearLevel || '',
-                });
-              });
-            }
-          });
-          setCandidates(allCandidates);
-        }
-      } catch (err) {
-        notify.error({
-        title: `Failed to load election data: ${err}`,
-      });
-      }
-    }
-    loadData();
-  }, []);
 
   const [elections, setElections] = useState<any[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -119,6 +45,105 @@ export default function ElectionManagementPage() {
     { position: "", name: "", party: "", program: "", yearLevel: "" },
   ]);
 
+  /** Election used for candidate management + ballot print link (from API list) */
+  const [selectedElectionId, setSelectedElectionId] = useState<string>("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedAdmin = localStorage.getItem("admin");
+    if (storedAdmin) {
+      try {
+        setAdminInfo(JSON.parse(storedAdmin));
+      } catch (e) {
+        notify.error({
+          title: `Failed to parse admin info: ${e}`,
+        });
+      }
+    } else {
+      setAdminInfo({ fullName: "SEB Admin" });
+    }
+  }, []);
+
+  useEffect(() => {
+    async function loadElectionsList() {
+      try {
+        const electionsList = await fetchElections();
+        if (electionsList && electionsList.length > 0) {
+          const withFreshStatus = await Promise.all(
+            electionsList.map(async (e: any) => {
+              const fresh = await fetchElection(e.id).catch(() => null);
+              const data = fresh || e;
+              return {
+                id: data.id,
+                title: data.name || "Election",
+                academicYear:
+                  new Date(data.startTime).getFullYear() +
+                  "-" +
+                  (new Date(data.startTime).getFullYear() + 1),
+                semester: "First Semester",
+                status: data.status || "DRAFT",
+                startEnd: `${data.startTime ? new Date(data.startTime).toLocaleString("en-US", { timeZone: "Asia/Manila" }) : "N/A"} - ${data.endTime ? new Date(data.endTime).toLocaleString("en-US", { timeZone: "Asia/Manila" }) : "N/A"}`,
+              };
+            })
+          );
+          setElections(withFreshStatus);
+          setSelectedElectionId(withFreshStatus[0].id);
+        } else {
+          setElections([]);
+        }
+      } catch (err) {
+        notify.error({
+          title: `Failed to load elections: ${err}`,
+        });
+      }
+    }
+    loadElectionsList();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedElectionId) return;
+    let cancelled = false;
+    async function loadPositionsForElection() {
+      try {
+        const positionsData = await fetchPositions(selectedElectionId).catch(() => []);
+        if (cancelled) return;
+        if (positionsData && positionsData.length > 0) {
+          setPositions(positionsData);
+          setBallotPositions(positionsData.map((p: Position) => p.name));
+          const allCandidates: any[] = [];
+          positionsData.forEach((position: Position) => {
+            if (position.candidates && position.candidates.length > 0) {
+              position.candidates.forEach((candidate) => {
+                allCandidates.push({
+                  id: candidate.id,
+                  position: position.name,
+                  name: candidate.name,
+                  party: candidate.party || "Independent",
+                  yearLevel: candidate.yearLevel || "",
+                });
+              });
+            }
+          });
+          setCandidates(allCandidates);
+        } else {
+          setPositions([]);
+          setBallotPositions([]);
+          setCandidates([]);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          notify.error({
+            title: `Failed to load positions: ${err}`,
+          });
+        }
+      }
+    }
+    loadPositionsForElection();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedElectionId]);
+
   // Handlers for candidate drafts in modal
   const addCandidateDraftRow = () => {
     setCandidateDrafts((prev) => [...prev, { position: "", name: "", party: "", program: "", yearLevel: "" }]);
@@ -136,6 +161,14 @@ export default function ElectionManagementPage() {
   };
 
   const saveCandidateDrafts = async () => {
+    if (!selectedElectionId) {
+      notify.error({
+        title: "Select an election",
+        description: "Choose an election in “Select Election” before adding candidates.",
+      });
+      return;
+    }
+
     const toAdd = candidateDrafts.filter((c) => c.name.trim() !== "" && c.position.trim() !== "");
 
       if (toAdd.length === 0) {
@@ -154,10 +187,10 @@ export default function ElectionManagementPage() {
         yearLevel: c.yearLevel || undefined,
       }));
 
-      const response = await createCandidates(ELECTION_ID, candidatesToSave);
+      const response = await createCandidates(selectedElectionId, candidatesToSave);
       
       // Reload positions to get updated data
-      const positionsData = await fetchPositions(ELECTION_ID);
+      const positionsData = await fetchPositions(selectedElectionId);
       if (positionsData && positionsData.length > 0) {
         setPositions(positionsData);
         const allCandidates: any[] = [];
@@ -182,7 +215,7 @@ export default function ElectionManagementPage() {
       
       // Check election status to provide appropriate message
       try {
-        const electionData = await fetchElection(ELECTION_ID);
+        const electionData = await fetchElection(selectedElectionId);
         if (electionData && (electionData.status === 'OPEN' || electionData.status === 'CLOSED')) {
           notify.success({
             title: `Successfully added ${response.count} candidate(s) to database!`,
@@ -371,6 +404,13 @@ export default function ElectionManagementPage() {
                               {election.startEnd}
                             </td>
                             <td className="py-4 px-4">
+                              <div className="flex flex-wrap items-center gap-2">
+                              <Link
+                                href={`/admin/ballot-print?electionId=${encodeURIComponent(election.id)}`}
+                                className="text-sm font-medium text-[#7A0019] underline hover:no-underline"
+                              >
+                                Print ballot
+                              </Link>
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -462,6 +502,7 @@ export default function ElectionManagementPage() {
                               >
                                 Edit
                               </Button>
+                              </div>
                             </td>
                           </tr>
                         ))
@@ -490,8 +531,12 @@ export default function ElectionManagementPage() {
                 <div className="flex items-center justify-between w-full">
                   <div className="flex items-center gap-3">
                     <label className="text-sm font-medium">Select Election:</label>
-                    <select className="border border-gray-300 rounded-md px-3 py-2 text-sm cursor-pointer">
-                      <option>Select Election</option>
+                    <select
+                      className="border border-gray-300 rounded-md px-3 py-2 text-sm cursor-pointer min-w-[12rem]"
+                      value={selectedElectionId}
+                      onChange={(e) => setSelectedElectionId(e.target.value)}
+                    >
+                      <option value="">Select Election</option>
                       {elections.map((election) => (
                         <option key={election.id} value={election.id}>
                           {election.title}
@@ -519,19 +564,38 @@ export default function ElectionManagementPage() {
                     >
                       Save Draft
                     </Button>
-                    <PrintableBallot 
-                      candidates={candidates} 
-                      election={elections[0] || { title: "UPV CAS SC Elections", academicYear: "2025-2026", semester: "First Semester" }} 
-                    />
+                    {selectedElectionId ? (
+                      <Link
+                        href={`/admin/ballot-print?electionId=${encodeURIComponent(selectedElectionId)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={cn(buttonVariants({ variant: "outline" }))}
+                      >
+                        <Printer className="w-4 h-4 mr-2" />
+                        Print ballot
+                      </Link>
+                    ) : (
+                      <Button variant="outline" type="button" disabled>
+                        <Printer className="w-4 h-4 mr-2" />
+                        Print ballot
+                      </Button>
+                    )}
                     <Button
                       className="text-white"
                       style={{ backgroundColor: "#0C8C3F" }}
                       onClick={async () => {
-                        // Reload candidates from database
+                        if (!selectedElectionId) {
+                          notify.error({
+                            title: "Select an election",
+                            description: "Choose an election first.",
+                          });
+                          return;
+                        }
                         try {
-                          const positionsData = await fetchPositions(ELECTION_ID);
+                          const positionsData = await fetchPositions(selectedElectionId);
                           if (positionsData && positionsData.length > 0) {
                             setPositions(positionsData);
+                            setBallotPositions(positionsData.map((p: Position) => p.name));
                             const allCandidates: any[] = [];
                             positionsData.forEach((position: Position) => {
                               if (position.candidates && position.candidates.length > 0) {
@@ -540,8 +604,8 @@ export default function ElectionManagementPage() {
                                     id: candidate.id,
                                     position: position.name,
                                     name: candidate.name,
-                                    party: candidate.party || 'Independent',
-                                    yearLevel: candidate.yearLevel || '',
+                                    party: candidate.party || "Independent",
+                                    yearLevel: candidate.yearLevel || "",
                                   });
                                 });
                               }
@@ -551,10 +615,18 @@ export default function ElectionManagementPage() {
                               title: "Candidates refreshed",
                               description: "Latest candidates loaded from the database.",
                             });
+                          } else {
+                            setPositions([]);
+                            setBallotPositions([]);
+                            setCandidates([]);
+                            notify.info({
+                              title: "Candidates refreshed",
+                              description: "No positions for this election yet.",
+                            });
                           }
                         } catch (err: any) {
                           notify.error({
-                            title: "Failed to save candidates",
+                            title: "Failed to refresh candidates",
                             description: err.message || "Unknown error occurred",
                           });
                         }
@@ -757,6 +829,7 @@ export default function ElectionManagementPage() {
                           status: e.status || "DRAFT",
                           startEnd: `${e.startTime ? new Date(e.startTime).toLocaleString("en-US", { timeZone: "Asia/Manila" }) : "N/A"} - ${e.endTime ? new Date(e.endTime).toLocaleString("en-US", { timeZone: "Asia/Manila" }) : "N/A"}`,
                         })));
+                        setSelectedElectionId(electionId);
                       } catch (err: any) {
                         notify.error({
                           title: "Failed to create election",

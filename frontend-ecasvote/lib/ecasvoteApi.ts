@@ -1,7 +1,30 @@
 // frontend-ecasvote/lib/ecasvoteApi.ts
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+/**
+ * Gateway base URL for `fetch`.
+ * - If `NEXT_PUBLIC_GATEWAY_URL` is set, it wins (trimmed, no trailing slash).
+ * - In the **browser**, when unset, uses `/ecasvote-gateway` so requests go through
+ *   Next.js rewrites to the real API (default `http://127.0.0.1:4000`). That avoids
+ *   accidentally calling port 3000 (this app), which has no `/voters/import` route.
+ * - On the **server** (SSR), defaults to `GATEWAY_INTERNAL_URL` or `http://127.0.0.1:4000`.
+ */
+export function getGatewayBase(): string {
+  const env = process.env.NEXT_PUBLIC_GATEWAY_URL?.trim();
+  if (env) {
+    const cleaned = env.replace(/\/$/, "");
+    // Common mistake: pointing at the Next dev server (:3000), which has no /voters/import etc.
+    if (
+      typeof window !== "undefined" &&
+      /:(3000)(\/|$)/.test(cleaned) &&
+      (cleaned.includes("localhost") || cleaned.includes("127.0.0.1"))
+    ) {
+      return "/ecasvote-gateway";
+    }
+    return cleaned;
+  }
+  if (typeof window !== "undefined") return "/ecasvote-gateway";
+  return process.env.GATEWAY_INTERNAL_URL?.trim() || "http://127.0.0.1:4000";
+}
 
 export type ElectionStatus = "DRAFT" | "OPEN" | "CLOSED";
 
@@ -46,7 +69,7 @@ export async function login(
   studentNumber: string,
   upEmail?: string
 ): Promise<LoginResponse> {
-  const res = await fetch(`${API_BASE}/login`, {
+  const res = await fetch(`${getGatewayBase()}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ studentNumber, upEmail }),
@@ -71,7 +94,7 @@ async function handleResponse(res: Response) {
 export async function fetchElection(
   electionId: string
 ): Promise<Election | null> {
-  const res = await fetch(`${API_BASE}/elections/${electionId}`, {
+  const res = await fetch(`${getGatewayBase()}/elections/${electionId}`, {
     cache: "no-store",
   });
   
@@ -84,7 +107,7 @@ export async function fetchElection(
 }
 
 export async function fetchElections(): Promise<Election[]> {
-  const res = await fetch(`${API_BASE}/elections`, { cache: "no-store" });
+  const res = await fetch(`${getGatewayBase()}/elections`, { cache: "no-store" });
   if (!res.ok) return [];
   const data = await res.json();
   return Array.isArray(data) ? data : [];
@@ -102,7 +125,7 @@ export interface CreateElectionPayload {
 export async function createElection(
   payload: CreateElectionPayload
 ): Promise<Election> {
-  const res = await fetch(`${API_BASE}/elections`, {
+  const res = await fetch(`${getGatewayBase()}/elections`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -114,7 +137,7 @@ export async function fetchResults(
   electionId: string
 ): Promise<ResultsJson | null> {
   const res = await fetch(
-    `${API_BASE}/elections/${electionId}/results`,
+    `${getGatewayBase()}/elections/${electionId}/results`,
     { cache: "no-store" }
   );
   
@@ -129,7 +152,7 @@ export async function fetchResults(
 export async function openElection(
   electionId: string
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/elections/${electionId}/open`, {
+  const res = await fetch(`${getGatewayBase()}/elections/${electionId}/open`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -140,7 +163,7 @@ export async function openElection(
 export async function closeElection(
   electionId: string
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/elections/${electionId}/close`, {
+  const res = await fetch(`${getGatewayBase()}/elections/${electionId}/close`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -159,7 +182,7 @@ export async function updateElection(
   electionId: string,
   payload: UpdateElectionPayload
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/elections/${electionId}`, {
+  const res = await fetch(`${getGatewayBase()}/elections/${electionId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -172,7 +195,7 @@ export async function registerVoter(
   electionId: string,
   voterId: string
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/elections/${electionId}/voters`, {
+  const res = await fetch(`${getGatewayBase()}/elections/${electionId}/voters`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ voterId }),
@@ -191,7 +214,7 @@ export async function castVote(
   electionId: string,
   payload: CastVotePayload
 ): Promise<CastVoteResponse> {
-  const res = await fetch(`${API_BASE}/elections/${electionId}/votes`, {
+  const res = await fetch(`${getGatewayBase()}/elections/${electionId}/votes`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -200,16 +223,41 @@ export async function castVote(
   return handleResponse(res);
 }
 
+export interface TurnoutDepartmentRow {
+  name: string;
+  total: number;
+  voted: number;
+  notVoted: number;
+}
+
+export interface TurnoutYearRow {
+  yearLevel: number;
+  total: number;
+  voted: number;
+  notVoted: number;
+}
+
+export interface TurnoutProgramRow {
+  program: string;
+  total: number;
+  voted: number;
+  notVoted: number;
+}
+
 export interface DashboardData {
   election: Election | null;
   statistics: {
     totalVoters: number;
     votedCount: number;
     notVotedCount: number;
+    byDepartment: TurnoutDepartmentRow[];
+    byYearLevel: TurnoutYearRow[];
+    byProgram: TurnoutProgramRow[];
   };
   announcements: Array<{
     id: number;
     action: string;
+    txId: string | null;
     details: any;
     createdAt: string;
   }>;
@@ -218,7 +266,7 @@ export interface DashboardData {
 export async function fetchDashboard(
   electionId: string
 ): Promise<DashboardData | null> {
-  const res = await fetch(`${API_BASE}/elections/${electionId}/dashboard`, {
+  const res = await fetch(`${getGatewayBase()}/elections/${electionId}/dashboard`, {
     cache: "no-store",
   });
   
@@ -250,7 +298,7 @@ export interface Position {
 export async function fetchPositions(
   electionId: string
 ): Promise<Position[]> {
-  const res = await fetch(`${API_BASE}/elections/${electionId}/positions`, {
+  const res = await fetch(`${getGatewayBase()}/elections/${electionId}/positions`, {
     cache: "no-store",
   });
   
@@ -287,7 +335,7 @@ export async function createCandidates(
   electionId: string,
   candidates: CreateCandidatePayload[]
 ): Promise<CreateCandidatesResponse> {
-  const res = await fetch(`${API_BASE}/elections/${electionId}/candidates`, {
+  const res = await fetch(`${getGatewayBase()}/elections/${electionId}/candidates`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ candidates }),
@@ -328,7 +376,7 @@ export interface AuditLogsResponse {
 export async function fetchAuditLogs(
   electionId: string
 ): Promise<AuditLogsResponse> {
-  const res = await fetch(`${API_BASE}/elections/${electionId}/audit-logs`, {
+  const res = await fetch(`${getGatewayBase()}/elections/${electionId}/audit-logs`, {
     cache: "no-store",
   });
   return handleResponse(res);
@@ -356,32 +404,311 @@ export interface IntegrityCheckData {
 export async function fetchIntegrityCheck(
   electionId: string
 ): Promise<IntegrityCheckData> {
-  const res = await fetch(`${API_BASE}/elections/${electionId}/integrity-check`, {
+  const res = await fetch(`${getGatewayBase()}/elections/${electionId}/integrity-check`, {
     cache: "no-store",
   });
   return handleResponse(res);
 }
 
-export interface SystemActivity {
+export interface VoterRecord {
   id: number;
-  timestamp: string;
-  user: string | null;
-  role: string | null;
-  action: string;
-  description: string;
-  ipAddress: string | null;
+  studentNumber: string;
+  upEmail: string;
+  fullName: string;
+  college: string;
+  department: string;
+  program: string;
+  yearLevel: number;
   status: string;
+  isEligible: boolean;
+  hasVoted: boolean;
+  votedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface SystemActivityResponse {
+export async function fetchVoters(): Promise<VoterRecord[]> {
+  const res = await fetch(`${getGatewayBase()}/voters`, { cache: "no-store" });
+  return handleResponse(res);
+}
+
+export type VoterImportPayload = {
+  studentNumber: string;
+  upEmail: string;
+  fullName: string;
+  college: string;
+  department: string;
+  program: string;
+  yearLevel: number;
+  status?: string;
+  isEligible?: boolean;
+};
+
+export interface ImportVotersResult {
   ok: boolean;
-  logs: SystemActivity[];
-  count: number;
+  created: number;
+  updated: number;
+  total: number;
+  failed: number;
+  errors: Array<{ index: number; studentNumber?: string; message: string }>;
 }
 
-export async function fetchSystemActivity(): Promise<SystemActivityResponse> {
-  const res = await fetch(`${API_BASE}/system-activity`, {
-    cache: "no-store",
+export async function importVoters(
+  voters: VoterImportPayload[]
+): Promise<ImportVotersResult> {
+  const res = await fetch(`${getGatewayBase()}/voters/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voters }),
   });
   return handleResponse(res);
+}
+
+export type VoterUpdatePayload = Partial<
+  Pick<
+    VoterRecord,
+    | "studentNumber"
+    | "upEmail"
+    | "fullName"
+    | "college"
+    | "department"
+    | "program"
+    | "yearLevel"
+    | "status"
+    | "isEligible"
+  >
+>;
+
+export async function updateVoter(
+  id: number,
+  data: VoterUpdatePayload
+): Promise<VoterRecord> {
+  const res = await fetch(`${getGatewayBase()}/voters/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res);
+}
+
+export async function deleteVoter(id: number): Promise<{ ok: boolean }> {
+  const res = await fetch(`${getGatewayBase()}/voters/${id}`, {
+    method: "DELETE",
+  });
+  return handleResponse(res);
+}
+
+/** Paper ballot tokens issued for an election (private mapping voter ↔ token; this list is admin-only). */
+export interface PaperTokenRow {
+  studentNumber: string;
+  ballotToken: string;
+  timeCreated: string;
+  status: "Used" | "Unused";
+  timeUsed?: string;
+}
+
+export interface PaperTokensResponse {
+  electionId: string;
+  stats: {
+    totalIssued: number;
+    used: number;
+    unused: number;
+  };
+  tokens: PaperTokenRow[];
+}
+
+export async function fetchPaperTokens(
+  electionId: string
+): Promise<PaperTokensResponse> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/paper-tokens`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (j?.error) throw new Error(j.error);
+    } catch (e) {
+      if (e instanceof Error && e.message !== "Unexpected token") throw e;
+    }
+    throw new Error(text || `Failed to load paper tokens (${res.status})`);
+  }
+  return res.json();
+}
+
+/** Eligible voters + paper ballot status (for admin issue / token page). */
+export interface PaperCheckInVoter {
+  voterId: number;
+  studentNumber: string;
+  name: string;
+  paperStatus: "Not Issued" | "Issued" | "Voted";
+  ballotToken: string | null;
+}
+
+export async function fetchPaperCheckIn(
+  electionId: string
+): Promise<{ electionId: string; voters: PaperCheckInVoter[] }> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/paper-check-in`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (j?.error) throw new Error(j.error);
+    } catch (e) {
+      if (e instanceof Error && !text.startsWith("{")) throw new Error(text);
+      throw e;
+    }
+    throw new Error(text || `paper-check-in failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export interface IssuePaperBallotResult {
+  electionId: string;
+  ballotToken: string;
+  templateVersion: string;
+  voterId: number;
+  studentNumber: string;
+  reprint?: boolean;
+}
+
+export async function issuePaperBallot(
+  electionId: string,
+  voterId: number
+): Promise<IssuePaperBallotResult> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/paper-ballots/issue`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voterId }),
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (j?.error) throw new Error(j.error);
+    } catch (e) {
+      if (e instanceof Error && e.message !== "Unexpected token") throw e;
+    }
+    throw new Error(text || `issue ballot failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export interface GenerateAllPaperTokensResult {
+  ok: boolean;
+  electionId: string;
+  created: number;
+  eligibleVoters: number;
+  errors: string[];
+  errorCount: number;
+}
+
+export async function generateAllPaperTokens(
+  electionId: string
+): Promise<GenerateAllPaperTokensResult> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/paper-tokens/generate-all`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (j?.error) throw new Error(j.error);
+    } catch (e) {
+      if (e instanceof Error && e.message !== "Unexpected token") throw e;
+    }
+    throw new Error(text || `generate-all failed (${res.status})`);
+  }
+  return res.json();
+}
+
+/** GET /elections/:id/turnout — eligible CAS pool + votes cast in this election (digital + paper). */
+export interface ElectionTurnoutStats {
+  electionId: string;
+  totalVoters: number;
+  votedCount: number;
+  notVotedCount: number;
+  byDepartment: Array<{
+    name: string;
+    total: number;
+    voted: number;
+    notVoted: number;
+  }>;
+  byYearLevel: Array<{
+    yearLevel: number;
+    total: number;
+    voted: number;
+    notVoted: number;
+  }>;
+  byProgram: Array<{
+    program: string;
+    total: number;
+    voted: number;
+    notVoted: number;
+  }>;
+}
+
+export async function fetchElectionTurnout(
+  electionId: string
+): Promise<ElectionTurnoutStats> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/turnout`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (j?.error) throw new Error(j.error);
+    } catch (e) {
+      if (e instanceof Error && !text.startsWith("{")) throw new Error(text);
+      throw e;
+    }
+    throw new Error(text || `turnout failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export interface HourlyParticipationResponse {
+  hourlyData: Array<{ hour: string; count: number }>;
+  peakHour: { time: string; count: number };
+  slowestHour: { time: string; count: number };
+  totalVotes: number;
+}
+
+export async function fetchHourlyParticipation(
+  electionId: string,
+  dateYyyyMmDd: string
+): Promise<HourlyParticipationResponse> {
+  const q = new URLSearchParams({ date: dateYyyyMmDd });
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(
+      electionId
+    )}/hourly-participation?${q.toString()}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (j?.error) throw new Error(j.error);
+    } catch (e) {
+      if (e instanceof Error && !text.startsWith("{")) throw new Error(text);
+      throw e;
+    }
+    throw new Error(text || `hourly participation failed (${res.status})`);
+  }
+  return res.json();
 }

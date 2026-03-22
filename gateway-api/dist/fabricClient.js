@@ -47,8 +47,8 @@ function envOrDefault(key, defaultValue) {
 const channelName = process.env.CHANNEL_NAME || 'mychannel';
 const chaincodeName = process.env.CHAINCODE_NAME || 'ecasvote';
 const mspId = process.env.MSP_ID || 'Org1MSP';
-// Path to crypto materials (Org1)
-const cryptoPath = envOrDefault('CRYPTO_PATH', '/home/shaina/go/src/github.com/shaittoo/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com');
+// Path to crypto materials (Org1 = SEB for test-network-ecasvote)
+const cryptoPath = envOrDefault('CRYPTO_PATH', '/home/shaina/go/src/github.com/shaittoo/fabric-samples/test-network-ecasvote/organizations/peerOrganizations/org1.example.com');
 // Path to user private key directory.
 const keyDirectoryPath = envOrDefault('KEY_DIRECTORY_PATH', `${cryptoPath}/users/User1@org1.example.com/msp/keystore`);
 // Path to user certificate directory.

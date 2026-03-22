@@ -95,3 +95,31 @@ body {
 [data-sonner-toast] [data-sonner-close]:hover {
   opacity: 1;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Printable ballot (eCASVote) — paper output                                  */
+/* -------------------------------------------------------------------------- */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+
+  body {
+    background: #fff !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* Hide site chrome if present on admin layout during print */
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Single-page ballot (template v2): keep on one sheet */
+  .print-ballot-v2-root {
+    page-break-after: avoid;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}

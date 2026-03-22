@@ -4,6 +4,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 // src/server.ts
+// Load .env before Fabric client reads CRYPTO_PATH / TLS_CERT_PATH (required for `npm run start`)
+require("dotenv/config");
 const express_1 = __importDefault(require("express"));
 const body_parser_1 = __importDefault(require("body-parser"));
 const fabricClient_1 = require("./fabricClient");
@@ -20,10 +22,108 @@ app.use((req, res, next) => {
     }
     next();
 });
-app.use(body_parser_1.default.json());
+app.use(body_parser_1.default.json({ limit: '8mb' }));
 // Simple health-check
 app.get('/health', (_req, res) => {
     res.json({ ok: true });
+});
+// --- Voter registry (SQLite) — admin roster & CSV import ---
+app.get('/voters', async (_req, res) => {
+    try {
+        const rows = await prismaClient_1.prisma.voter.findMany({
+            orderBy: { studentNumber: 'asc' },
+        });
+        res.json(rows);
+    }
+    catch (err) {
+        console.error('GET /voters error:', err);
+        res.status(500).json({ error: err.message || 'Failed to list voters' });
+    }
+});
+app.post('/voters/import', async (req, res) => {
+    const body = req.body;
+    const voters = body?.voters;
+    if (!Array.isArray(voters) || voters.length === 0) {
+        return res.status(400).json({ error: 'Body must include non-empty voters array' });
+    }
+    let created = 0;
+    let updated = 0;
+    const errors = [];
+    for (let i = 0; i < voters.length; i++) {
+        const raw = voters[i];
+        try {
+            const studentNumber = String(raw?.studentNumber ?? '').trim();
+            const upEmail = String(raw?.upEmail ?? '').trim();
+            const fullName = String(raw?.fullName ?? '').trim();
+            const college = String(raw?.college ?? '').trim();
+            const department = String(raw?.department ?? '').trim();
+            const program = String(raw?.program ?? '').trim();
+            let yearLevel = Number(raw?.yearLevel);
+            if (!Number.isFinite(yearLevel) || yearLevel < 1) {
+                errors.push({
+                    index: i,
+                    studentNumber: String(raw?.studentNumber ?? '').trim() || undefined,
+                    message: 'yearLevel must be a positive number (e.g. 1–6)',
+                });
+                continue;
+            }
+            yearLevel = Math.floor(yearLevel);
+            if (!studentNumber || !upEmail || !fullName || !college || !department || !program) {
+                errors.push({
+                    index: i,
+                    studentNumber: studentNumber || undefined,
+                    message: 'Missing required field (studentNumber, upEmail, fullName, college, department, program)',
+                });
+                continue;
+            }
+            const status = String(raw?.status ?? 'ENROLLED').trim() || 'ENROLLED';
+            const isEligible = raw?.isEligible === undefined || raw?.isEligible === null ? true : Boolean(raw.isEligible);
+            const existing = await prismaClient_1.prisma.voter.findUnique({ where: { studentNumber } });
+            await prismaClient_1.prisma.voter.upsert({
+                where: { studentNumber },
+                create: {
+                    studentNumber,
+                    upEmail,
+                    fullName,
+                    college,
+                    department,
+                    program,
+                    yearLevel,
+                    status,
+                    isEligible,
+                },
+                update: {
+                    upEmail,
+                    fullName,
+                    college,
+                    department,
+                    program,
+                    yearLevel,
+                    status,
+                    isEligible,
+                },
+            });
+            if (existing)
+                updated += 1;
+            else
+                created += 1;
+        }
+        catch (err) {
+            errors.push({
+                index: i,
+                studentNumber: raw?.studentNumber ? String(raw.studentNumber) : undefined,
+                message: err.message || String(err),
+            });
+        }
+    }
+    res.json({
+        ok: true,
+        created,
+        updated,
+        total: created + updated,
+        failed: errors.length,
+        errors,
+    });
 });
 // Login endpoint - validates CAS student eligibility
 app.post('/login', async (req, res) => {
@@ -222,7 +322,28 @@ app.post('/init', async (_req, res) => {
         // Sync election to database after initialization
         try {
             const electionBuffer = await contract.evaluateTransaction('GetElection', 'election-2025');
-            const election = JSON.parse(electionBuffer.toString());
+            const raw = Buffer.isBuffer(electionBuffer)
+                ? electionBuffer.toString('utf8')
+                : new TextDecoder().decode(electionBuffer);
+            const jsonStr = raw.trim();
+            // Handle possible merged/duplicate response from multiple endorsers: take first valid JSON object
+            let election;
+            try {
+                election = JSON.parse(jsonStr);
+            }
+            catch {
+                const firstBrace = jsonStr.indexOf('{');
+                const lastBrace = jsonStr.lastIndexOf('}');
+                if (firstBrace !== -1 && lastBrace > firstBrace) {
+                    election = JSON.parse(jsonStr.slice(firstBrace, lastBrace + 1));
+                }
+                else {
+                    throw new Error('Invalid JSON from GetElection');
+                }
+            }
+            if (!election || election.id !== 'election-2025') {
+                throw new Error('GetElection did not return election-2025');
+            }
             await prismaClient_1.prisma.election.upsert({
                 where: { id: 'election-2025' },
                 update: {
@@ -271,7 +392,76 @@ app.post('/init', async (_req, res) => {
         }
     }
 });
-// 1) Get election details
+// 0) List all elections (from DB; created via POST /elections or synced from chaincode)
+app.get('/elections', async (_req, res) => {
+    try {
+        const elections = await prismaClient_1.prisma.election.findMany({
+            orderBy: { createdAt: 'desc' },
+        });
+        res.json(elections);
+    }
+    catch (err) {
+        console.error('List elections error:', err);
+        res.status(500).json({ error: err.message || 'Failed to list elections' });
+    }
+});
+// 1) Create election (blockchain + DB)
+app.post('/elections', async (req, res) => {
+    const { electionId, name, description, startTime, endTime, createdBy } = req.body || {};
+    if (!electionId || !name || !startTime || !endTime) {
+        return res.status(400).json({
+            error: 'Missing required fields: electionId, name, startTime, endTime',
+        });
+    }
+    try {
+        const contract = await (0, fabricClient_1.getContract)();
+        await contract.submitTransaction('CreateElection', String(electionId), String(name), String(description ?? ''), String(startTime), String(endTime), String(createdBy ?? 'admin'));
+        try {
+            await prismaClient_1.prisma.election.upsert({
+                where: { id: electionId },
+                update: {
+                    name: String(name),
+                    description: description != null ? String(description) : null,
+                    startTime: new Date(startTime),
+                    endTime: new Date(endTime),
+                    status: 'DRAFT',
+                    createdBy: String(createdBy ?? 'admin'),
+                },
+                create: {
+                    id: electionId,
+                    name: String(name),
+                    description: description != null ? String(description) : null,
+                    startTime: new Date(startTime),
+                    endTime: new Date(endTime),
+                    status: 'DRAFT',
+                    createdBy: String(createdBy ?? 'admin'),
+                },
+            });
+        }
+        catch (dbErr) {
+            console.warn('⚠️ Failed to sync new election to database:', dbErr.message);
+        }
+        const election = {
+            id: electionId,
+            name: String(name),
+            description: description ?? '',
+            startTime: String(startTime),
+            endTime: String(endTime),
+            status: 'DRAFT',
+            createdBy: String(createdBy ?? 'admin'),
+        };
+        res.status(201).json(election);
+    }
+    catch (err) {
+        console.error('CreateElection error:', err);
+        const msg = err.message || String(err);
+        if (msg.includes('already exists')) {
+            return res.status(409).json({ error: msg });
+        }
+        res.status(400).json({ error: msg });
+    }
+});
+// 2) Get election details
 app.get('/elections/:id', async (req, res) => {
     try {
         const contract = await (0, fabricClient_1.getContract)();
@@ -281,9 +471,21 @@ app.get('/elections/:id', async (req, res) => {
             throw new Error('Empty response from chaincode');
         }
         const election = JSON.parse(responseText);
-        // Auto-close election if end time has passed
         const now = new Date();
+        const startTime = new Date(election.startTime);
         const endTime = new Date(election.endTime);
+        // Auto-open: if DRAFT and start time has been reached, open the election
+        if (election.status === 'DRAFT' && now >= startTime) {
+            try {
+                await contract.submitTransaction('OpenElection', req.params.id);
+                election.status = 'OPEN';
+                console.log(`✅ Election ${req.params.id} automatically opened (start time reached)`);
+            }
+            catch (openErr) {
+                console.warn(`⚠️ Failed to auto-open election ${req.params.id}:`, openErr.message);
+            }
+        }
+        // Auto-close: if OPEN and end time has passed, close the election
         if (election.status === 'OPEN' && now > endTime) {
             try {
                 await contract.submitTransaction('CloseElection', req.params.id);
@@ -292,7 +494,6 @@ app.get('/elections/:id', async (req, res) => {
             }
             catch (closeErr) {
                 console.warn(`⚠️ Failed to auto-close election ${req.params.id}:`, closeErr.message);
-                // Continue with current status if close fails
             }
         }
         // Sync election to database (upsert)
@@ -322,7 +523,7 @@ app.get('/elections/:id', async (req, res) => {
             console.warn(`⚠️ Failed to sync election ${req.params.id} to database:`, dbErr.message);
             // Continue even if database sync fails - return blockchain data
         }
-        res.json(election);
+        res.json({ ...election, onChain: true });
     }
     catch (err) {
         console.error('GetElection error:', err);
@@ -1213,30 +1414,16 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
         res.status(400).json({ error: err.message || 'GetIntegrityCheck failed' });
     }
 });
-//13. System activity
-app.get('/system-activity', async (req, res) => {
-  try {
-    const logs = await prisma.systemActivity.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
-
-    res.json({
-      ok: true,
-      logs,
-    });
-  } catch (err) {
-    console.error('GetSystemLogs error:', err);
-    res.status(500).json({
-      error: err.message || 'Failed to fetch system logs',
-    });
-  }
-});
-
-
-const PORT = process.env.PORT || 4000;
+// Coerce to number so env PORT=4000 is not treated as a named pipe in error messages
+const rawPort = process.env.PORT;
+const PORT = rawPort !== undefined && rawPort !== '' ? Number(rawPort) : 4000;
 // Start the server
 let server;
 try {
+    if (Number.isNaN(PORT) || PORT < 1 || PORT > 65535) {
+        console.error(`Invalid PORT: ${process.env.PORT}`);
+        process.exit(1);
+    }
     server = app.listen(PORT, () => {
         console.log(`eCASVote gateway API listening on http://localhost:${PORT}`);
         console.log('Server is running. Press Ctrl+C to stop.');
@@ -1246,7 +1433,7 @@ try {
         if (error.syscall !== 'listen') {
             throw error;
         }
-        const bind = typeof PORT === 'string' ? 'Pipe ' + PORT : 'Port ' + PORT;
+        const bind = `Port ${PORT}`;
         switch (error.code) {
             case 'EACCES':
                 console.error(`${bind} requires elevated privileges`);

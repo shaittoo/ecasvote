@@ -85,6 +85,33 @@ model Voter {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   user          User?               // Link to User table
+  paperIssuances PaperBallotIssuance[]
+}
+
+/** PRIVATE: voter ↔ paper ballot token (QR identifies this; selections never in QR). */
+model PaperBallotIssuance {
+  id              String   @id @default(uuid())
+  ballotToken     String   @unique
+  electionId      String
+  voterId         Int
+  used            Boolean  @default(false)
+  issuedAt        DateTime @default(now())
+  usedAt          DateTime?
+  templateVersion String   @default("ballot-template-v1")
+  voter           Voter    @relation(fields: [voterId], references: [id], onDelete: Cascade)
+
+  @@index([electionId, voterId])
+}
+
+/** PUBLIC: anonymous paper vote (no voterId — unlinkable to voter without private issuance). */
+model PaperAnonymousVote {
+  id              String   @id @default(uuid())
+  electionId      String
+  ballotToken     String   @unique
+  ciphertextB64   String
+  selectionsJson  Json
+  templateVersion String
+  castAt          DateTime @default(now())
 }
 
 model Ballot {
@@ -116,16 +143,4 @@ model AuditLog {
   txId       String?  // blockchain transaction ID
   details    Json?    // any extra metadata
   createdAt  DateTime @default(now())
-}
-
-model SystemActivity {
-  id          Int      @id @default(autoincrement())
-  timestamp   DateTime @default(now())
-  user        String?
-  role        String?
-  action      String
-  description String
-  ipAddress   String?
-  status      String
-  createdAt   DateTime @default(now())
 }

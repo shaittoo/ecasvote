@@ -3,9 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { login } from "@/lib/ecasvoteApi";
-
-const API_BASE = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+import { getGatewayBase, login } from "@/lib/ecasvoteApi";
 const HELP_MESSAGE = "Please contact the system administrator for login assistance.";
 
 export default function LoginPage() {
@@ -48,7 +46,7 @@ export default function LoginPage() {
         // fall through to admin/validator
       }
 
-      const adminResponse = await fetch(`${API_BASE}/login/admin`, {
+        const adminResponse = await fetch(`${getGatewayBase()}/login/admin`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: upMail.trim(), password: username.trim() }),
@@ -63,7 +61,7 @@ export default function LoginPage() {
         return;
       }
 
-      const validatorResponse = await fetch(`${API_BASE}/login/validator`, {
+        const validatorResponse = await fetch(`${getGatewayBase()}/login/validator`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: upMail.trim(), password: username.trim() }),

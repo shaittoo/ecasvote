@@ -31,7 +31,7 @@ export default function AdminHeader({ title, subtitle, sidebarOpen, actions }: A
       }}
     >
       <div>
-        <h1 className="text-2xl font-semibold text-gray-1000">{title}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-gray-900">{title}</h1>
         {subtitle && <p className="text-xs text-gray-700 mt-1">{subtitle}</p>}
       </div>
       <div className="flex items-center gap-3">

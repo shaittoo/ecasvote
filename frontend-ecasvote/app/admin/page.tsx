@@ -1,8 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import Link from "next/link";
-import Image from "next/image";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import {
   Chart as ChartJS,
@@ -13,25 +11,41 @@ import {
   LinearScale,
   BarElement,
 } from "chart.js";
-import { Doughnut, Bar } from "react-chartjs-2";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Search, Bell, Settings, HelpCircle, Menu, LogOut, User, ChevronDown, ChevronRight, Home, BookOpen, Vote, Users, BarChart3, FolderOpen, FileText, Grid } from "lucide-react";
-import { fetchDashboard, fetchElection, openElection } from "@/lib/ecasvoteApi";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { RefreshCw } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  fetchDashboard,
+  fetchElections,
+  openElection,
+  closeElection,
+  type DashboardData,
+  type Election,
+} from "@/lib/ecasvoteApi";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "./components/header";
 import GreetingCard from "@/components/greeting-card";
 import VoterTurnoutTabs from "./components/voter-turnout/tabs-turnout";
 
-// Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
 
-const ELECTION_ID = 'election-2025';
+const DEFAULT_ELECTION_ID = "election-2025";
 
-// Countdown Timer Component
+const DEPT_PALETTE = [
+  "#ea580c",
+  "#dc2626",
+  "#9333ea",
+  "#16a34a",
+  "#2563eb",
+  "#ca8a04",
+  "#0891b2",
+  "#be185d",
+  "#4f46e5",
+  "#65a30d",
+];
+
 function CountdownTimer({ endTime }: { endTime?: string }) {
   const [timeLeft, setTimeLeft] = useState({
     days: 0,
@@ -39,152 +53,162 @@ function CountdownTimer({ endTime }: { endTime?: string }) {
     minutes: 0,
     seconds: 0,
   });
+  const [ended, setEnded] = useState(false);
 
   useEffect(() => {
     if (!endTime) return;
 
-    const calculateTimeLeft = () => {
-      const now = new Date().getTime();
+    const tick = () => {
+      const now = Date.now();
       const end = new Date(endTime).getTime();
       const difference = end - now;
 
       if (difference <= 0) {
-        return { days: 0, hours: 0, minutes: 0, seconds: 0 };
+        setEnded(true);
+        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+        return;
       }
-
+      setEnded(false);
       const days = Math.floor(difference / (1000 * 60 * 60 * 24));
       const hours = Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
       const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
       const seconds = Math.floor((difference % (1000 * 60)) / 1000);
-
-      return { days, hours, minutes, seconds };
+      setTimeLeft({ days, hours, minutes, seconds });
     };
 
-    // Calculate immediately
-    setTimeLeft(calculateTimeLeft());
-
-    // Update every second
-    const timer = setInterval(() => {
-      setTimeLeft(calculateTimeLeft());
-    }, 1000);
-
+    tick();
+    const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
   }, [endTime]);
 
+  if (!endTime) {
+    return (
+      <div className="rounded-lg border border-dashed bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">
+        No end time on record. Configure the election in management.
+      </div>
+    );
+  }
+
+  if (ended) {
+    return (
+      <div className="rounded-lg border bg-muted/30 px-4 py-6 text-center">
+        <p className="text-sm font-medium text-foreground">Voting period has ended</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Ended {new Date(endTime).toLocaleString()}
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 text-center">
-      <div className="text-2xl font-semibold text-gray-900">
-        {String(timeLeft.days).padStart(2, "0")} days : {String(timeLeft.hours).padStart(2, "0")} hours : {String(timeLeft.minutes).padStart(2, "0")} minutes : {String(timeLeft.seconds).padStart(2, "0")} seconds
+    <div className="rounded-lg border border-border/80 bg-card px-3 py-4 sm:px-6 text-center shadow-sm">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-3">
+        Time until election closes
+      </p>
+      <div className="flex flex-wrap items-center justify-center gap-x-1 gap-y-1 text-lg font-semibold tabular-nums text-foreground sm:text-2xl sm:gap-x-2">
+        <span>{String(timeLeft.days).padStart(2, "0")}</span>
+        <span className="text-muted-foreground font-normal text-sm sm:text-base">d</span>
+        <span className="text-muted-foreground/60">:</span>
+        <span>{String(timeLeft.hours).padStart(2, "0")}</span>
+        <span className="text-muted-foreground font-normal text-sm sm:text-base">h</span>
+        <span className="text-muted-foreground/60">:</span>
+        <span>{String(timeLeft.minutes).padStart(2, "0")}</span>
+        <span className="text-muted-foreground font-normal text-sm sm:text-base">m</span>
+        <span className="text-muted-foreground/60">:</span>
+        <span>{String(timeLeft.seconds).padStart(2, "0")}</span>
+        <span className="text-muted-foreground font-normal text-sm sm:text-base">s</span>
       </div>
     </div>
   );
 }
 
-// Horizontal Bar Chart Component for Group Breakdown
-function GroupBreakdownChart({ groups }: { groups: Array<{ name: string; voted: number; total: number; color: string }> }) {
-  const data = {
-    labels: groups.map(g => g.name),
-    datasets: [
-      {
-        label: 'Voted',
-        data: groups.map(g => (g.voted / g.total) * 100),
-        backgroundColor: groups.map(g => g.color),
-        borderRadius: 4,
-      },
-      {
-        label: 'Not Voted',
-        data: groups.map(g => ((g.total - g.voted) / g.total) * 100),
-        backgroundColor: '#e5e7eb',
-        borderRadius: 4,
-      },
-    ],
-  };
-
-  const options = {
-    indexAxis: 'y' as const,
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        display: false,
-      },
-      tooltip: {
-        callbacks: {
-          label: function(context: any) {
-            const groupIndex = context.dataIndex;
-            const group = groups[groupIndex];
-            if (context.datasetIndex === 0) {
-              return `${group.voted} out of ${group.total} (${Math.round((group.voted / group.total) * 100)}%)`;
-            } else {
-              return `${group.total - group.voted} out of ${group.total} (${Math.round(((group.total - group.voted) / group.total) * 100)}%)`;
-            }
-          },
-        },
-      },
-    },
-    scales: {
-      x: {
-        stacked: true,
-        max: 100,
-        ticks: {
-          callback: function(value: any) {
-            return value + '%';
-          },
-        },
-      },
-      y: {
-        stacked: true,
-      },
-    },
-  };
-
-  return (
-    <div className="w-full h-64">
-      <Bar data={data} options={options} />
-    </div>
-  );
+function statusBadgeClass(status: string | undefined) {
+  switch (status) {
+    case "OPEN":
+      return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    case "DRAFT":
+      return "border-amber-200 bg-amber-50 text-amber-900";
+    case "CLOSED":
+      return "border-slate-200 bg-slate-100 text-slate-800";
+    default:
+      return "border-border bg-muted text-muted-foreground";
+  }
 }
 
 export default function AdminDashboardPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [dashboardData, setDashboardData] = useState<any>(null);
+  const [electionId, setElectionId] = useState(DEFAULT_ELECTION_ID);
+  const [elections, setElections] = useState<Election[]>([]);
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"overall" | "breakdown">("overall");
 
   useEffect(() => {
-    async function loadDashboard() {
-      try {
-        const data = await fetchDashboard(ELECTION_ID);
-        setDashboardData(data);
-      } catch (err) {
-        console.error('Failed to load dashboard data:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadDashboard();
+    fetchElections()
+      .then((list) => {
+        setElections(list);
+        if (list.length > 0 && !list.some((e) => e.id === electionId)) {
+          setElectionId(list[0].id);
+        }
+      })
+      .catch(() => setElections([]));
   }, []);
+
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetchDashboard(electionId);
+      setDashboardData(data);
+    } catch (err) {
+      console.error("Failed to load dashboard data:", err);
+      setDashboardData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [electionId]);
+
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
 
   const handleLogout = () => {
     router.push("/login");
   };
 
-  const stats = dashboardData?.statistics || { totalVoters: 1200, votedCount: 890, notVotedCount: 310 };
-  const election = dashboardData?.election;
-  const announcements = dashboardData?.announcements || [];
-  
-  // Get the most recent transaction from audit logs
-  const lastTransaction = announcements.find((a: any) => a.txId) || null;
+  const stats = useMemo(() => {
+    const s = dashboardData?.statistics;
+    return {
+      totalVoters: s?.totalVoters ?? 0,
+      votedCount: s?.votedCount ?? 0,
+      notVotedCount: s?.notVotedCount ?? 0,
+    };
+  }, [dashboardData]);
 
-  // Mock group data - in real app, this would come from the database
-  const groups = [
-    { name: "Red Bolts", voted: 184, total: 200, color: "#dc2626" },
-    { name: "Skimmers", voted: 252, total: 300, color: "#9333ea" },
-    { name: "Elektrons", voted: 380, total: 500, color: "#ea580c" },
-    { name: "Clovers", voted: 74, total: 200, color: "#16a34a" },
-  ];
+  const groups = useMemo(() => {
+    const rows = dashboardData?.statistics?.byDepartment;
+    if (!rows?.length) return [];
+    return rows.map((d, i) => ({
+      name: d.name,
+      voted: d.voted,
+      total: d.total,
+      color: DEPT_PALETTE[i % DEPT_PALETTE.length],
+    }));
+  }, [dashboardData]);
+
+  const election = dashboardData?.election;
+  const announcements = dashboardData?.announcements ?? [];
+
+  const lastTransaction = announcements.find((a) => a.txId) ?? null;
+
+  const electionFromList = useMemo(
+    () => elections.find((e) => e.id === electionId),
+    [elections, electionId]
+  );
+
+  const displayElectionName = election?.name ?? electionFromList?.name ?? electionId;
+  const electionStatus = election?.status ?? electionFromList?.status;
+  const endTimeForTimer = election?.endTime ?? electionFromList?.endTime;
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -198,90 +222,156 @@ export default function AdminDashboardPage() {
         pathname={pathname}
       />
 
-      {/* Main Content */}
       <div className="flex-1 flex flex-col">
-        <AdminHeader 
-          title="Admin Dashboard" 
+        <AdminHeader
+          title="Admin Dashboard"
           subtitle="Overview of election activities and statistics"
           sidebarOpen={sidebarOpen}
         />
-        {/* Main Content Area */}
-        <main className={`flex-1 p-2 overflow-y-auto transition-all duration-300 ${
-          sidebarOpen ? "ml-64" : "ml-20"
-        }`}>
+        <main
+          className={`flex-1 p-2 overflow-y-auto transition-all duration-300 ${
+            sidebarOpen ? "ml-64" : "ml-20"
+          }`}
+        >
           <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="space-y-6">
               <GreetingCard name="John" role="SEB Admin" roleColor="#7A0019" />
 
-              {/* Ongoing Elections Card */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center text-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-muted-foreground">Admin Control Panel</span>
-                    <span className="text-xs text-muted-foreground">·</span>
-                    <CardTitle className="text-green-600">Ongoing Elections</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="mb-4">
-                    <h3 className="text-2xl text-center font-bold mb-4">
-                      {election?.name || "CAS Student Council Elections 2026"}
-                    </h3>
-                    <div className="flex items-center justify-center gap-4">
-                      <CountdownTimer endTime={election?.endTime} />
+              <Card className="border-border/80 shadow-sm overflow-hidden">
+                <CardHeader className="space-y-4 border-b bg-muted/30 pb-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="space-y-1">
+                      <CardTitle className="text-xl font-semibold text-foreground">
+                        Election status
+                      </CardTitle>
                     </div>
+                    {electionStatus ? (
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "shrink-0 border px-3 py-1 text-xs font-semibold",
+                          statusBadgeClass(electionStatus)
+                        )}
+                      >
+                        {electionStatus}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="shrink-0 text-muted-foreground">
+                        Unknown
+                      </Badge>
+                    )}
                   </div>
-                  <div className="flex gap-2">
-                    {election?.status === 'DRAFT' ? (
-                      <Button
-                        className="flex-1 text-white"
-                        style={{ backgroundColor: "#0C8C3F" }}
-                        onClick={async () => {
-                          try {
-                            await openElection(ELECTION_ID);
-                            // Reload dashboard data
-                            const data = await fetchDashboard(ELECTION_ID);
-                            setDashboardData(data);
-                          } catch (err) {
-                            console.error('Failed to open election:', err);
-                          }
-                        }}
-                      >
-                        Open Election
-                      </Button>
-                    ) : election?.status === 'OPEN' ? (
-                      <Button
-                        className="flex-1 text-white"
-                        style={{ backgroundColor: "#dc2626" }}
-                        onClick={() => {
-                          // TODO: Implement close election
-                          alert('Close election functionality coming soon');
-                        }}
-                      >
-                        Close Election
-                      </Button>
-                    ) : null}
-                    <Button
-                      variant="outline"
-                      className="flex-1 cursor-pointer"
-                      onClick={() => {
-                        router.push('/admin/election-management');
-                      }}
+
+                  {/* remove dropdown and refresh button later */}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                    <label htmlFor="dashboard-election" className="sr-only">
+                      Select election
+                    </label>
+                    <select
+                      id="dashboard-election"
+                      className="h-10 w-full sm:max-w-md rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      value={electionId}
+                      onChange={(e) => setElectionId(e.target.value)}
+                      disabled={loading}
                     >
-                      Manage Election
+                      {elections.length === 0 ? (
+                        <option value={electionId}>{electionId}</option>
+                      ) : (
+                        elections.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {e.name || e.id}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-10 shrink-0 gap-2 sm:w-auto w-full"
+                      onClick={() => loadDashboard()}
+                      disabled={loading}
+                    >
+                      <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} aria-hidden />
+                      Refresh
                     </Button>
                   </div>
-                  {lastTransaction?.txId && (
-                    <div className="mt-4 pt-4 border-t text-xs text-muted-foreground">
-                      <span className="font-medium">Last chain transaction:</span>{" "}
-                      <span className="font-mono">TxID #{lastTransaction.txId.slice(0, 8)}</span>
-                      {" "}({new Date(lastTransaction.createdAt).toLocaleTimeString()})
-                    </div>
+                </CardHeader>
+
+                <CardContent className="pt-6 space-y-6">
+                  {loading && !dashboardData ? (
+                    <p className="text-center text-sm text-muted-foreground py-8">Loading dashboard…</p>
+                  ) : (
+                    <>
+                      <div className="text-center space-y-1">
+                        <h2 className="text-2xl font-bold text-foreground tracking-tight">
+                          {displayElectionName}
+                        </h2>
+                        <h3> {election?.description} </h3>
+                      </div>
+
+                      <div className="max-w-xl mx-auto">
+                        <CountdownTimer endTime={endTimeForTimer} />
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                        {electionStatus === "DRAFT" ? (
+                          <Button
+                            className="flex-1 text-white order-1 sm:order-none"
+                            style={{ backgroundColor: "#0C8C3F" }}
+                            disabled={loading}
+                            onClick={async () => {
+                              try {
+                                await openElection(electionId);
+                                await loadDashboard();
+                              } catch (err) {
+                                console.error("Failed to open election:", err);
+                              }
+                            }}
+                          >
+                            Open election
+                          </Button>
+                        ) : electionStatus === "OPEN" ? (
+                          <Button
+                            className="flex-1 text-white order-1 sm:order-none"
+                            style={{ backgroundColor: "#dc2626" }}
+                            disabled={loading}
+                            onClick={async () => {
+                              try {
+                                await closeElection(electionId);
+                                await loadDashboard();
+                              } catch (err) {
+                                console.error("Failed to close election:", err);
+                              }
+                            }}
+                          >
+                            Close election
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="outline"
+                          className="flex-1 border-[#7A0019]/30 hover:bg-[#7A0019]/5 cursor-pointer"
+                          disabled={loading}
+                          onClick={() => router.push("/admin/election-management")}
+                        >
+                          Manage election
+                        </Button>
+                      </div>
+
+                      {lastTransaction?.txId ? (
+                        <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground">Last on-chain activity</span>
+                          <span className="mx-1.5">·</span>
+                          <span className="font-mono">Tx {lastTransaction.txId.slice(0, 10)}…</span>
+                          <span className="mx-1.5">·</span>
+                          {new Date(lastTransaction.createdAt).toLocaleString()}
+                        </div>
+                      ) : null}
+                    </>
                   )}
                 </CardContent>
               </Card>
 
-              {/* Voter Turnout Card */}
               <VoterTurnoutTabs stats={stats} groups={groups} />
             </div>
           </div>
