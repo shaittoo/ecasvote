@@ -1,0 +1,6 @@
+# eCASVote OMR worker — OpenCV stack (same ecosystem as Open MCR: https://github.com/iansan5653/open-mcr)
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+numpy>=1.26.0
+opencv-python-headless>=4.10.0
+pydantic>=2.0.0

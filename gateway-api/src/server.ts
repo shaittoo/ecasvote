@@ -50,7 +50,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(bodyParser.json({ limit: '8mb' }));
+app.use(bodyParser.json({ limit: '25mb' }));
 
 // Simple health-check
 app.get('/health', (_req, res) => {
@@ -1020,6 +1020,107 @@ app.post('/elections/:id/paper-tokens/generate-all', async (req, res) => {
   } catch (err: any) {
     console.error('POST paper-tokens/generate-all error:', err);
     res.status(500).json({ error: err.message || 'generate-all failed' });
+  }
+});
+
+/**
+ * Full ballot image scan: forwards to Python OMR worker (OpenCV — same stack as Open MCR).
+ * Set OMR_WORKER_URL=http://127.0.0.1:8090 (see repo /omr-worker).
+ * Body: { imageBase64, fileName?, scannerTemplate } — template = ecasvote-scanner-template/1 JSON.
+ */
+app.post('/scanner/scan-image', async (req, res) => {
+  const imageBase64 = String(req.body?.imageBase64 ?? '');
+  const fileName = String(req.body?.fileName ?? 'image');
+  const scannerTemplate = req.body?.scannerTemplate;
+
+  if (!imageBase64 || !scannerTemplate || typeof scannerTemplate !== 'object') {
+    return res.status(400).json({
+      error: 'imageBase64 and scannerTemplate (object) are required',
+    });
+  }
+
+  const workerUrl = process.env.OMR_WORKER_URL?.trim().replace(/\/$/, '');
+  if (!workerUrl) {
+    return res.status(503).json({
+      ok: false,
+      error: 'OMR_WORKER_NOT_CONFIGURED',
+      hint: 'Set OMR_WORKER_URL and start the Python service: cd omr-worker && pip install -r requirements.txt && uvicorn app.main:app --host 127.0.0.1 --port 8090',
+      fileName,
+    });
+  }
+
+  try {
+    const wr = await fetch(`${workerUrl}/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_base64: imageBase64,
+        template: scannerTemplate,
+      }),
+    });
+    const omr = (await wr.json()) as Record<string, unknown>;
+    if (!wr.ok) {
+      return res.status(502).json({
+        ok: false,
+        fileName,
+        workerHttpStatus: wr.status,
+        error:
+          typeof omr.detail === 'string'
+            ? omr.detail
+            : typeof omr.message === 'string'
+              ? omr.message
+              : 'OMR worker request failed',
+        omr,
+      });
+    }
+
+    const qr = omr.qr as
+      | { electionId?: string; ballotToken?: string; templateVersion?: string }
+      | null
+      | undefined;
+
+    let tokenValidation:
+      | { ok: true; templateVersion: string }
+      | { ok: false; error: string }
+      | { skipped: true; reason: string };
+
+    if (
+      qr &&
+      typeof qr.electionId === 'string' &&
+      typeof qr.ballotToken === 'string' &&
+      qr.electionId.length > 0 &&
+      qr.ballotToken.length > 0
+    ) {
+      const electionId = qr.electionId;
+      const ballotToken = qr.ballotToken;
+      const templateVersion = String(qr.templateVersion ?? '');
+
+      const issuance = await prisma.paperBallotIssuance.findFirst({
+        where: { electionId, ballotToken },
+      });
+      if (!issuance) {
+        tokenValidation = { ok: false, error: 'UNKNOWN_TOKEN' };
+      } else if (templateVersion && issuance.templateVersion !== templateVersion) {
+        tokenValidation = { ok: false, error: 'TEMPLATE_MISMATCH' };
+      } else if (issuance.used) {
+        tokenValidation = { ok: false, error: 'TOKEN_USED' };
+      } else {
+        tokenValidation = { ok: true, templateVersion: issuance.templateVersion };
+      }
+    } else {
+      tokenValidation = { skipped: true, reason: 'NO_QR_IN_OMR_OUTPUT' };
+    }
+
+    const tvOk = 'ok' in tokenValidation && tokenValidation.ok === true;
+    res.json({
+      ok: tvOk,
+      fileName,
+      omr,
+      tokenValidation,
+    });
+  } catch (err: any) {
+    console.error('POST /scanner/scan-image error:', err);
+    res.status(500).json({ error: err.message || 'scan-image failed' });
   }
 });
 

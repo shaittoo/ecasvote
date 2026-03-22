@@ -691,6 +691,108 @@ export async function generateAllPaperTokens(
   return res.json();
 }
 
+/** POST /scanner/validate — QR token exists, unused, template matches. */
+export type ScannerValidateSuccess = {
+  ok: true;
+  electionId: string;
+  ballotToken: string;
+  templateVersion: string;
+  mockSelections: Record<string, string>;
+};
+
+export type ScannerValidateFailure = {
+  ok: false;
+  error: string;
+};
+
+/** POST /scanner/scan-image — Python OMR worker + gateway token check */
+export type ScannerScanImageOmrResult = {
+  mode: "omr";
+  ok: boolean;
+  fileName: string;
+  /** Full worker + merged fields: selectionsByPosition, rawBubbleScores, selectionsFlat, qr, … */
+  omr: Record<string, unknown>;
+  tokenValidation:
+    | { ok: true; templateVersion: string }
+    | { ok: false; error: string }
+    | { skipped: true; reason: string };
+};
+
+export type ScannerScanImageWorkerUnavailable = {
+  mode: "worker_unavailable";
+  fileName: string;
+  hint?: string;
+};
+
+export async function scannerScanImage(params: {
+  imageBase64: string;
+  fileName: string;
+  scannerTemplate: unknown;
+}): Promise<ScannerScanImageOmrResult | ScannerScanImageWorkerUnavailable> {
+  const res = await fetch(`${getGatewayBase()}/scanner/scan-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const data = (await res.json()) as Record<string, unknown>;
+  if (res.status === 503 && data.error === "OMR_WORKER_NOT_CONFIGURED") {
+    return {
+      mode: "worker_unavailable",
+      fileName: params.fileName,
+      hint: typeof data.hint === "string" ? data.hint : undefined,
+    };
+  }
+  if (!res.ok) {
+    throw new Error(
+      typeof data.error === "string"
+        ? data.error
+        : `scan-image failed (${res.status})`
+    );
+  }
+  return {
+    mode: "omr",
+    ok: data.ok === true,
+    fileName: String(data.fileName ?? params.fileName),
+    omr: (data.omr && typeof data.omr === "object"
+      ? (data.omr as Record<string, unknown>)
+      : {}) as Record<string, unknown>,
+    tokenValidation: data.tokenValidation as ScannerScanImageOmrResult["tokenValidation"],
+  };
+}
+
+export async function scannerValidate(params: {
+  electionId: string;
+  ballotToken: string;
+  templateVersion: string;
+}): Promise<ScannerValidateSuccess | ScannerValidateFailure> {
+  const res = await fetch(`${getGatewayBase()}/scanner/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      electionId: params.electionId,
+      ballotToken: params.ballotToken,
+      templateVersion: params.templateVersion,
+    }),
+  });
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch {
+    return { ok: false, error: `Invalid response (${res.status})` };
+  }
+  const obj = data as Record<string, unknown>;
+  if (res.ok && obj?.ok === true) {
+    return data as ScannerValidateSuccess;
+  }
+  const err =
+    typeof obj?.error === "string"
+      ? obj.error
+      : typeof obj?.message === "string"
+        ? obj.message
+        : `Validate failed (${res.status})`;
+  return { ok: false, error: err };
+}
+
 /** GET /elections/:id/turnout — eligible CAS pool + votes cast in this election (digital + paper). */
 export interface ElectionTurnoutStats {
   electionId: string;
