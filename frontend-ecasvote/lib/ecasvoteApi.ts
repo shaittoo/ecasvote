@@ -191,6 +191,14 @@ export async function updateElection(
   await handleResponse(res);
 }
 
+export async function deleteElection(electionId: string): Promise<void> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}`,
+    { method: "DELETE" }
+  );
+  await handleResponse(res);
+}
+
 export async function registerVoter(
   electionId: string,
   voterId: string

@@ -1467,6 +1467,50 @@ app.put('/elections/:id', async (req, res) => {
   }
 });
 
+/** Delete election from database (votes, roster, positions, etc.) and remove ledger world state. */
+app.delete('/elections/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!id) {
+    return res.status(400).json({ error: 'Election id is required' });
+  }
+
+  try {
+    const existing = await prisma.election.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Election not found' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.vote.deleteMany({ where: { electionId: id } });
+      await tx.paperBallotIssuance.deleteMany({ where: { electionId: id } });
+      await tx.paperAnonymousVote.deleteMany({ where: { electionId: id } });
+      await tx.candidate.deleteMany({ where: { electionId: id } });
+      await tx.position.deleteMany({ where: { electionId: id } });
+      await tx.ballot.deleteMany({ where: { electionId: id } });
+      await tx.auditLog.deleteMany({ where: { electionId: id } });
+      await (tx as typeof prisma).electionVoter.deleteMany({
+        where: { electionId: id },
+      });
+      await tx.election.delete({ where: { id } });
+    });
+
+    try {
+      const contract = await getContract();
+      await contract.submitTransaction('DeleteElection', id);
+    } catch (ledgerErr: any) {
+      console.warn(
+        `⚠️ Election ${id} removed from database but ledger delete failed (redeploy chaincode if needed):`,
+        ledgerErr?.message || ledgerErr
+      );
+    }
+
+    res.json({ ok: true, id });
+  } catch (err: any) {
+    console.error('DELETE /elections/:id error:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete election' });
+  }
+});
+
 // 3) Open election (change status from DRAFT to OPEN)
 app.post('/elections/:id/open', async (req, res) => {
   const { id } = req.params;

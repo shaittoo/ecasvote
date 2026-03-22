@@ -67,11 +67,16 @@ function SidebarShell({
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({});
   const router = useRouter();
 
+  /** True when pathname is the sub-route or a nested page under it (e.g. …/election-management/[id]/edit). */
+  const subPathActive = (subHref: string, current: string) =>
+    current === subHref ||
+    (subHref !== "#" && subHref.length > 1 && current.startsWith(`${subHref}/`));
+
   // Auto-expand parent menus when their sub-items are active
   React.useEffect(() => {
     const newExpandedMenus: Record<string, boolean> = {};
     items.forEach((item) => {
-      if (item.subItems?.some((sub) => sub.href === pathname)) {
+      if (item.subItems?.some((sub) => subPathActive(sub.href, pathname))) {
         newExpandedMenus[item.key] = true;
       }
     });
@@ -126,7 +131,8 @@ function SidebarShell({
           const isExpanded = expandedMenus[item.key] || false;
           const isActive =
             item.key === activeKey ||
-            (item.subItems?.some((sub) => sub.href === pathname) ?? false);
+            (item.subItems?.some((sub) => subPathActive(sub.href, pathname)) ??
+              false);
 
           const classes = `w-full flex ${open ? 'items-center' : 'justify-center'} gap-3 ${open ? 'px-4' : 'px-0'} py-3 rounded-lg transition-colors text-left ${
             isActive
@@ -190,7 +196,7 @@ function SidebarShell({
               {open && hasSubItems && isExpanded && (
                 <div className="ml-8 mt-1 space-y-1">
                   {item.subItems!.map((subItem) => {
-                    const isSubActive = subItem.href === pathname;
+                    const isSubActive = subPathActive(subItem.href, pathname);
                     return (
                       <Link
                         key={subItem.name}
