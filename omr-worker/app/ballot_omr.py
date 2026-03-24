@@ -1,6 +1,8 @@
 """
-eCASVote paper ballot OMR — OpenCV pipeline aligned with PrintableBallotSheet
-(6 fiducials, 3-column contest grid, horizontal ovals).
+eCASVote paper ballot OMR — OpenCV pipeline aligned with PrintableBallotSheet (OMR v2):
+- 8 edge fiducials + timing strips; contests stacked vertically (full width).
+- Each contest: row-major 3-column candidate grid ([#][bubble][name] per cell).
+- QR in footer (below scan frame); top-right crops kept for legacy scans.
 
 Open MCR (https://github.com/iansan5653/open-mcr) uses fixed 75/150-question PDFs;
 this worker reads *our* layout using the exported ecasvote-scanner-template/1 JSON.
@@ -18,6 +20,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from app.ml_correction import bubble_ml_corrector
 
 def decode_image_b64(image_b64: str) -> np.ndarray:
     raw = base64.b64decode(image_b64)
@@ -67,16 +70,49 @@ def decode_qr_ballot(img: np.ndarray) -> tuple[dict[str, Any] | None, str | None
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     variants.append(cv2.cvtColor(clahe.apply(gray), cv2.COLOR_GRAY2BGR))
 
-    last_raw: str | None = None
-    for v in variants:
+    def _decode_variant(v: np.ndarray) -> tuple[dict[str, Any] | None, str | None]:
         data, _pts, _straight = det.detectAndDecode(v)
         if not data or not data.strip():
-            continue
+            return None, None
         raw = data.strip()
-        last_raw = raw
         parsed, _ = _parse_ballot_qr_json(raw)
+        return parsed, raw
+
+    last_raw: str | None = None
+    for v in variants:
+        parsed, raw = _decode_variant(v)
+        if raw:
+            last_raw = raw
         if parsed is not None:
             return parsed, raw
+
+        # Legacy: QR top-right of header.
+        vh, vw = v.shape[:2]
+        top_right_crops = [
+            v[0 : int(vh * 0.35), int(vw * 0.7) : vw],
+            v[0 : int(vh * 0.45), int(vw * 0.6) : vw],
+            v[0 : int(vh * 0.55), int(vw * 0.55) : vw],
+        ]
+        # Current sheet: QR in footer band (bottom-right).
+        bottom_right_crops = [
+            v[int(vh * 0.58) : vh, int(vw * 0.52) : vw],
+            v[int(vh * 0.62) : vh, int(vw * 0.48) : vw],
+            v[int(vh * 0.55) : vh, int(vw * 0.55) : vw],
+            v[int(vh * 0.68) : vh, int(vw * 0.45) : vw],
+        ]
+        for c in top_right_crops + bottom_right_crops:
+            if c.size == 0:
+                continue
+            c2 = cv2.resize(c, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+            for probe in (
+                c2,
+                cv2.cvtColor(cv2.equalizeHist(cv2.cvtColor(c2, cv2.COLOR_BGR2GRAY)), cv2.COLOR_GRAY2BGR),
+            ):
+                parsed_c, raw_c = _decode_variant(probe)
+                if raw_c:
+                    last_raw = raw_c
+                if parsed_c is not None:
+                    return parsed_c, raw_c
 
     return None, last_raw
 
@@ -168,10 +204,61 @@ def _mean_fill_score(roi_bgr: np.ndarray) -> float:
     return float(np.mean(255 - g)) / 255.0
 
 
+def _normalize_scores(scores: dict[str, float]) -> dict[str, float]:
+    """
+    Normalize per-contest scores so global lighting doesn't dominate:
+    0.0 = lightest option in contest, 1.0 = darkest option in contest.
+    """
+    if not scores:
+        return {}
+    vals = list(scores.values())
+    vmin = min(vals)
+    vmax = max(vals)
+    span = max(vmax - vmin, 1e-6)
+    return {k: float((v - vmin) / span) for k, v in scores.items()}
+
+
+def _is_abstain_option(option_id: str) -> bool:
+    return option_id.startswith("abstain:")
+
+
+def _score_bubble_in_grid_cell(cell_bgr: np.ndarray) -> float:
+    """OMR v2 cell: [#][round bubble][name]. Score via bubble core-vs-ring contrast."""
+    if cell_bgr.size == 0:
+        return 0.0
+    ch, cw = cell_bgr.shape[:2]
+    if cw < 24 or ch < 12:
+        return 0.0
+    g = cv2.cvtColor(cell_bgr, cv2.COLOR_BGR2GRAY)
+    g = cv2.GaussianBlur(g, (3, 3), 0)
+
+    # CandidateOmrRow columns are [number][bubble][name].
+    # Bubble center tends to be around x ~20% of cell width, centered vertically.
+    cx = int(cw * 0.20)
+    cy = int(ch * 0.50)
+    r = max(4, int(min(cw, ch) * 0.18))
+
+    yy, xx = np.ogrid[:ch, :cw]
+    dist2 = (xx - cx) ** 2 + (yy - cy) ** 2
+    core = dist2 <= int((r * 0.55) ** 2)
+    ring = (dist2 >= int((r * 0.85) ** 2)) & (dist2 <= int((r * 1.40) ** 2))
+    if not np.any(core) or not np.any(ring):
+        return 0.0
+
+    core_mean = float(np.mean(g[core]))
+    ring_mean = float(np.mean(g[ring]))
+    # Shaded bubble => core darker than surrounding ring.
+    contrast = max(0.0, (ring_mean - core_mean) / 255.0)
+    return float(contrast)
+
+
 def read_bubbles_from_template(warped_bgr: np.ndarray, template: dict[str, Any]) -> dict[str, Any]:
     """
-    Map template contests (row-major 3-column print layout) to bubble fill scores.
-    Returns raw_scores, selectionsByPosition (list of optionIds per position; multi-mark when maxMarks>1).
+    Map template contests to bubble fill scores.
+
+    PrintableBallotSheet OMR layout:
+    - Contests are stacked vertically (same order as template "contests").
+    - Within each contest, options are printed in a row-major 3-column grid.
     """
     contests: list[dict[str, Any]] = template.get("contests") or []
     if not contests:
@@ -182,8 +269,15 @@ def read_bubbles_from_template(warped_bgr: np.ndarray, template: dict[str, Any])
         }
 
     H, W = warped_bgr.shape[:2]
-    top_skip = int(H * 0.26)
-    body = warped_bgr[top_skip:, :]
+    # Skip header (institution + instructions) and footer (identifier + QR).
+    top_skip = int(H * 0.22)
+    bottom_skip = int(H * 0.13)
+    y_body1 = min(H - bottom_skip, H)
+    if y_body1 <= top_skip + 80:
+        top_skip = int(H * 0.18)
+        bottom_skip = int(H * 0.10)
+        y_body1 = min(H - bottom_skip, H)
+    body = warped_bgr[top_skip:y_body1, :]
     bh, bw = body.shape[:2]
     if bh < 80 or bw < 80:
         return {"raw_scores": {}, "selectionsByPosition": {}, "error": "body_too_small"}
@@ -199,36 +293,39 @@ def read_bubbles_from_template(warped_bgr: np.ndarray, template: dict[str, Any])
         if not pid or not options:
             continue
 
-        col = idx % 3
-        row_in_col = sum(1 for j in range(idx) if j % 3 == col)
-        col_contest_count = sum(1 for j in range(n) if j % 3 == col)
-        x0 = col * bw // 3
-        x1 = (col + 1) * bw // 3
-        ch = bh / max(col_contest_count, 1)
-        y0 = int(row_in_col * ch)
-        y1 = int((row_in_col + 1) * ch)
-        block = body[y0:y1, x0:x1]
-        if block.size == 0:
+        # Vertical strip for this contest (full width of body).
+        ch = bh / max(n, 1)
+        y0 = int(idx * ch)
+        y1 = int((idx + 1) * ch)
+        strip = body[y0:y1, :]
+        if strip.size == 0:
             continue
 
-        # Ovals sit on the left ~38% of each contest column (see PrintableBallotSheet)
-        left_w = max(int(block.shape[1] * 0.38), 24)
-        left = block[:, :left_w]
         num_opts = len(options)
+        num_rows = max(1, (num_opts + 2) // 3)
+        sh, sw = strip.shape[:2]
+        # Omit colored title + "Choose — N" band at top of each contest block.
+        header_frac = 0.12
+        hdr = max(6, int(sh * header_frac))
+        grid = strip[hdr:, :] if sh > hdr + 16 else strip
+        sh, sw = grid.shape[:2]
+        if sh < 20 or sw < 30:
+            continue
+        row_h = sh / num_rows
+        col_w = sw / 3.0
+
         scores: dict[str, float] = {}
-        lh = left.shape[0]
         for oi, opt in enumerate(options):
             oid = str(opt.get("optionId") or "")
             if not oid:
                 continue
-            yb0 = int(oi * lh / num_opts)
-            yb1 = int((oi + 1) * lh / num_opts)
-            row = left[yb0:yb1, :]
-            rw = row.shape[1]
-            # Sample center of oval column
-            c0, c1 = int(rw * 0.08), int(rw * 0.72)
-            roi = row[:, c0:c1]
-            scores[oid] = _mean_fill_score(roi)
+            r, c = oi // 3, oi % 3
+            ys0 = int(r * row_h)
+            ys1 = int((r + 1) * row_h)
+            xs0 = int(c * col_w)
+            xs1 = int((c + 1) * col_w)
+            cell = grid[ys0:ys1, xs0:xs1]
+            scores[oid] = _score_bubble_in_grid_cell(cell)
 
         raw_scores[pid] = scores
 
@@ -236,28 +333,90 @@ def read_bubbles_from_template(warped_bgr: np.ndarray, template: dict[str, Any])
             selections_by_position[pid] = []
             continue
 
+        # Absolute + relative thresholds reduce false positives in uneven lighting.
         sorted_opts = sorted(scores.items(), key=lambda x: -x[1])
-        threshold = 0.22
+        norm_scores = _normalize_scores(scores)
+        abs_threshold = 0.075
+        rel_threshold = 0.55
+        second_gap = 0.03
         picks: list[str] = []
+
+        vals = np.array(list(scores.values()), dtype=np.float32)
+        top_abs = float(sorted_opts[0][1]) if sorted_opts else 0.0
+        median_abs = float(np.median(vals)) if vals.size else 0.0
+        # Blank/noise guard: skip selection when the top bubble is weak and not
+        # meaningfully separated from the contest baseline.
+        low_signal_contest = top_abs < abs_threshold or (top_abs - median_abs) < 0.02
 
         if max_marks > 1:
             # Multi-seat / multiple shading: take up to max_marks darkest marks
-            topk = sorted_opts[:max_marks]
-            relaxed = threshold * 0.72
-            picks = [oid for oid, sc in topk if sc >= relaxed]
-            if not picks and sorted_opts[0][1] >= threshold * 0.45:
+            vals = sorted(scores.values())
+            baseline = float(np.median(vals))
+            dynamic_min = max(abs_threshold, baseline + 0.035)
+            picks = [
+                oid
+                for oid, _ in sorted_opts
+                if scores[oid] >= dynamic_min and norm_scores[oid] >= rel_threshold
+            ][:max_marks]
+            if (
+                not picks
+                and sorted_opts[0][1] >= dynamic_min
+                and (sorted_opts[0][1] - (sorted_opts[1][1] if len(sorted_opts) > 1 else 0.0)) >= second_gap
+            ):
                 picks = [sorted_opts[0][0]]
             if len(picks) > max_marks:
                 picks = [oid for oid, _ in sorted_opts[:max_marks]]
         else:
-            strong = [oid for oid, sc in sorted_opts if sc >= threshold]
-            if len(strong) == 0:
+            top_oid, top_abs = sorted_opts[0]
+            top_rel = norm_scores[top_oid]
+            second_abs = sorted_opts[1][1] if len(sorted_opts) > 1 else 0.0
+            if top_abs < abs_threshold or top_rel < rel_threshold:
                 picks = []
-            elif len(strong) == 1:
-                picks = [strong[0]]
+            else:
+                if (top_abs - second_abs) >= second_gap:
+                    picks = [top_oid]
+                else:
+                    picks = []
+                    raw_scores[pid]["_overvote"] = True
+
+        # Abstain must be exclusive from candidate picks in the same contest.
+        has_abstain = any(_is_abstain_option(oid) for oid in picks)
+        has_candidate = any(not _is_abstain_option(oid) for oid in picks)
+        if has_abstain and has_candidate:
+            abstain_only = [oid for oid in picks if _is_abstain_option(oid)]
+            if abstain_only and len(abstain_only) == 1:
+                picks = abstain_only
+                raw_scores[pid]["_abstain_conflict_resolved"] = True
             else:
                 picks = []
-                raw_scores[pid]["_overvote"] = True
+                raw_scores[pid]["_abstain_conflict"] = True
+
+        # Optional ML correction layer for ambiguous/noisy marks.
+        # Applies conservatively and records probabilities for audit.
+        ml = bubble_ml_corrector.refine(scores=scores, max_marks=max_marks)
+        if ml is not None:
+            raw_scores[pid]["_ml_probs"] = ml.probabilities
+            ambiguous = (
+                len(picks) == 0
+                or bool(raw_scores[pid].get("_overvote"))
+                or bool(raw_scores[pid].get("_abstain_conflict"))
+            )
+            # Do not let ML force a pick in low-signal contests (common on blank ballots).
+            if ambiguous and ml.picks and not low_signal_contest:
+                picks = ml.picks
+                raw_scores[pid]["_ml_override"] = True
+
+            # Re-apply abstain exclusivity after any ML override.
+            has_abstain = any(_is_abstain_option(oid) for oid in picks)
+            has_candidate = any(not _is_abstain_option(oid) for oid in picks)
+            if has_abstain and has_candidate:
+                abstain_only = [oid for oid in picks if _is_abstain_option(oid)]
+                if len(abstain_only) == 1:
+                    picks = abstain_only
+                    raw_scores[pid]["_abstain_conflict_resolved"] = True
+                else:
+                    picks = []
+                    raw_scores[pid]["_abstain_conflict"] = True
 
         selections_by_position[pid] = picks
 
@@ -265,6 +424,7 @@ def read_bubbles_from_template(warped_bgr: np.ndarray, template: dict[str, Any])
         "raw_scores": raw_scores,
         "selectionsByPosition": selections_by_position,
         "error": None,
+        "mlCorrection": bubble_ml_corrector.status,
     }
 
 

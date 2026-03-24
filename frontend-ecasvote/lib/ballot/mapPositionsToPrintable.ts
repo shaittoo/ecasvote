@@ -14,6 +14,7 @@ export function mapPositionsToPrintableBallot(positions: Position[]): PrintableB
       candidates: p.candidates.map((c) => ({
         candidateId: c.id,
         name: c.name,
+        affiliation: [c.party, c.program].filter(Boolean).join(" · ") || undefined,
       })),
     }));
 }

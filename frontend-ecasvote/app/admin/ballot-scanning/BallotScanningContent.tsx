@@ -53,6 +53,12 @@ function friendlyValidateError(code: string): string {
   }
 }
 
+function isTokenUsedValidation(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return o.ok === false && o.error === "TOKEN_USED";
+}
+
 async function fileToBase64(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
@@ -119,6 +125,14 @@ export function BallotScanningContent() {
   const pathname = usePathname();
   const fileInputId = useId();
   const dropRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const autoCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const autoRunRef = useRef<number | null>(null);
+  const stableFramesRef = useRef(0);
+  const captureCooldownRef = useRef(0);
+  const capturedForCurrentPresenceRef = useRef(false);
+  const qrWarnCooldownRef = useRef(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [elections, setElections] = useState<Election[]>([]);
@@ -132,6 +146,14 @@ export function BallotScanningContent() {
   const [scanHistory, setScanHistory] = useState<StoredScanBatch[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [cameraBusy, setCameraBusy] = useState(false);
+  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
+  const [cameraDeviceId, setCameraDeviceId] = useState("");
+  const [autoCapture, setAutoCapture] = useState(false);
+  const [edgeStatus, setEdgeStatus] = useState<
+    "idle" | "searching" | "detected" | "captured"
+  >("idle");
 
   const handleLogout = () => router.push("/login");
 
@@ -198,6 +220,248 @@ export function BallotScanningContent() {
   const removeFileAt = (index: number) => {
     setBatchFiles((prev) => prev.filter((_, i) => i !== index));
   };
+
+  const stopCamera = useCallback(() => {
+    if (autoRunRef.current !== null) {
+      cancelAnimationFrame(autoRunRef.current);
+      autoRunRef.current = null;
+    }
+    stableFramesRef.current = 0;
+    capturedForCurrentPresenceRef.current = false;
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+      video.srcObject = null;
+    }
+    const stream = streamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    setCameraOn(false);
+    setEdgeStatus("idle");
+  }, []);
+
+  const refreshCameraDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const vids = devices.filter((d) => d.kind === "videoinput");
+    setCameraDevices(vids);
+    if (!cameraDeviceId && vids.length > 0) {
+      const preferred =
+        vids.find((d) => /netum|document|sd-|scanner/i.test(d.label)) ?? vids[0];
+      setCameraDeviceId(preferred.deviceId);
+    }
+  }, [cameraDeviceId]);
+
+  const startCamera = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      notify.error({
+        title: "Camera not supported",
+        description: "Use Chrome/Edge over HTTPS or localhost.",
+      });
+      return;
+    }
+    setCameraBusy(true);
+    try {
+      const constraints: MediaStreamConstraints = {
+        video: cameraDeviceId
+          ? {
+              deviceId: { exact: cameraDeviceId },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            }
+          : { width: { ideal: 1920 }, height: { ideal: 1080 } },
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (video) {
+        video.srcObject = stream;
+        await video.play();
+      }
+      setCameraOn(true);
+      await refreshCameraDevices();
+    } catch (e) {
+      notify.error({
+        title: "Unable to open document camera",
+        description: "Allow camera permission, then select your NetumScan SD camera.",
+      });
+      stopCamera();
+      void e;
+    } finally {
+      setCameraBusy(false);
+    }
+  }, [cameraDeviceId, refreshCameraDevices, stopCamera]);
+
+  const captureCameraFrame = useCallback(
+    async (opts?: { requireValidQr?: boolean }) => {
+      const video = videoRef.current;
+      if (!video || !cameraOn) return false;
+      const w = video.videoWidth || 1920;
+      const h = video.videoHeight || 1080;
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx2d = canvas.getContext("2d");
+      if (!ctx2d) return false;
+      ctx2d.drawImage(video, 0, 0, w, h);
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, "image/png")
+      );
+      if (!blob) {
+        notify.error({ title: "Capture failed", description: "Try again." });
+        return false;
+      }
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      const file = new File([blob], `netum-capture-${ts}.png`, { type: "image/png" });
+
+      if (opts?.requireValidQr) {
+        const decoded = await tryDecodeQrTextFromFile(file);
+        if (!decoded) {
+          const now = Date.now();
+          if (now > qrWarnCooldownRef.current) {
+            qrWarnCooldownRef.current = now + 2500;
+            notify.warning({
+              title: "QR not clear yet",
+              description: "Hold ballot steady and keep the full sheet in frame.",
+            });
+          }
+          return false;
+        }
+        const parsed = parseBallotQrPayload(decoded);
+        if (!parsed) return false;
+        if (parsed.electionId !== electionId) {
+          const now = Date.now();
+          if (now > qrWarnCooldownRef.current) {
+            qrWarnCooldownRef.current = now + 2500;
+            notify.warning({
+              title: "Wrong election QR",
+              description: `Detected ${parsed.electionId}, expected ${electionId}.`,
+            });
+          }
+          return false;
+        }
+      }
+
+      setBatchFiles((prev) => [...prev, file]);
+      notify.success({ title: "Captured", description: "Added image to queue." });
+      return true;
+    },
+    [cameraOn, electionId]
+  );
+
+  const detectBallotFiducials = useCallback((video: HTMLVideoElement): boolean => {
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return false;
+    if (!autoCanvasRef.current) autoCanvasRef.current = document.createElement("canvas");
+    const canvas = autoCanvasRef.current;
+    const sampleW = 320;
+    const sampleH = Math.max(180, Math.round((sampleW * vh) / vw));
+    canvas.width = sampleW;
+    canvas.height = sampleH;
+    const ctx2d = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx2d) return false;
+    ctx2d.drawImage(video, 0, 0, sampleW, sampleH);
+    const { data, width, height } = ctx2d.getImageData(0, 0, sampleW, sampleH);
+
+    const luminanceAt = (x: number, y: number): number => {
+      const i = (y * width + x) * 4;
+      return data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+    };
+
+    const isDarkSquareAt = (cxNorm: number, cyNorm: number): boolean => {
+      const cx = Math.round(width * cxNorm);
+      const cy = Math.round(height * cyNorm);
+      const half = Math.max(4, Math.round(Math.min(width, height) * 0.02));
+      const x0 = Math.max(0, cx - half);
+      const x1 = Math.min(width - 1, cx + half);
+      const y0 = Math.max(0, cy - half);
+      const y1 = Math.min(height - 1, cy + half);
+      let dark = 0;
+      let total = 0;
+      for (let y = y0; y <= y1; y += 1) {
+        for (let x = x0; x <= x1; x += 1) {
+          total += 1;
+          if (luminanceAt(x, y) < 85) dark += 1;
+        }
+      }
+      return total > 0 && dark / total > 0.42;
+    };
+
+    // Uses SquareFiducials layout from PrintableBallotSheet (left/right top/mid/bottom).
+    const anchors: Array<[number, number]> = [
+      [0.07, 0.08],
+      [0.93, 0.08],
+      [0.07, 0.5],
+      [0.93, 0.5],
+      [0.07, 0.92],
+      [0.93, 0.92],
+    ];
+    const hits = anchors.reduce((acc, [x, y]) => acc + (isDarkSquareAt(x, y) ? 1 : 0), 0);
+    return hits >= 5;
+  }, []);
+
+  useEffect(() => {
+    if (!cameraOn || !autoCapture) {
+      if (cameraOn) setEdgeStatus("idle");
+      if (autoRunRef.current !== null) {
+        cancelAnimationFrame(autoRunRef.current);
+        autoRunRef.current = null;
+      }
+      stableFramesRef.current = 0;
+      capturedForCurrentPresenceRef.current = false;
+      return;
+    }
+    const loop = () => {
+      const video = videoRef.current;
+      if (!video || !cameraOn || !autoCapture) return;
+      const now = Date.now();
+      const fiducialsFound = detectBallotFiducials(video);
+      if (fiducialsFound) {
+        stableFramesRef.current += 1;
+        setEdgeStatus("detected");
+      } else {
+        stableFramesRef.current = 0;
+        capturedForCurrentPresenceRef.current = false;
+        setEdgeStatus("searching");
+      }
+      if (
+        stableFramesRef.current >= 6 &&
+        !capturedForCurrentPresenceRef.current &&
+        now > captureCooldownRef.current
+      ) {
+        captureCooldownRef.current = now + 1800;
+        stableFramesRef.current = 0;
+        void (async () => {
+          const ok = await captureCameraFrame({ requireValidQr: true });
+          if (ok) {
+            capturedForCurrentPresenceRef.current = true;
+            setEdgeStatus("captured");
+          } else {
+            capturedForCurrentPresenceRef.current = false;
+            setEdgeStatus("searching");
+          }
+        })();
+      }
+      autoRunRef.current = requestAnimationFrame(loop);
+    };
+    autoRunRef.current = requestAnimationFrame(loop);
+    return () => {
+      if (autoRunRef.current !== null) {
+        cancelAnimationFrame(autoRunRef.current);
+        autoRunRef.current = null;
+      }
+    };
+  }, [autoCapture, cameraOn, captureCameraFrame, detectBallotFiducials]);
+
+  useEffect(() => {
+    void refreshCameraDevices();
+    return () => {
+      stopCamera();
+    };
+  }, [refreshCameraDevices, stopCamera]);
 
   const handleExportTemplate = async () => {
     if (!electionId) {
@@ -317,6 +581,19 @@ export function BallotScanningContent() {
           tokenValidation: { ok: true, templateVersion: v.templateVersion },
         });
       } else {
+        if (v.error === "TOKEN_USED") {
+          ballots.push({
+            fileName: file.name,
+            scanOk: true,
+            source: "client",
+            message: "Already counted earlier (token already used).",
+            ballotToken: payload.ballotToken,
+            qr: payload,
+            selectionsByPosition: {},
+            tokenValidation: { ok: false, error: v.error },
+          });
+          return;
+        }
         ballots.push({
           fileName: file.name,
           scanOk: false,
@@ -327,6 +604,15 @@ export function BallotScanningContent() {
           tokenValidation: { ok: false, error: v.error },
         });
       }
+    };
+
+    const readClientQrPayload = async (file: File) => {
+      const decoded = await tryDecodeQrTextFromFile(file);
+      if (!decoded) return null;
+      const payload = parseBallotQrPayload(decoded);
+      if (!payload) return null;
+      if (payload.electionId !== electionId) return null;
+      return payload;
     };
 
     try {
@@ -391,6 +677,74 @@ export function BallotScanningContent() {
             const qr = qrFromOmr(omr);
 
             if ("skipped" in tv && tv.skipped) {
+              // If OpenCV could not decode QR but browser QR can, salvage the row.
+              const fallbackQr = await readClientQrPayload(file);
+              if (fallbackQr) {
+                const fallbackTv = await scannerValidate({
+                  electionId: fallbackQr.electionId,
+                  ballotToken: fallbackQr.ballotToken,
+                  templateVersion: fallbackQr.templateVersion,
+                });
+                if (fallbackTv.ok) {
+                  ballots.push({
+                    fileName: r.fileName,
+                    scanOk: true,
+                    source: "omr",
+                    message:
+                      (omr["warpApplied"] ? "Fiducial warp applied. " : "") +
+                      "OMR QR unreadable; token validated via browser QR fallback. " +
+                      formatMarksLine(sbp),
+                    ballotToken: fallbackQr.ballotToken,
+                    qr: fallbackQr,
+                    selectionsByPosition: sbp,
+                    rawBubbleScores: rawScores,
+                    selectionsFlat: flat,
+                    warpApplied: omr["warpApplied"] === true,
+                    tokenValidation: {
+                      ok: true,
+                      templateVersion: fallbackTv.templateVersion,
+                    },
+                    omrWorkerPayload: omr,
+                  });
+                  continue;
+                }
+                if (fallbackTv.error === "TOKEN_USED") {
+                  ballots.push({
+                    fileName: r.fileName,
+                    scanOk: true,
+                    source: "omr",
+                    message:
+                      (omr["warpApplied"] ? "Fiducial warp applied. " : "") +
+                      "OMR QR unreadable; token already counted (browser QR fallback).",
+                    ballotToken: fallbackQr.ballotToken,
+                    qr: fallbackQr,
+                    selectionsByPosition: sbp,
+                    rawBubbleScores: rawScores,
+                    selectionsFlat: flat,
+                    warpApplied: omr["warpApplied"] === true,
+                    tokenValidation: { ok: false, error: fallbackTv.error },
+                    omrWorkerPayload: omr,
+                  });
+                  continue;
+                }
+                ballots.push({
+                  fileName: r.fileName,
+                  scanOk: false,
+                  source: "omr",
+                  message:
+                    (omr["warpApplied"] ? "Fiducial warp applied. " : "") +
+                    `OMR QR unreadable; browser QR fallback failed: ${friendlyValidateError(fallbackTv.error)}.`,
+                  ballotToken: fallbackQr.ballotToken,
+                  qr: fallbackQr,
+                  selectionsByPosition: sbp,
+                  rawBubbleScores: rawScores,
+                  selectionsFlat: flat,
+                  warpApplied: omr["warpApplied"] === true,
+                  tokenValidation: { ok: false, error: fallbackTv.error },
+                  omrWorkerPayload: omr,
+                });
+                continue;
+              }
               ballots.push({
                 fileName: r.fileName,
                 scanOk: false,
@@ -428,6 +782,25 @@ export function BallotScanningContent() {
                 "error" in tv && typeof tv.error === "string"
                   ? tv.error
                   : "UNKNOWN_TOKEN";
+              if (err === "TOKEN_USED") {
+                ballots.push({
+                  fileName: r.fileName,
+                  scanOk: true,
+                  source: "omr",
+                  message:
+                    (omr["warpApplied"] ? "Fiducial warp applied. " : "") +
+                    "Already counted earlier (token already used).",
+                  ballotToken: qr?.ballotToken,
+                  qr: qr ?? undefined,
+                  selectionsByPosition: sbp,
+                  rawBubbleScores: rawScores,
+                  selectionsFlat: flat,
+                  warpApplied: omr["warpApplied"] === true,
+                  tokenValidation: tv,
+                  omrWorkerPayload: omr,
+                });
+                continue;
+              }
               ballots.push({
                 fileName: r.fileName,
                 scanOk: false,
@@ -478,6 +851,7 @@ export function BallotScanningContent() {
       });
 
       const validCount = ballots.filter((b) => b.scanOk).length;
+      const alreadyCounted = ballots.filter((b) => isTokenUsedValidation(b.tokenValidation)).length;
       const batchId = `batch-${Date.now()}`;
       setScanHistory((h) => [
         {
@@ -496,7 +870,10 @@ export function BallotScanningContent() {
       if (errC === 0) {
         notify.success({
           title: "Scan complete",
-          description: `${validCount} file(s). Use “Download raw JSON” for full data.`,
+          description:
+            alreadyCounted > 0
+              ? `${validCount} file(s), including ${alreadyCounted} already-counted token(s). Use “Download raw JSON” for full data.`
+              : `${validCount} file(s). Use “Download raw JSON” for full data.`,
         });
       } else if (validCount === 0) {
         notify.error({
@@ -654,6 +1031,102 @@ export function BallotScanningContent() {
                         }}
                       />
                     </div>
+                  </div>
+
+                  <div className="rounded-md border bg-white p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-gray-900">
+                        Use document camera (NetumScan SD)
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {!cameraOn ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={!electionId || cameraBusy}
+                            onClick={() => void startCamera()}
+                          >
+                            {cameraBusy ? "Opening…" : "Start camera"}
+                          </Button>
+                        ) : (
+                          <>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={cameraBusy}
+                              onClick={() =>
+                                void captureCameraFrame({ requireValidQr: true })
+                              }
+                            >
+                              Capture to queue
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={cameraBusy}
+                              onClick={stopCamera}
+                            >
+                              Stop camera
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {cameraDevices.length > 1 && (
+                      <div className="mt-2">
+                        <label className="mb-1 block text-xs text-muted-foreground">
+                          Camera device
+                        </label>
+                        <select
+                          className="h-9 w-full max-w-md rounded-md border border-input bg-background px-3 text-sm"
+                          value={cameraDeviceId}
+                          onChange={(e) => setCameraDeviceId(e.target.value)}
+                          disabled={cameraOn}
+                        >
+                          {cameraDevices.map((d) => (
+                            <option key={d.deviceId} value={d.deviceId}>
+                              {d.label || `Camera ${d.deviceId.slice(0, 6)}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div className="mt-3 overflow-hidden rounded border bg-black/90">
+                      <video
+                        ref={videoRef}
+                        className="mx-auto max-h-72 w-full max-w-2xl object-contain"
+                        playsInline
+                        muted
+                        autoPlay
+                      />
+                    </div>
+                    {cameraOn && (
+                      <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={autoCapture}
+                            onChange={(e) => setAutoCapture(e.target.checked)}
+                          />
+                          Auto-capture using SquareFiducials
+                        </label>
+                        <span className="text-xs text-muted-foreground">
+                          Status:{" "}
+                          {edgeStatus === "idle"
+                            ? "idle"
+                            : edgeStatus === "searching"
+                              ? "searching for fiducials"
+                              : edgeStatus === "detected"
+                                ? "fiducials detected"
+                                : "captured"}
+                        </span>
+                      </div>
+                    )}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Keep the full ballot in frame. Auto-capture triggers once per detected
+                      ballot and only queues QR-valid images.
+                    </p>
                   </div>
 
                   {batchFiles.length > 0 && (

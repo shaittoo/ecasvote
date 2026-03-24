@@ -10,7 +10,26 @@ interface StudentVoterHeaderProps {
 
 export default function StudentVoterHeader({ title, subtitle, sidebarOpen, actions }: StudentVoterHeaderProps) {
   return (
-    <header className="bg-white border-b border-gray-200 px-6 py-4">
+    <header
+      className={`bg-white border-b border-gray-200 px-6 flex items-center justify-between transition-all duration-300
+        ${sidebarOpen ? "ml-0" : "ml-0"}`}
+      style={{
+        paddingTop: subtitle
+          ? sidebarOpen
+            ? "1rem"
+            : "0.4rem"
+          : sidebarOpen
+          ? "1.625rem"
+          : "1rem",
+        paddingBottom: subtitle
+          ? sidebarOpen
+            ? "1.25rem"
+            : "0.62rem"
+          : sidebarOpen
+          ? "1.625rem"
+          : "1rem",
+      }}
+    >
       <div className="flex items-center justify-between w-full">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{title}</h1>

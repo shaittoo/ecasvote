@@ -7,6 +7,8 @@
 export type PrintableBallotCandidate = {
   candidateId: string;
   name: string;
+  /** Shown after name (e.g. party, slate) — OMR reference style */
+  affiliation?: string;
 };
 
 /** One office / position block */
@@ -55,4 +57,10 @@ export type PrintableBallotSheetProps = {
    * When printing for a specific voter (e.g. from roster), shown under the election title.
    */
   ballotRecipientLine?: string;
+  /** Pre-numbered ballot face fields (HES / inventory style) */
+  ballotNumber?: string;
+  ballotSeries?: string;
+  ballotZone?: string;
+  /** Extra subtitle under title (e.g. locality) */
+  jurisdictionLine?: string;
 };
