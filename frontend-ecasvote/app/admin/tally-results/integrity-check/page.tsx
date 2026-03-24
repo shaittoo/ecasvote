@@ -148,13 +148,6 @@ export default function AdminIntegrityCheckPage() {
           sidebarOpen ? "ml-64" : "ml-20"
         }`}>
           <div className="w-full max-w-7xl mx-auto space-y-6">
-            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4 rounded-lg border bg-white p-4 shadow-sm">
-              <label
-                htmlFor="admin-integrity-election"
-                className="text-sm font-medium text-gray-700 shrink-0"
-              >
-                Election
-              </label>
               <select
                 id="admin-integrity-election"
                 className="h-10 w-full min-w-0 sm:max-w-md rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer"
@@ -174,7 +167,6 @@ export default function AdminIntegrityCheckPage() {
                   ))
                 )}
               </select>
-            </div>
 
           {electionsLoading || loading ? (
             <div className="text-center py-12">

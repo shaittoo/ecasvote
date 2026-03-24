@@ -93,11 +93,20 @@ export function selectionsToFlat(
 export function parseSelectionsByPosition(
   omr: Record<string, unknown>
 ): Record<string, string[]> {
-  const raw = omr["selectionsByPosition"];
+  const bubbleRead =
+    omr["bubbleRead"] && typeof omr["bubbleRead"] === "object" && !Array.isArray(omr["bubbleRead"])
+      ? (omr["bubbleRead"] as Record<string, unknown>)
+      : null;
+  const raw =
+    omr["selectionsByPosition"] ??
+    omr["selections"] ??
+    bubbleRead?.["selectionsByPosition"] ??
+    bubbleRead?.["selections"];
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out: Record<string, string[]> = {};
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (Array.isArray(v)) out[k] = v.map(String);
+    if (Array.isArray(v)) out[k] = v.map(String).filter(Boolean);
+    else if (v == null) out[k] = [];
     else if (typeof v === "string")
       out[k] = v
         .split(",")

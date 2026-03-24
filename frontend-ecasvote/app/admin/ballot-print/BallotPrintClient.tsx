@@ -39,6 +39,11 @@ export function BallotPrintClient() {
 
   /** Real issued token from query (e.g. after issue from Token Status); overrides preview ids. */
   const ballotTokenFromQuery = searchParams.get("ballotToken")?.trim() ?? "";
+  /** Optional OMR / inventory fields (query string) */
+  const ballotNumber = searchParams.get("ballotNumber")?.trim() ?? "";
+  const ballotSeries = searchParams.get("ballotSeries")?.trim() ?? "";
+  const ballotZone = searchParams.get("ballotZone")?.trim() ?? "";
+  const jurisdictionLine = searchParams.get("jurisdictionLine")?.trim() ?? "";
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -257,6 +262,10 @@ export function BallotPrintClient() {
               positions={positions}
               academicYearLine={academicYearLine}
               ballotRecipientLine={ballotRecipientLine}
+              ballotNumber={ballotNumber || undefined}
+              ballotSeries={ballotSeries || undefined}
+              ballotZone={ballotZone || undefined}
+              jurisdictionLine={jurisdictionLine || undefined}
             />
           </>
         )}

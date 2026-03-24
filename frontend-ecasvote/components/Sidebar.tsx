@@ -345,8 +345,7 @@ export type AdminNavKey =
   | "ballot"
   | "voter"
   | "tally"
-  | "audit"
-  | "system-activity";
+  | "audit";
 
 const adminItems: SidebarItem[] = [
   { key: "dashboard", name: "Dashboard", href: "/admin", icon: Home },
@@ -381,13 +380,9 @@ const adminItems: SidebarItem[] = [
   },
   {
     key: "audit",
-    name: "Audit & Logs",
-    href: "#",
+    name: "Audit Logs",
+    href: "/admin/audit-and-logs/audit-trail",
     icon: FolderOpen,
-    subItems: [
-      { name: "Audit Trail Viewer", href: "/admin/audit-and-logs/audit-trail" },
-      { name: "System Activity Logs", href: "/admin/audit-and-logs/system-activity" },
-    ],
   },
 ];
 

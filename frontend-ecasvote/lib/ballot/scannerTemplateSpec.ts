@@ -2,9 +2,9 @@
  * Machine-readable description of the **printed** paper ballot for OMR pipelines
  * (Open MCR, ExamGrader-style tools, or a custom OpenCV worker).
  *
- * Aligns with {@link PrintableBallotSheet}: six square fiducials, horizontal ovals,
- * QR for identity only. **Multiple shading** = up to `maxMarks` filled bubbles per contest
- * (same as `maxVotes` on the sheet).
+ * Aligns with {@link PrintableBallotSheet}: OMR scan frame (fiducials + timing strips),
+ * stacked contests with 3-column row-major bubbles, footer QR (identity only).
+ * **Multiple shading** = up to `maxMarks` filled bubbles per contest (same as `maxVotes`).
  */
 
 import type { PrintableBallotPosition } from "@/lib/ballot/printableBallotTypes";
@@ -14,21 +14,22 @@ export const SCANNER_TEMPLATE_SCHEMA = "ecasvote-scanner-template/1" as const;
 
 /** How the physical sheet is laid out (for alignment / CV tuning). */
 export type ScannerSheetLayout = {
-  /** Matches {@link PrintableBallotSheet} `SquareFiducials` */
   fiducials: {
-    count: 6;
+    count: 6 | 8;
     style: "filled-square";
-    /** Corner + mid-edge pattern for perspective correction */
-    placement: "corners-and-vertical-mid-edges";
+    placement:
+      | "corners-and-vertical-mid-edges"
+      | "scan-frame-corners-and-edge-centers";
   };
   qr: {
     role: "ballot-identity-only";
     payloadShape: "{ electionId, ballotToken, templateVersion }";
+    /** Optional: human note for export / worker docs */
+    placementNote?: string;
   };
   bubbles: {
-    shape: "horizontal-oval";
-    /** CSS/print reference: `BallotOval` in PrintableBallotSheet */
-    implementationNote: "PrintableBallotSheet BallotOval";
+    shape: "horizontal-oval" | "round";
+    implementationNote: string;
   };
 };
 
@@ -124,17 +125,18 @@ function positionsFromPrintable(
 
 const DEFAULT_SHEET: ScannerSheetLayout = {
   fiducials: {
-    count: 6,
+    count: 8,
     style: "filled-square",
-    placement: "corners-and-vertical-mid-edges",
+    placement: "scan-frame-corners-and-edge-centers",
   },
   qr: {
     role: "ballot-identity-only",
     payloadShape: "{ electionId, ballotToken, templateVersion }",
+    placementNote: "Footer below scan frame (OMR); worker also tries legacy top-right crops",
   },
   bubbles: {
-    shape: "horizontal-oval",
-    implementationNote: "PrintableBallotSheet BallotOval",
+    shape: "round",
+    implementationNote: "PrintableBallotSheet BallotBubble; 3-column row-major grid per contest",
   },
 };
 
