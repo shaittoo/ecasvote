@@ -163,8 +163,11 @@ export function CreateElectionModal({
                 onCreated?.(electionId);
                 onClose();
                 setNewTitle("");
+                setNewAcademicYear("2025-2026");
+                setNewSemester("First Semester");
                 setNewStartDate("");
                 setNewEndDate("");
+                setNewStatus("Draft");
               } catch (err: unknown) {
                 notify.error({
                   title: "Failed to create election",
