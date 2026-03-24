@@ -8,13 +8,37 @@ Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
 const express_1 = __importDefault(require("express"));
 const body_parser_1 = __importDefault(require("body-parser"));
+const crypto_1 = __importDefault(require("crypto"));
 const fabricClient_1 = require("./fabricClient");
 const prismaClient_1 = require("./prismaClient");
+/** Unique paper ballot token (QR identifies ballot only — not vote data). */
+function generateBallotToken() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+        code += chars[crypto_1.default.randomInt(chars.length)];
+    }
+    return `TKN-${code}`;
+}
+/** Student voter roster for an election (who may participate in that election only). */
+async function getElectionRosterVoterIds(electionId) {
+    const rows = await prismaClient_1.prisma.electionVoter.findMany({
+        where: { electionId },
+        select: { voterId: true },
+    });
+    return rows.map((r) => r.voterId);
+}
+async function isVoterOnElectionRoster(electionId, voterId) {
+    const row = await prismaClient_1.prisma.electionVoter.findUnique({
+        where: { electionId_voterId: { electionId, voterId } },
+    });
+    return !!row;
+}
 const app = (0, express_1.default)();
 // Enable CORS for all routes
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
     // Handle preflight requests
     if (req.method === 'OPTIONS') {
@@ -22,7 +46,7 @@ app.use((req, res, next) => {
     }
     next();
 });
-app.use(body_parser_1.default.json({ limit: '8mb' }));
+app.use(body_parser_1.default.json({ limit: '25mb' }));
 // Simple health-check
 app.get('/health', (_req, res) => {
     res.json({ ok: true });
@@ -124,6 +148,72 @@ app.post('/voters/import', async (req, res) => {
         failed: errors.length,
         errors,
     });
+});
+app.patch('/voters/:id', async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+        return res.status(400).json({ error: 'Invalid voter id' });
+    }
+    const body = req.body ?? {};
+    try {
+        const existing = await prismaClient_1.prisma.voter.findUnique({ where: { id } });
+        if (!existing) {
+            return res.status(404).json({ error: 'Voter not found' });
+        }
+        const data = {};
+        if (body.studentNumber !== undefined)
+            data.studentNumber = String(body.studentNumber).trim();
+        if (body.upEmail !== undefined)
+            data.upEmail = String(body.upEmail).trim();
+        if (body.fullName !== undefined)
+            data.fullName = String(body.fullName).trim();
+        if (body.college !== undefined)
+            data.college = String(body.college).trim();
+        if (body.department !== undefined)
+            data.department = String(body.department).trim();
+        if (body.program !== undefined)
+            data.program = String(body.program).trim();
+        if (body.yearLevel !== undefined) {
+            const y = Math.floor(Number(body.yearLevel));
+            if (!Number.isFinite(y) || y < 1) {
+                return res.status(400).json({ error: 'yearLevel must be a positive number' });
+            }
+            data.yearLevel = y;
+        }
+        if (body.status !== undefined)
+            data.status = String(body.status).trim();
+        if (body.isEligible !== undefined)
+            data.isEligible = Boolean(body.isEligible);
+        if (Object.keys(data).length === 0) {
+            return res.status(400).json({ error: 'No fields to update' });
+        }
+        const updated = await prismaClient_1.prisma.voter.update({
+            where: { id },
+            data: data,
+        });
+        res.json(updated);
+    }
+    catch (err) {
+        console.error('PATCH /voters/:id error:', err);
+        res.status(400).json({ error: err.message || 'Update failed' });
+    }
+});
+app.delete('/voters/:id', async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+        return res.status(400).json({ error: 'Invalid voter id' });
+    }
+    try {
+        await prismaClient_1.prisma.voter.delete({ where: { id } });
+        res.json({ ok: true });
+    }
+    catch (err) {
+        if (err.code === 'P2025') {
+            return res.status(404).json({ error: 'Voter not found' });
+        }
+        console.error('DELETE /voters/:id error:', err);
+        res.status(400).json({ error: err.message || 'Delete failed' });
+    }
 });
 // Login endpoint - validates CAS student eligibility
 app.post('/login', async (req, res) => {
@@ -253,6 +343,11 @@ app.post('/login/admin', async (req, res) => {
                 error: 'Invalid credentials. Please contact the system administrator.',
             });
         }
+        if (!user) {
+            return res.status(401).json({
+                error: 'Invalid credentials. Please contact the system administrator.',
+            });
+        }
         // Check if user is active
         if (!user.isActive) {
             return res.status(403).json({
@@ -296,56 +391,34 @@ app.post('/login/admin', async (req, res) => {
     }
 });
 // Initialize ledger with default election data (calls InitLedger)
-app.post('/init', async (_req, res) => {
+app.post('/init', async (req, res) => {
+    const ip = req.ip || 'unknown';
     try {
         const contract = await (0, fabricClient_1.getContract)();
-        // Check if election already exists
+        // Check if election exists
+        let electionExists = false;
         try {
             const electionBuffer = await contract.evaluateTransaction('GetElection', 'election-2025');
             const election = JSON.parse(electionBuffer.toString());
             if (election && election.id === 'election-2025') {
-                console.log('Election already exists, skipping InitLedger');
+                electionExists = true;
                 return res.json({
                     ok: true,
                     message: 'Ledger already initialized',
-                    election: election
+                    election,
                 });
             }
         }
-        catch (checkErr) {
-            // Election doesn't exist, proceed with InitLedger
-            console.log('Election not found, initializing ledger...');
+        catch (err) {
+            // not found → continue
         }
-        console.log('Calling InitLedger...');
-        await contract.submitTransaction('InitLedger');
-        console.log('InitLedger completed successfully');
-        // Sync election to database after initialization
+        // Init ledgerawait contract.submitTransaction('InitLedger');
+        // Sync to DB
         try {
             const electionBuffer = await contract.evaluateTransaction('GetElection', 'election-2025');
-            const raw = Buffer.isBuffer(electionBuffer)
-                ? electionBuffer.toString('utf8')
-                : new TextDecoder().decode(electionBuffer);
-            const jsonStr = raw.trim();
-            // Handle possible merged/duplicate response from multiple endorsers: take first valid JSON object
-            let election;
-            try {
-                election = JSON.parse(jsonStr);
-            }
-            catch {
-                const firstBrace = jsonStr.indexOf('{');
-                const lastBrace = jsonStr.lastIndexOf('}');
-                if (firstBrace !== -1 && lastBrace > firstBrace) {
-                    election = JSON.parse(jsonStr.slice(firstBrace, lastBrace + 1));
-                }
-                else {
-                    throw new Error('Invalid JSON from GetElection');
-                }
-            }
-            if (!election || election.id !== 'election-2025') {
-                throw new Error('GetElection did not return election-2025');
-            }
+            const election = JSON.parse(electionBuffer.toString());
             await prismaClient_1.prisma.election.upsert({
-                where: { id: 'election-2025' },
+                where: { id: election.id },
                 update: {
                     name: election.name,
                     description: election.description || null,
@@ -363,33 +436,13 @@ app.post('/init', async (_req, res) => {
                     createdBy: election.createdBy || 'system',
                 },
             });
-            console.log('✅ Election synced to database after InitLedger');
         }
-        catch (syncErr) {
-            console.warn('⚠️ Failed to sync election to database after InitLedger:', syncErr.message);
-            // Continue - blockchain is initialized
-        }
-        res.json({ ok: true, message: 'Ledger initialized successfully' });
+        catch (syncErr) { }
+        return res.json({ ok: true, message: 'Ledger initialized successfully' });
     }
     catch (err) {
         console.error('InitLedger error:', err);
-        const errorMessage = err.message || String(err);
-        // Check if it's an endorsement error
-        if (errorMessage.includes('endorsement') || errorMessage.includes('ABORTED') || errorMessage.includes('ProposalResponsePayloads do not match')) {
-            res.status(400).json({
-                error: errorMessage,
-                hint: 'This error indicates that Org1 and Org2 peers are returning different chaincode execution results. This usually means:',
-                possibleCauses: [
-                    'Org2 has a different chaincode package installed than Org1',
-                    'Org2 has different chaincode state than Org1',
-                    'The chaincode packages on both orgs are out of sync'
-                ],
-                solution: 'Ensure both Org1 and Org2 have the exact same chaincode package installed. Run the deploy script to sync both orgs: ./deploy-chaincode.sh'
-            });
-        }
-        else {
-            res.status(400).json({ error: errorMessage });
-        }
+        return res.status(400).json({ error: err.message });
     }
 });
 // 0) List all elections (from DB; created via POST /elections or synced from chaincode)
@@ -405,9 +458,43 @@ app.get('/elections', async (_req, res) => {
         res.status(500).json({ error: err.message || 'Failed to list elections' });
     }
 });
+/** Elections where this student is on the voter roster (for student dashboard / eligibility). */
+app.get('/elections/for-voter', async (req, res) => {
+    const studentNumber = String(req.query.studentNumber ?? '');
+    if (!studentNumber) {
+        return res.status(400).json({ error: 'studentNumber query parameter is required' });
+    }
+    try {
+        const voter = await prismaClient_1.prisma.voter.findUnique({ where: { studentNumber } });
+        if (!voter) {
+            return res.json({ elections: [] });
+        }
+        const memberships = await prismaClient_1.prisma.electionVoter.findMany({
+            where: { voterId: voter.id },
+            include: { election: true },
+        });
+        res.json({
+            elections: memberships.map((m) => ({
+                id: m.election.id,
+                name: m.election.name,
+                description: m.election.description,
+                startTime: m.election.startTime,
+                endTime: m.election.endTime,
+                status: m.election.status,
+                createdBy: m.election.createdBy,
+                createdAt: m.election.createdAt,
+            })),
+        });
+    }
+    catch (err) {
+        console.error('GET /elections/for-voter error:', err);
+        res.status(500).json({ error: err.message || 'failed' });
+    }
+});
 // 1) Create election (blockchain + DB)
 app.post('/elections', async (req, res) => {
     const { electionId, name, description, startTime, endTime, createdBy } = req.body || {};
+    const ip = req.ip;
     if (!electionId || !name || !startTime || !endTime) {
         return res.status(400).json({
             error: 'Missing required fields: electionId, name, startTime, endTime',
@@ -416,6 +503,7 @@ app.post('/elections', async (req, res) => {
     try {
         const contract = await (0, fabricClient_1.getContract)();
         await contract.submitTransaction('CreateElection', String(electionId), String(name), String(description ?? ''), String(startTime), String(endTime), String(createdBy ?? 'admin'));
+        // DB sync
         try {
             await prismaClient_1.prisma.election.upsert({
                 where: { id: electionId },
@@ -450,7 +538,8 @@ app.post('/elections', async (req, res) => {
             status: 'DRAFT',
             createdBy: String(createdBy ?? 'admin'),
         };
-        res.status(201).json(election);
+        // Success log AFTER everything succeeds
+        return res.status(201).json(election);
     }
     catch (err) {
         console.error('CreateElection error:', err);
@@ -458,7 +547,7 @@ app.post('/elections', async (req, res) => {
         if (msg.includes('already exists')) {
             return res.status(409).json({ error: msg });
         }
-        res.status(400).json({ error: msg });
+        return res.status(400).json({ error: msg });
     }
 });
 // 2) Get election details
@@ -565,6 +654,475 @@ app.get('/elections/:id/positions', async (req, res) => {
         res.status(400).json({ error: err.message || 'GetPositions failed' });
     }
 });
+// --- Paper ballot (hybrid): check-in, issuance (private mapping), scanner validate/confirm ---
+/** List eligible voters with paper status for an election (Not Issued / Issued / Voted). */
+app.get('/elections/:id/paper-check-in', async (req, res) => {
+    const { id: electionId } = req.params;
+    /** full = all CAS-eligible (for issuing tokens). active = only voters with digital vote or paper row for this election. */
+    const scope = String(req.query.scope ?? 'full');
+    try {
+        const digitalVotes = await prismaClient_1.prisma.vote.findMany({
+            where: { electionId },
+            select: { voterId: true },
+        });
+        const votedDigital = new Set(digitalVotes.map((v) => v.voterId));
+        const rosterIds = await getElectionRosterVoterIds(electionId);
+        const voters = await prismaClient_1.prisma.voter.findMany({
+            where: {
+                id: rosterIds.length > 0 ? { in: rosterIds } : { in: [] },
+                college: 'CAS',
+                status: 'ENROLLED',
+                isEligible: true,
+            },
+            orderBy: { studentNumber: 'asc' },
+        });
+        const issRows = await prismaClient_1.prisma.$queryRaw `
+      SELECT "voterId", "ballotToken", "used"
+      FROM "PaperBallotIssuance"
+      WHERE "electionId" = ${electionId}
+    `;
+        const isUsed = (u) => u === true || u === 1 || u === BigInt(1);
+        const byVoterId = new Map(issRows.map((i) => [i.voterId, i]));
+        const rows = voters
+            .map((v) => {
+            const iss = byVoterId.get(v.id);
+            let paperStatus;
+            if (!iss)
+                paperStatus = 'Not Issued';
+            else if (isUsed(iss.used))
+                paperStatus = 'Voted';
+            else
+                paperStatus = 'Issued';
+            const digital = votedDigital.has(v.studentNumber);
+            const hasElectionActivity = digital || paperStatus !== 'Not Issued';
+            return {
+                voterId: v.id,
+                studentNumber: v.studentNumber,
+                name: v.fullName,
+                paperStatus,
+                ballotToken: iss ? iss.ballotToken : null,
+                votedDigital: digital,
+                hasElectionActivity,
+            };
+        })
+            .filter((row) => (scope === 'active' ? row.hasElectionActivity : true));
+        res.json({ electionId, scope, voters: rows });
+    }
+    catch (err) {
+        console.error('GET /elections/:id/paper-check-in error:', err);
+        res.status(500).json({ error: err.message || 'paper-check-in failed' });
+    }
+});
+/** Issue or re-print a paper ballot token (private: voterId ↔ ballotToken). */
+app.post('/elections/:id/paper-ballots/issue', async (req, res) => {
+    const { id: electionId } = req.params;
+    const voterId = Number(req.body?.voterId);
+    const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v1');
+    if (!Number.isFinite(voterId)) {
+        return res.status(400).json({ error: 'voterId (number) is required' });
+    }
+    try {
+        const voter = await prismaClient_1.prisma.voter.findUnique({ where: { id: voterId } });
+        if (!voter) {
+            return res.status(404).json({ error: 'Voter not found' });
+        }
+        if (voter.college !== 'CAS' || voter.status !== 'ENROLLED' || !voter.isEligible) {
+            return res.status(403).json({ error: 'Voter is not eligible for this election' });
+        }
+        const onRoster = await isVoterOnElectionRoster(electionId, voter.id);
+        if (!onRoster) {
+            return res.status(403).json({
+                error: 'Voter is not on the student voter roster for this election',
+            });
+        }
+        const existingRows = await prismaClient_1.prisma.$queryRaw `
+      SELECT "ballotToken", "used", "templateVersion"
+      FROM "PaperBallotIssuance"
+      WHERE "electionId" = ${electionId} AND "voterId" = ${voterId}
+      LIMIT 1
+    `;
+        const existing = existingRows[0];
+        const usedFlag = (u) => u === true || u === 1 || u === BigInt(1);
+        if (existing && usedFlag(existing.used)) {
+            return res.status(400).json({ error: 'This voter has already cast a paper ballot' });
+        }
+        if (voter.hasVoted && !existing) {
+            return res.status(400).json({
+                error: 'Voter has already voted (digital). Cannot issue paper ballot.',
+            });
+        }
+        if (existing && !usedFlag(existing.used)) {
+            return res.json({
+                electionId,
+                ballotToken: existing.ballotToken,
+                templateVersion: existing.templateVersion,
+                voterId: voter.id,
+                studentNumber: voter.studentNumber,
+                reprint: true,
+            });
+        }
+        let ballotToken = generateBallotToken();
+        for (let attempt = 0; attempt < 8; attempt++) {
+            const clash = await prismaClient_1.prisma.$queryRaw `
+        SELECT COUNT(*) AS c FROM "PaperBallotIssuance" WHERE "ballotToken" = ${ballotToken}
+      `;
+            if (Number(clash[0]?.c ?? 0) === 0)
+                break;
+            ballotToken = generateBallotToken();
+        }
+        const rowId = crypto_1.default.randomUUID();
+        await prismaClient_1.prisma.$executeRaw `
+      INSERT INTO "PaperBallotIssuance" (
+        "id", "ballotToken", "electionId", "voterId", "used", "templateVersion"
+      ) VALUES (
+        ${rowId}, ${ballotToken}, ${electionId}, ${voter.id}, 0, ${templateVersion}
+      )
+    `;
+        res.status(201).json({
+            electionId,
+            ballotToken,
+            templateVersion,
+            voterId: voter.id,
+            studentNumber: voter.studentNumber,
+            reprint: false,
+        });
+    }
+    catch (err) {
+        console.error('POST paper-ballots/issue error:', err);
+        res.status(500).json({ error: err.message || 'issue failed' });
+    }
+});
+/** Admin: list issued paper tokens + stats (for Token Status page). */
+app.get('/elections/:id/paper-tokens', async (req, res) => {
+    const { id: electionId } = req.params;
+    try {
+        // Use $queryRaw so this works even if `prisma generate` was not run after adding
+        // PaperBallotIssuance (avoids undefined prisma.paperBallotIssuance.findMany).
+        const rows = await prismaClient_1.prisma.$queryRaw `
+      SELECT
+        p."ballotToken" AS "ballotToken",
+        p."used" AS "used",
+        p."issuedAt" AS "issuedAt",
+        p."usedAt" AS "usedAt",
+        v."studentNumber" AS "studentNumber"
+      FROM "PaperBallotIssuance" AS p
+      INNER JOIN "Voter" AS v ON v."id" = p."voterId"
+      WHERE p."electionId" = ${electionId}
+      ORDER BY p."issuedAt" DESC
+    `;
+        const isUsed = (u) => u === true || u === 1 || u === BigInt(1);
+        const used = rows.filter((r) => isUsed(r.used)).length;
+        const toIso = (d) => d instanceof Date ? d.toISOString() : new Date(d).toISOString();
+        const tokens = rows.map((i) => ({
+            studentNumber: i.studentNumber,
+            ballotToken: i.ballotToken,
+            timeCreated: toIso(i.issuedAt),
+            status: (isUsed(i.used) ? 'Used' : 'Unused'),
+            timeUsed: i.usedAt != null ? toIso(i.usedAt) : undefined,
+        }));
+        res.json({
+            electionId,
+            stats: {
+                totalIssued: rows.length,
+                used,
+                unused: rows.length - used,
+            },
+            tokens,
+        });
+    }
+    catch (err) {
+        console.error('GET paper-tokens error:', err);
+        const msg = err?.message || String(err);
+        if (/no such table|SQLITE_ERROR.*PaperBallotIssuance/i.test(msg)) {
+            return res.status(503).json({
+                error: 'Paper ballot tables are missing. In gateway-api run: npx prisma db push && npx prisma generate',
+            });
+        }
+        res.status(500).json({ error: msg || 'paper-tokens failed' });
+    }
+});
+/**
+ * Bulk-issue paper ballot tokens for every eligible voter who does not yet have an issuance
+ * for this election (skips voters who already voted digitally without a paper record).
+ */
+app.post('/elections/:id/paper-tokens/generate-all', async (req, res) => {
+    const { id: electionId } = req.params;
+    const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v1');
+    try {
+        const rosterIds = await getElectionRosterVoterIds(electionId);
+        if (rosterIds.length === 0) {
+            return res.json({
+                ok: true,
+                electionId,
+                created: 0,
+                eligibleVoters: 0,
+                errors: [],
+                errorCount: 0,
+                message: 'No student voters on the roster for this election. Add voters to the election roster first.',
+            });
+        }
+        const eligible = await prismaClient_1.prisma.voter.findMany({
+            where: {
+                id: { in: rosterIds },
+                college: 'CAS',
+                status: 'ENROLLED',
+                isEligible: true,
+            },
+            select: { id: true, hasVoted: true },
+        });
+        const issuedRows = await prismaClient_1.prisma.$queryRaw `
+      SELECT "voterId" FROM "PaperBallotIssuance" WHERE "electionId" = ${electionId}
+    `;
+        const alreadyIssued = new Set(issuedRows.map((r) => r.voterId));
+        const isTruthy = (x) => x === true || x === 1 || x === BigInt(1);
+        let created = 0;
+        const errors = [];
+        for (const v of eligible) {
+            if (alreadyIssued.has(v.id))
+                continue;
+            if (isTruthy(v.hasVoted))
+                continue;
+            let ballotToken = generateBallotToken();
+            for (let a = 0; a < 10; a++) {
+                const clash = await prismaClient_1.prisma.$queryRaw `
+          SELECT COUNT(*) AS c FROM "PaperBallotIssuance" WHERE "ballotToken" = ${ballotToken}
+        `;
+                const n = Number(clash[0]?.c ?? 0);
+                if (n === 0)
+                    break;
+                ballotToken = generateBallotToken();
+            }
+            const rowId = crypto_1.default.randomUUID();
+            try {
+                await prismaClient_1.prisma.$executeRaw `
+          INSERT INTO "PaperBallotIssuance" (
+            "id", "ballotToken", "electionId", "voterId", "used", "templateVersion"
+          ) VALUES (
+            ${rowId}, ${ballotToken}, ${electionId}, ${v.id}, 0, ${templateVersion}
+          )
+        `;
+                created += 1;
+                alreadyIssued.add(v.id);
+            }
+            catch (e) {
+                errors.push(`voter ${v.id}: ${e?.message || e}`);
+            }
+        }
+        res.json({
+            ok: true,
+            electionId,
+            created,
+            eligibleVoters: eligible.length,
+            errors: errors.slice(0, 20),
+            errorCount: errors.length,
+        });
+    }
+    catch (err) {
+        console.error('POST paper-tokens/generate-all error:', err);
+        res.status(500).json({ error: err.message || 'generate-all failed' });
+    }
+});
+/**
+ * Full ballot image scan: forwards to Python OMR worker (OpenCV — same stack as Open MCR).
+ * Set OMR_WORKER_URL=http://127.0.0.1:8090 (see repo /omr-worker).
+ * Body: { imageBase64, fileName?, scannerTemplate } — template = ecasvote-scanner-template/1 JSON.
+ */
+app.post('/scanner/scan-image', async (req, res) => {
+    const imageBase64 = String(req.body?.imageBase64 ?? '');
+    const fileName = String(req.body?.fileName ?? 'image');
+    const scannerTemplate = req.body?.scannerTemplate;
+    if (!imageBase64 || !scannerTemplate || typeof scannerTemplate !== 'object') {
+        return res.status(400).json({
+            error: 'imageBase64 and scannerTemplate (object) are required',
+        });
+    }
+    const workerUrl = process.env.OMR_WORKER_URL?.trim().replace(/\/$/, '');
+    if (!workerUrl) {
+        return res.status(503).json({
+            ok: false,
+            error: 'OMR_WORKER_NOT_CONFIGURED',
+            hint: 'Set OMR_WORKER_URL and start the Python service: cd omr-worker && pip install -r requirements.txt && uvicorn app.main:app --host 127.0.0.1 --port 8090',
+            fileName,
+        });
+    }
+    try {
+        const wr = await fetch(`${workerUrl}/scan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                image_base64: imageBase64,
+                template: scannerTemplate,
+            }),
+        });
+        const omr = (await wr.json());
+        if (!wr.ok) {
+            return res.status(502).json({
+                ok: false,
+                fileName,
+                workerHttpStatus: wr.status,
+                error: typeof omr.detail === 'string'
+                    ? omr.detail
+                    : typeof omr.message === 'string'
+                        ? omr.message
+                        : 'OMR worker request failed',
+                omr,
+            });
+        }
+        const qr = omr.qr;
+        let tokenValidation;
+        if (qr &&
+            typeof qr.electionId === 'string' &&
+            typeof qr.ballotToken === 'string' &&
+            qr.electionId.length > 0 &&
+            qr.ballotToken.length > 0) {
+            const electionId = qr.electionId;
+            const ballotToken = qr.ballotToken;
+            const templateVersion = String(qr.templateVersion ?? '');
+            const issuance = await prismaClient_1.prisma.paperBallotIssuance.findFirst({
+                where: { electionId, ballotToken },
+            });
+            if (!issuance) {
+                tokenValidation = { ok: false, error: 'UNKNOWN_TOKEN' };
+            }
+            else if (templateVersion && issuance.templateVersion !== templateVersion) {
+                tokenValidation = { ok: false, error: 'TEMPLATE_MISMATCH' };
+            }
+            else if (issuance.used) {
+                tokenValidation = { ok: false, error: 'TOKEN_USED' };
+            }
+            else {
+                tokenValidation = { ok: true, templateVersion: issuance.templateVersion };
+            }
+        }
+        else {
+            tokenValidation = { skipped: true, reason: 'NO_QR_IN_OMR_OUTPUT' };
+        }
+        const tvOk = 'ok' in tokenValidation && tokenValidation.ok === true;
+        res.json({
+            ok: tvOk,
+            fileName,
+            omr,
+            tokenValidation,
+        });
+    }
+    catch (err) {
+        console.error('POST /scanner/scan-image error:', err);
+        res.status(500).json({ error: err.message || 'scan-image failed' });
+    }
+});
+/** Scanner: validate QR payload — token exists for election and is not used. Returns mock selections (OpenCV placeholder). */
+app.post('/scanner/validate', async (req, res) => {
+    const electionId = String(req.body?.electionId ?? '');
+    const ballotToken = String(req.body?.ballotToken ?? '');
+    const templateVersion = String(req.body?.templateVersion ?? '');
+    if (!electionId || !ballotToken) {
+        return res.status(400).json({ error: 'electionId and ballotToken are required' });
+    }
+    try {
+        const issuance = await prismaClient_1.prisma.paperBallotIssuance.findFirst({
+            where: { electionId, ballotToken },
+        });
+        if (!issuance) {
+            return res.status(404).json({ ok: false, error: 'UNKNOWN_TOKEN' });
+        }
+        if (templateVersion && issuance.templateVersion !== templateVersion) {
+            return res.status(400).json({ ok: false, error: 'TEMPLATE_MISMATCH' });
+        }
+        if (issuance.used) {
+            return res.status(400).json({ ok: false, error: 'TOKEN_USED' });
+        }
+        const positions = await prismaClient_1.prisma.position.findMany({
+            where: { electionId },
+            orderBy: { order: 'asc' },
+        });
+        const mockSelections = {};
+        for (const p of positions) {
+            const first = await prismaClient_1.prisma.candidate.findFirst({
+                where: { electionId, positionId: p.id },
+                orderBy: { name: 'asc' },
+            });
+            if (first)
+                mockSelections[p.id] = first.id;
+        }
+        res.json({
+            ok: true,
+            electionId,
+            ballotToken,
+            templateVersion: issuance.templateVersion,
+            mockSelections,
+        });
+    }
+    catch (err) {
+        console.error('POST /scanner/validate error:', err);
+        res.status(500).json({ error: err.message || 'validate failed' });
+    }
+});
+/** Scanner: confirm paper vote — public anonymous record + mark issuance used (no voterId on vote). */
+app.post('/scanner/confirm-vote', async (req, res) => {
+    const electionId = String(req.body?.electionId ?? '');
+    const ballotToken = String(req.body?.ballotToken ?? '');
+    const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v1');
+    const ciphertextB64 = String(req.body?.ciphertextB64 ?? 'mock-encrypted-data');
+    const selections = req.body?.selections;
+    if (!electionId || !ballotToken || typeof selections !== 'object' || selections === null) {
+        return res.status(400).json({
+            error: 'electionId, ballotToken, and selections object are required',
+        });
+    }
+    try {
+        const result = await prismaClient_1.prisma.$transaction(async (tx) => {
+            const issuance = await tx.paperBallotIssuance.findFirst({
+                where: { electionId, ballotToken },
+            });
+            if (!issuance) {
+                throw Object.assign(new Error('UNKNOWN_TOKEN'), { code: 404 });
+            }
+            if (issuance.used) {
+                throw Object.assign(new Error('TOKEN_USED'), { code: 400 });
+            }
+            if (issuance.templateVersion !== templateVersion) {
+                throw Object.assign(new Error('TEMPLATE_MISMATCH'), { code: 400 });
+            }
+            const castAt = new Date();
+            await tx.paperAnonymousVote.create({
+                data: {
+                    electionId,
+                    ballotToken,
+                    ciphertextB64,
+                    selectionsJson: selections,
+                    templateVersion,
+                    castAt,
+                },
+            });
+            await tx.paperBallotIssuance.update({
+                where: { id: issuance.id },
+                data: { used: true, usedAt: castAt },
+            });
+            await tx.voter.update({
+                where: { id: issuance.voterId },
+                data: { hasVoted: true, votedAt: castAt },
+            });
+            return { castAt: castAt.toISOString() };
+        });
+        res.json({
+            ok: true,
+            ballotToken,
+            ciphertextB64,
+            castAt: result.castAt,
+            templateVersion,
+        });
+    }
+    catch (err) {
+        if (err.code === 404) {
+            return res.status(404).json({ error: err.message });
+        }
+        if (err.code === 400) {
+            return res.status(400).json({ error: err.message });
+        }
+        console.error('POST /scanner/confirm-vote error:', err);
+        res.status(500).json({ error: err.message || 'confirm-vote failed' });
+    }
+});
 // 2b) Get candidates for a position (from blockchain)
 app.get('/elections/:id/positions/:positionId/candidates', async (req, res) => {
     const { id, positionId } = req.params;
@@ -604,7 +1162,6 @@ app.post('/elections/:id/candidates', async (req, res) => {
             }
             const position = positionMap.get(positionName);
             if (!position) {
-                console.warn(`Position "${positionName}" not found for election ${id}`);
                 continue;
             }
             // Generate candidate ID
@@ -669,39 +1226,39 @@ app.post('/elections/:id/candidates', async (req, res) => {
 app.put('/elections/:id', async (req, res) => {
     const { id } = req.params;
     const { name, description, startTime, endTime } = req.body;
+    // Validation
     if (!name || !startTime || !endTime) {
-        return res.status(400).json({ error: 'name, startTime, and endTime are required' });
+        return res.status(400).json({
+            error: 'name, startTime, and endTime are required',
+        });
     }
     try {
         const contract = await (0, fabricClient_1.getContract)();
-        // Retry logic for MVCC_READ_CONFLICT (up to 3 attempts)
+        // Retry logic for MVCC conflict
         let lastError = null;
         let success = false;
         const maxRetries = 3;
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                // Update on blockchain
                 await contract.submitTransaction('UpdateElection', id, name, description || '', startTime, endTime);
                 success = true;
-                break; // Success, exit retry loop
+                break;
             }
             catch (err) {
                 lastError = err;
-                // Check if it's an MVCC_READ_CONFLICT error (code 11)
+                // MVCC conflict handling
                 if (err.code === 11 && attempt < maxRetries) {
                     console.warn(`⚠️ MVCC_READ_CONFLICT on attempt ${attempt}, retrying...`);
-                    // Wait a bit before retrying (exponential backoff)
-                    await new Promise(resolve => setTimeout(resolve, 200 * attempt));
+                    await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
                     continue;
                 }
-                // If not MVCC_READ_CONFLICT or max retries reached, throw
                 throw err;
             }
         }
         if (!success) {
             throw lastError;
         }
-        // Only update database after successful blockchain transaction
+        // Database update (after blockchain success)
         try {
             await prismaClient_1.prisma.election.upsert({
                 where: { id },
@@ -725,21 +1282,24 @@ app.put('/elections/:id', async (req, res) => {
         }
         catch (dbErr) {
             console.warn(`⚠️ Failed to update election ${id} in database:`, dbErr.message);
-            // Continue even if database update fails - blockchain is updated
+            // Continue since blockchain update succeeded
         }
+        // Send response first
         res.json({ ok: true, message: 'Election updated successfully' });
     }
     catch (err) {
         console.error('UpdateElection error:', err);
-        // Provide helpful error message for MVCC_READ_CONFLICT
+        // MVCC conflict response
         if (err.code === 11) {
             return res.status(409).json({
                 error: 'Transaction conflict: Another update is in progress. Please try again in a moment.',
                 code: 'MVCC_READ_CONFLICT',
-                hint: 'This usually happens when multiple updates occur simultaneously. Retry the request.'
+                hint: 'This usually happens when multiple updates occur simultaneously. Retry the request.',
             });
         }
-        res.status(400).json({ error: err.message || 'UpdateElection failed' });
+        res.status(400).json({
+            error: err.message || 'UpdateElection failed',
+        });
     }
 });
 // 3) Open election (change status from DRAFT to OPEN)
@@ -752,7 +1312,9 @@ app.post('/elections/:id/open', async (req, res) => {
     }
     catch (err) {
         console.error('OpenElection error:', err);
-        res.status(400).json({ error: err.message || 'OpenElection failed' });
+        res.status(400).json({
+            error: err.message || 'OpenElection failed',
+        });
     }
 });
 // 3.5) Close election (change status from OPEN to CLOSED)
@@ -765,36 +1327,232 @@ app.post('/elections/:id/close', async (req, res) => {
     }
     catch (err) {
         console.error('CloseElection error:', err);
-        res.status(400).json({ error: err.message || 'CloseElection failed' });
+        res.status(400).json({
+            error: err.message || 'CloseElection failed',
+        });
     }
 });
-// 4) Register voter
+/**
+ * CAS-eligible voter rows with hasVotedThisElection (digital Vote or paper ballot used for this election).
+ */
+async function augmentVotersWithElectionVoteStatus(electionId, voters) {
+    const digitalVotes = await prismaClient_1.prisma.vote.findMany({
+        where: { electionId },
+        select: { voterId: true },
+    });
+    const digitalSet = new Set(digitalVotes.map((v) => v.voterId));
+    const usedPaper = await prismaClient_1.prisma.paperBallotIssuance.findMany({
+        where: { electionId, used: true },
+        select: { voterId: true },
+    });
+    const paperVoterIds = [...new Set(usedPaper.map((p) => p.voterId))];
+    const paperVoters = paperVoterIds.length === 0
+        ? []
+        : await prismaClient_1.prisma.voter.findMany({
+            where: { id: { in: paperVoterIds } },
+            select: { studentNumber: true },
+        });
+    const paperVotedSns = new Set(paperVoters.map((v) => v.studentNumber));
+    return voters.map((v) => ({
+        ...v,
+        hasVotedThisElection: digitalSet.has(v.studentNumber) || paperVotedSns.has(v.studentNumber),
+    }));
+}
+/**
+ * GET /elections/:id/voters — voters for the selected election (not the global /voters registry).
+ * pool=eligible (default): CAS + ENROLLED + isEligible (same cohort as paper-check-in and turnout).
+ * pool=active: only voters with a digital vote or a paper ballot issuance for this election (still CAS-eligible).
+ */
+app.get('/elections/:id/voters', async (req, res) => {
+    const { id: electionId } = req.params;
+    const pool = String(req.query.pool ?? 'eligible');
+    try {
+        const election = await prismaClient_1.prisma.election.findUnique({ where: { id: electionId } });
+        if (!election) {
+            return res.status(404).json({ error: 'Election not found' });
+        }
+        const rosterIds = await getElectionRosterVoterIds(electionId);
+        const rosterFilter = rosterIds.length > 0 ? { id: { in: rosterIds } } : { id: { in: [] } };
+        const baseWhere = {
+            college: 'CAS',
+            status: 'ENROLLED',
+            isEligible: true,
+        };
+        if (pool === 'active') {
+            const voteSns = await prismaClient_1.prisma.vote.findMany({
+                where: { electionId },
+                select: { voterId: true },
+            });
+            const sns = new Set(voteSns.map((v) => v.voterId));
+            const paperIss = await prismaClient_1.prisma.paperBallotIssuance.findMany({
+                where: { electionId },
+                select: { voterId: true },
+            });
+            const paperVoterIds = [...new Set(paperIss.map((p) => p.voterId))];
+            if (paperVoterIds.length > 0) {
+                const pv = await prismaClient_1.prisma.voter.findMany({
+                    where: { id: { in: paperVoterIds } },
+                    select: { studentNumber: true },
+                });
+                pv.forEach((v) => sns.add(v.studentNumber));
+            }
+            if (sns.size === 0 || rosterIds.length === 0) {
+                return res.json({ electionId, pool: 'active', voters: [] });
+            }
+            const voters = await prismaClient_1.prisma.voter.findMany({
+                where: {
+                    ...baseWhere,
+                    ...rosterFilter,
+                    studentNumber: { in: [...sns] },
+                },
+                orderBy: { studentNumber: 'asc' },
+            });
+            const augmented = await augmentVotersWithElectionVoteStatus(electionId, voters);
+            return res.json({ electionId, pool: 'active', voters: augmented });
+        }
+        const voters = await prismaClient_1.prisma.voter.findMany({
+            where: {
+                ...baseWhere,
+                ...rosterFilter,
+            },
+            orderBy: { studentNumber: 'asc' },
+        });
+        const augmented = await augmentVotersWithElectionVoteStatus(electionId, voters);
+        res.json({ electionId, pool: 'eligible', voters: augmented });
+    }
+    catch (err) {
+        console.error('GET /elections/:id/voters error:', err);
+        res.status(500).json({ error: err.message || 'failed to load election voters' });
+    }
+});
+/** Add all CAS enrolled eligible voters to this election roster (idempotent). */
+app.post('/elections/:id/voters/roster/sync-cas-eligible', async (req, res) => {
+    const { id: electionId } = req.params;
+    try {
+        const election = await prismaClient_1.prisma.election.findUnique({ where: { id: electionId } });
+        if (!election) {
+            return res.status(404).json({ error: 'Election not found' });
+        }
+        const voters = await prismaClient_1.prisma.voter.findMany({
+            where: { college: 'CAS', status: 'ENROLLED', isEligible: true },
+            select: { id: true },
+        });
+        let added = 0;
+        for (const v of voters) {
+            try {
+                await prismaClient_1.prisma.electionVoter.create({
+                    data: { electionId, voterId: v.id },
+                });
+                added += 1;
+            }
+            catch (e) {
+                const code = e?.code;
+                if (code !== 'P2002')
+                    throw e;
+            }
+        }
+        const count = await prismaClient_1.prisma.electionVoter.count({ where: { electionId } });
+        res.json({ ok: true, electionId, added, totalOnRoster: count });
+    }
+    catch (err) {
+        console.error('POST sync-cas-eligible error:', err);
+        res.status(500).json({ error: err.message || 'sync failed' });
+    }
+});
+app.delete('/elections/:id/voters/roster/:voterId', async (req, res) => {
+    const { id: electionId, voterId: vid } = req.params;
+    const voterId = Number(vid);
+    if (!Number.isFinite(voterId)) {
+        return res.status(400).json({ error: 'Invalid voterId' });
+    }
+    try {
+        await prismaClient_1.prisma.electionVoter.deleteMany({
+            where: { electionId, voterId },
+        });
+        res.json({ ok: true, electionId, voterId });
+    }
+    catch (err) {
+        console.error('DELETE roster error:', err);
+        res.status(500).json({ error: err.message || 'delete failed' });
+    }
+});
+app.post('/elections/:id/voters/roster', async (req, res) => {
+    const { id: electionId } = req.params;
+    const voterIds = req.body?.voterIds;
+    if (!Array.isArray(voterIds) || voterIds.length === 0) {
+        return res.status(400).json({ error: 'voterIds (non-empty array) is required' });
+    }
+    const ids = voterIds
+        .map((x) => Number(x))
+        .filter((n) => Number.isFinite(n));
+    try {
+        const election = await prismaClient_1.prisma.election.findUnique({ where: { id: electionId } });
+        if (!election) {
+            return res.status(404).json({ error: 'Election not found' });
+        }
+        let added = 0;
+        for (const voterId of ids) {
+            try {
+                await prismaClient_1.prisma.electionVoter.create({
+                    data: { electionId, voterId },
+                });
+                added += 1;
+            }
+            catch (e) {
+                const code = e?.code;
+                if (code !== 'P2002')
+                    throw e;
+            }
+        }
+        res.json({ ok: true, electionId, added });
+    }
+    catch (err) {
+        console.error('POST roster error:', err);
+        res.status(500).json({ error: err.message || 'failed' });
+    }
+});
+// 4) Register voter (chaincode) — also adds SQLite roster row when voter exists in registry
 app.post('/elections/:id/voters', async (req, res) => {
     const { id } = req.params;
-    const { voterId } = req.body; // e.g., UP mail or student ID
+    const { voterId } = req.body;
     if (!voterId) {
         return res.status(400).json({ error: 'voterId is required' });
     }
     try {
         const contract = await (0, fabricClient_1.getContract)();
         await contract.submitTransaction('RegisterVoter', id, voterId);
+        const v = await prismaClient_1.prisma.voter.findUnique({
+            where: { studentNumber: String(voterId).trim() },
+        });
+        if (v) {
+            await prismaClient_1.prisma.electionVoter.upsert({
+                where: {
+                    electionId_voterId: { electionId: id, voterId: v.id },
+                },
+                create: { electionId: id, voterId: v.id },
+                update: {},
+            });
+        }
         res.json({ ok: true });
     }
     catch (err) {
         console.error(err);
-        res.status(400).json({ error: err.message || 'RegisterVoter failed' });
+        res.status(400).json({
+            error: err.message || 'RegisterVoter failed',
+        });
     }
 });
 // 5) Cast vote
 app.post('/elections/:id/votes', async (req, res) => {
     const { id } = req.params;
     const { studentNumber, selections } = req.body;
-    // selections = [{ positionId, candidateId }, ...]
     if (!studentNumber || !Array.isArray(selections)) {
-        return res.status(400).json({ error: 'studentNumber and selections[] are required' });
+        return res.status(400).json({
+            error: 'studentNumber and selections[] are required',
+        });
     }
     try {
-        // --- 1) OFF-CHAIN: Verify voter exists and is eligible ---
+        // --- 1) OFF-CHAIN VALIDATION ---
         const voter = await prismaClient_1.prisma.voter.findUnique({
             where: { studentNumber },
         });
@@ -807,28 +1565,16 @@ app.post('/elections/:id/votes', async (req, res) => {
         if (voter.status !== 'ENROLLED' || !voter.isEligible) {
             return res.status(403).json({ error: 'Voter is not eligible to vote' });
         }
+        const onRoster = await isVoterOnElectionRoster(id, voter.id);
+        if (!onRoster) {
+            return res.status(403).json({
+                error: 'You are not registered as a student voter for this election',
+            });
+        }
         if (voter.hasVoted) {
             return res.status(403).json({ error: 'Voter has already cast their vote' });
         }
-        // --- Validate department governor restriction ---
-        const voterDepartment = voter.department.toLowerCase();
-        const governorPositions = ['clovers-governor', 'elektrons-governor', 'redbolts-governor', 'skimmers-governor'];
-        for (const selection of selections) {
-            const { positionId } = selection;
-            // Check if this is a governor position
-            if (governorPositions.includes(positionId)) {
-                // Extract department from position ID (e.g., "clovers-governor" -> "clovers")
-                const positionDepartment = positionId.split('-')[0].toLowerCase();
-                // Verify the position matches the voter's department
-                if (positionDepartment !== voterDepartment) {
-                    return res.status(403).json({
-                        error: `You can only vote for ${voter.department} Governor. You attempted to vote for ${positionId.replace('-governor', '').charAt(0).toUpperCase() + positionId.replace('-governor', '').slice(1)} Governor.`
-                    });
-                }
-            }
-        }
-        // Update voter as voted
-        console.log(`[Vote] Marking voter ${studentNumber} as voted...`);
+        // --- Mark voter as voted ---
         await prismaClient_1.prisma.voter.update({
             where: { studentNumber },
             data: {
@@ -836,64 +1582,40 @@ app.post('/elections/:id/votes', async (req, res) => {
                 votedAt: new Date(),
             },
         });
-        console.log(`[Vote] ✅ Voter ${studentNumber} marked as voted`);
-        // --- 2) ON-CHAIN: call ECASVote chaincode (CastVote) ---
-        console.log(`[Vote] Submitting vote to blockchain...`);
+        // --- 2) BLOCKCHAIN ---
         const contract = await (0, fabricClient_1.getContract)();
         const selectionsJson = JSON.stringify(selections);
         let transactionId;
         try {
-            // Create proposal to get transaction ID, then endorse and submit
-            // Use studentNumber as voterId for chaincode
             const proposal = contract.newProposal('CastVote', {
                 arguments: [id, studentNumber, selectionsJson],
             });
             transactionId = proposal.getTransactionId();
-            console.log(`[Vote] Created proposal with transaction ID: ${transactionId}`);
-            // Endorse the proposal to get a transaction
-            console.log(`[Vote] Endorsing proposal...`);
             const transaction = await proposal.endorse();
-            console.log(`[Vote] ✅ Proposal endorsed successfully`);
-            // Submit the transaction
-            console.log(`[Vote] Submitting transaction...`);
             await transaction.submit();
-            console.log(`[Vote] ✅ Vote submitted to blockchain with transaction ID: ${transactionId}`);
         }
         catch (blockchainErr) {
-            console.error('[Vote] Blockchain error details:', {
-                message: blockchainErr.message,
-                code: blockchainErr.code,
-                details: blockchainErr.details,
-                cause: blockchainErr.cause,
+            // rollback voter
+            await prismaClient_1.prisma.voter.update({
+                where: { studentNumber },
+                data: {
+                    hasVoted: false,
+                    votedAt: null,
+                },
             });
-            // Rollback: Mark voter as not voted if blockchain failed
-            try {
-                await prismaClient_1.prisma.voter.update({
-                    where: { studentNumber },
-                    data: {
-                        hasVoted: false,
-                        votedAt: null,
-                    },
-                });
-                console.log(`[Vote] Rolled back voter ${studentNumber} status`);
-            }
-            catch (rollbackErr) {
-                console.error('[Vote] Failed to rollback voter status:', rollbackErr);
-            }
             throw blockchainErr;
         }
-        // --- 3) Store vote in database ---
+        // --- 3) Save vote ---
         const vote = await prismaClient_1.prisma.vote.create({
             data: {
                 electionId: id,
                 voterId: studentNumber,
-                selections: selections,
+                selections,
                 txId: transactionId,
                 castAt: new Date(),
             },
         });
-        console.log(`[Vote] ✅ Vote saved to database: ${vote.id}`);
-        // --- 4) Store transaction ID in audit log ---
+        // --- 4) Audit log (already correct) ---
         await prismaClient_1.prisma.auditLog.create({
             data: {
                 electionId: id,
@@ -901,58 +1623,48 @@ app.post('/elections/:id/votes', async (req, res) => {
                 action: 'CAST_VOTE',
                 txId: transactionId,
                 details: {
-                    selections: selections,
+                    selections,
                     voteId: vote.id,
                 },
             },
         });
-        return res.json({
+        // ✅ Success log
+        res.json({
             ok: true,
-            message: 'Vote recorded on-chain and stored in database.',
-            transactionId: transactionId,
+            message: 'Vote recorded successfully',
+            transactionId,
             voteId: vote.id,
         });
     }
     catch (err) {
         console.error('[Vote] Error:', err);
         const errorMessage = err.message ?? 'Internal server error';
-        // Check if it's a blockchain error
-        if (errorMessage.includes('endorsement') || errorMessage.includes('ABORTED') || err.code === 10) {
-            // Rollback: Mark voter as not voted if blockchain failed
-            // Note: studentNumber should be extracted from request body if available
-            const requestBody = req.body;
-            if (requestBody?.studentNumber) {
-                try {
+        if (errorMessage.includes('endorsement') ||
+            errorMessage.includes('ABORTED') ||
+            err.code === 10) {
+            try {
+                if (studentNumber) {
                     await prismaClient_1.prisma.voter.update({
-                        where: { studentNumber: requestBody.studentNumber },
+                        where: { studentNumber },
                         data: {
                             hasVoted: false,
                             votedAt: null,
                         },
                     });
-                    console.log(`[Vote] Rolled back voter ${requestBody.studentNumber} status`);
-                }
-                catch (rollbackErr) {
-                    console.error('[Vote] Failed to rollback voter status:', rollbackErr);
                 }
             }
-            // Provide detailed error information
-            const errorDetails = {
+            catch (rollbackErr) {
+                console.error('[Vote] Rollback failed:', rollbackErr);
+            }
+            return res.status(500).json({
                 error: 'Blockchain transaction failed',
                 details: errorMessage,
                 code: err.code,
-            };
-            // Add more details if available
-            if (err.details && Array.isArray(err.details)) {
-                errorDetails.endorsementDetails = err.details;
-            }
-            if (err.cause) {
-                errorDetails.cause = err.cause.message || String(err.cause);
-            }
-            errorDetails.solution = 'This usually means the chaincode needs to be redeployed or the network peers are out of sync. Try redeploying the chaincode.';
-            return res.status(500).json(errorDetails);
+            });
         }
-        return res.status(500).json({ error: errorMessage });
+        return res.status(500).json({
+            error: errorMessage,
+        });
     }
 });
 // 6) Get results
@@ -969,7 +1681,9 @@ app.get('/elections/:id/results', async (req, res) => {
     }
     catch (err) {
         console.error('GetElectionResults error:', err);
-        res.status(400).json({ error: err.message || 'GetElectionResults failed' });
+        res.status(400).json({
+            error: err.message || 'GetElectionResults failed',
+        });
     }
 });
 // 7) Get transaction ID for a voter's vote
@@ -987,7 +1701,9 @@ app.get('/elections/:id/voters/:voterId/transaction', async (req, res) => {
             },
         });
         if (!auditLog || !auditLog.txId) {
-            return res.status(404).json({ error: 'Transaction ID not found for this voter' });
+            return res.status(404).json({
+                error: 'Transaction ID not found for this voter',
+            });
         }
         res.json({
             electionId: id,
@@ -1002,27 +1718,123 @@ app.get('/elections/:id/voters/:voterId/transaction', async (req, res) => {
         res.status(400).json({ error: err.message || 'GetTransactionId failed' });
     }
 });
+/**
+ * Eligible CAS pool + who voted in this election (on-chain Vote rows + paper issuances used).
+ * Shared by GET /dashboard and GET /turnout.
+ */
+async function computeElectionTurnout(electionId) {
+    const baseWhere = {
+        college: 'CAS',
+        status: 'ENROLLED',
+        isEligible: true,
+    };
+    const rosterIds = await getElectionRosterVoterIds(electionId);
+    const rosterWhere = rosterIds.length > 0
+        ? { id: { in: rosterIds } }
+        : { id: { in: [] } };
+    const allVoters = await prismaClient_1.prisma.voter.findMany({
+        where: {
+            ...baseWhere,
+            ...rosterWhere,
+        },
+        select: {
+            studentNumber: true,
+            department: true,
+            yearLevel: true,
+            program: true,
+        },
+    });
+    const digitalVotes = await prismaClient_1.prisma.vote.findMany({
+        where: { electionId },
+        select: { voterId: true },
+    });
+    const votedDigital = new Set(digitalVotes.map((v) => v.voterId));
+    const usedPaper = await prismaClient_1.prisma.paperBallotIssuance.findMany({
+        where: { electionId, used: true },
+        select: { voterId: true },
+    });
+    const paperVoterIds = Array.from(new Set(usedPaper.map((p) => p.voterId)));
+    const paperVoterRows = paperVoterIds.length > 0
+        ? await prismaClient_1.prisma.voter.findMany({
+            where: { id: { in: paperVoterIds } },
+            select: { studentNumber: true },
+        })
+        : [];
+    const votedPaper = new Set(paperVoterRows.map((v) => v.studentNumber));
+    const votedInElection = new Set([...votedDigital, ...votedPaper]);
+    const eligibleNumbers = new Set(allVoters.map((v) => v.studentNumber));
+    const votedCount = [...votedInElection].filter((sn) => eligibleNumbers.has(sn)).length;
+    const totalVoters = allVoters.length;
+    const notVotedCount = totalVoters - votedCount;
+    const votedFor = (studentNumber) => votedInElection.has(studentNumber);
+    const departmentMap = new Map();
+    allVoters.forEach((voter) => {
+        const dept = voter.department || 'Unknown';
+        if (!departmentMap.has(dept)) {
+            departmentMap.set(dept, { total: 0, voted: 0 });
+        }
+        const stats = departmentMap.get(dept);
+        stats.total++;
+        if (votedFor(voter.studentNumber))
+            stats.voted++;
+    });
+    const byDepartment = Array.from(departmentMap.entries()).map(([name, stats]) => ({
+        name,
+        total: stats.total,
+        voted: stats.voted,
+        notVoted: stats.total - stats.voted,
+    }));
+    const yearLevelMap = new Map();
+    allVoters.forEach((voter) => {
+        const year = voter.yearLevel ?? 0;
+        if (!yearLevelMap.has(year)) {
+            yearLevelMap.set(year, { total: 0, voted: 0 });
+        }
+        const stats = yearLevelMap.get(year);
+        stats.total++;
+        if (votedFor(voter.studentNumber))
+            stats.voted++;
+    });
+    const byYearLevel = Array.from(yearLevelMap.entries())
+        .map(([yearLevel, stats]) => ({
+        yearLevel,
+        total: stats.total,
+        voted: stats.voted,
+        notVoted: stats.total - stats.voted,
+    }))
+        .sort((a, b) => a.yearLevel - b.yearLevel);
+    const programMap = new Map();
+    allVoters.forEach((voter) => {
+        const program = voter.program || 'Unknown';
+        if (!programMap.has(program)) {
+            programMap.set(program, { total: 0, voted: 0 });
+        }
+        const stats = programMap.get(program);
+        stats.total++;
+        if (votedFor(voter.studentNumber))
+            stats.voted++;
+    });
+    const byProgram = Array.from(programMap.entries()).map(([program, stats]) => ({
+        program,
+        total: stats.total,
+        voted: stats.voted,
+        notVoted: stats.total - stats.voted,
+    }));
+    return {
+        electionId,
+        totalVoters,
+        votedCount,
+        notVotedCount,
+        byDepartment,
+        byYearLevel,
+        byProgram,
+    };
+}
 // 8) Get dashboard statistics for an election
 app.get('/elections/:id/dashboard', async (req, res) => {
     const { id } = req.params;
     try {
-        // Get total CAS enrolled voters
-        const totalVoters = await prismaClient_1.prisma.voter.count({
-            where: {
-                college: 'CAS',
-                status: 'ENROLLED',
-                isEligible: true,
-            },
-        });
-        // Get voters who have voted
-        const votedCount = await prismaClient_1.prisma.voter.count({
-            where: {
-                college: 'CAS',
-                status: 'ENROLLED',
-                isEligible: true,
-                hasVoted: true,
-            },
-        });
+        const turnout = await computeElectionTurnout(id);
         // Get election info from blockchain
         let election = null;
         try {
@@ -1031,57 +1843,53 @@ app.get('/elections/:id/dashboard', async (req, res) => {
             const responseText = Buffer.from(bytes).toString('utf8').trim();
             if (responseText) {
                 election = JSON.parse(responseText);
-                // Auto-close election if end time has passed
                 const now = new Date();
                 const endTime = new Date(election.endTime);
+                // Auto-close election if expired
                 if (election.status === 'OPEN' && now > endTime) {
                     try {
                         await contract.submitTransaction('CloseElection', id);
                         election.status = 'CLOSED';
-                        console.log(`✅ Election ${id} automatically closed in dashboard (end time passed)`);
                     }
                     catch (closeErr) {
-                        console.warn(`⚠️ Failed to auto-close election ${id} in dashboard:`, closeErr.message);
-                        // Continue with current status if close fails
+                        console.warn(`⚠️ Failed to auto-close election ${id}:`, closeErr.message);
                     }
                 }
-                // Sync election to database when fetched
-                if (election) {
-                    try {
-                        await prismaClient_1.prisma.election.upsert({
-                            where: { id },
-                            update: {
-                                name: election.name,
-                                description: election.description || null,
-                                startTime: new Date(election.startTime),
-                                endTime: new Date(election.endTime),
-                                status: election.status,
-                            },
-                            create: {
-                                id: election.id,
-                                name: election.name,
-                                description: election.description || null,
-                                startTime: new Date(election.startTime),
-                                endTime: new Date(election.endTime),
-                                status: election.status,
-                                createdBy: election.createdBy || 'system',
-                            },
-                        });
-                    }
-                    catch (syncErr) {
-                        console.warn(`⚠️ Failed to sync election ${id} to database in dashboard:`, syncErr.message);
-                    }
+                // Sync election to DB
+                try {
+                    await prismaClient_1.prisma.election.upsert({
+                        where: { id },
+                        update: {
+                            name: election.name,
+                            description: election.description || null,
+                            startTime: new Date(election.startTime),
+                            endTime: new Date(election.endTime),
+                            status: election.status,
+                        },
+                        create: {
+                            id: election.id,
+                            name: election.name,
+                            description: election.description || null,
+                            startTime: new Date(election.startTime),
+                            endTime: new Date(election.endTime),
+                            status: election.status,
+                            createdBy: election.createdBy || 'system',
+                        },
+                    });
+                }
+                catch (syncErr) {
+                    console.warn(`⚠️ Failed to sync election ${id}:`, syncErr.message);
                 }
             }
         }
         catch (err) {
-            console.warn('Could not fetch election from blockchain:', err);
+            console.warn('Could not fetch election from blockchain:', err.message);
         }
-        // Get recent announcements (from audit logs)
+        // Get recent announcements
         const announcements = await prismaClient_1.prisma.auditLog.findMany({
             where: {
                 electionId: id,
-                action: { not: 'CAST_VOTE' }, // Exclude vote actions
+                action: { not: 'CAST_VOTE' },
             },
             orderBy: {
                 createdAt: 'desc',
@@ -1091,13 +1899,17 @@ app.get('/elections/:id/dashboard', async (req, res) => {
         res.json({
             election,
             statistics: {
-                totalVoters,
-                votedCount,
-                notVotedCount: totalVoters - votedCount,
+                totalVoters: turnout.totalVoters,
+                votedCount: turnout.votedCount,
+                notVotedCount: turnout.notVotedCount,
+                byDepartment: turnout.byDepartment,
+                byYearLevel: turnout.byYearLevel,
+                byProgram: turnout.byProgram,
             },
             announcements: announcements.map((log) => ({
                 id: log.id,
                 action: log.action,
+                txId: log.txId,
                 details: log.details,
                 createdAt: log.createdAt,
             })),
@@ -1105,7 +1917,9 @@ app.get('/elections/:id/dashboard', async (req, res) => {
     }
     catch (err) {
         console.error('GetDashboard error:', err);
-        res.status(400).json({ error: err.message || 'GetDashboard failed' });
+        res.status(400).json({
+            error: err.message || 'GetDashboard failed',
+        });
     }
 });
 // 9) Get all audit logs for an election (for validators)
@@ -1113,12 +1927,8 @@ app.get('/elections/:id/audit-logs', async (req, res) => {
     const { id } = req.params;
     try {
         const auditLogs = await prismaClient_1.prisma.auditLog.findMany({
-            where: {
-                electionId: id,
-            },
-            orderBy: {
-                createdAt: 'desc',
-            },
+            where: { electionId: id },
+            orderBy: { createdAt: 'desc' },
         });
         res.json({
             ok: true,
@@ -1136,150 +1946,66 @@ app.get('/elections/:id/audit-logs', async (req, res) => {
     }
     catch (err) {
         console.error('GetAuditLogs error:', err);
-        res.status(400).json({ error: err.message || 'GetAuditLogs failed' });
+        res.status(400).json({
+            error: err.message || 'GetAuditLogs failed',
+        });
     }
 });
-// 10) Get detailed voter turnout statistics
+// 10) Get detailed voter turnout statistics (same data as dashboard statistics + breakdowns)
 app.get('/elections/:id/turnout', async (req, res) => {
     const { id } = req.params;
     try {
-        // Get total CAS enrolled voters
-        const totalVoters = await prismaClient_1.prisma.voter.count({
-            where: {
-                college: 'CAS',
-                status: 'ENROLLED',
-                isEligible: true,
-            },
-        });
-        // Get voters who have voted
-        const votedCount = await prismaClient_1.prisma.voter.count({
-            where: {
-                college: 'CAS',
-                status: 'ENROLLED',
-                isEligible: true,
-                hasVoted: true,
-            },
-        });
-        // Get all eligible voters with their details
-        const allVoters = await prismaClient_1.prisma.voter.findMany({
-            where: {
-                college: 'CAS',
-                status: 'ENROLLED',
-                isEligible: true,
-            },
-            select: {
-                department: true,
-                yearLevel: true,
-                program: true,
-                hasVoted: true,
-            },
-        });
-        // Calculate breakdown by department
-        const departmentMap = new Map();
-        allVoters.forEach(voter => {
-            const dept = voter.department || 'Unknown';
-            if (!departmentMap.has(dept)) {
-                departmentMap.set(dept, { total: 0, voted: 0 });
-            }
-            const stats = departmentMap.get(dept);
-            stats.total++;
-            if (voter.hasVoted) {
-                stats.voted++;
-            }
-        });
-        const byDepartment = Array.from(departmentMap.entries()).map(([name, stats]) => ({
-            name,
-            total: stats.total,
-            voted: stats.voted,
-            notVoted: stats.total - stats.voted,
-        }));
-        // Calculate breakdown by year level
-        const yearLevelMap = new Map();
-        allVoters.forEach(voter => {
-            const year = voter.yearLevel || 0;
-            if (!yearLevelMap.has(year)) {
-                yearLevelMap.set(year, { total: 0, voted: 0 });
-            }
-            const stats = yearLevelMap.get(year);
-            stats.total++;
-            if (voter.hasVoted) {
-                stats.voted++;
-            }
-        });
-        const byYearLevel = Array.from(yearLevelMap.entries())
-            .map(([yearLevel, stats]) => ({
-            yearLevel,
-            total: stats.total,
-            voted: stats.voted,
-            notVoted: stats.total - stats.voted,
-        }))
-            .sort((a, b) => a.yearLevel - b.yearLevel);
-        // Calculate breakdown by program
-        const programMap = new Map();
-        allVoters.forEach(voter => {
-            const program = voter.program || 'Unknown';
-            if (!programMap.has(program)) {
-                programMap.set(program, { total: 0, voted: 0 });
-            }
-            const stats = programMap.get(program);
-            stats.total++;
-            if (voter.hasVoted) {
-                stats.voted++;
-            }
-        });
-        const byProgram = Array.from(programMap.entries()).map(([program, stats]) => ({
-            program,
-            total: stats.total,
-            voted: stats.voted,
-            notVoted: stats.total - stats.voted,
-        }));
-        res.json({
-            totalVoters,
-            votedCount,
-            notVotedCount: totalVoters - votedCount,
-            byDepartment,
-            byYearLevel,
-            byProgram,
-        });
+        const data = await computeElectionTurnout(id);
+        res.json(data);
     }
     catch (err) {
         console.error('GetTurnout error:', err);
-        res.status(400).json({ error: err.message || 'GetTurnout failed' });
+        res.status(400).json({
+            error: err.message || 'GetTurnout failed',
+        });
     }
 });
-// 11) Get hourly participation data for an election
 app.get('/elections/:id/hourly-participation', async (req, res) => {
     const { id } = req.params;
     const { date } = req.query; // Optional date filter (YYYY-MM-DD format)
     try {
-        // Get all votes for this election from the Vote table
-        const votes = await prismaClient_1.prisma.vote.findMany({
-            where: {
-                electionId: id,
-                ...(date ? {
-                    castAt: {
-                        gte: new Date(date),
-                        lt: new Date(new Date(date).getTime() + 24 * 60 * 60 * 1000),
-                    },
-                } : {}),
-            },
-            select: {
-                castAt: true,
-            },
-            orderBy: {
-                castAt: 'asc',
-            },
-        });
-        // Initialize hourly buckets (24 hours)
+        const dayFilter = date
+            ? {
+                castAt: {
+                    gte: new Date(date),
+                    lt: new Date(new Date(date).getTime() + 24 * 60 * 60 * 1000),
+                },
+            }
+            : {};
+        const [votes, paperVotes] = await Promise.all([
+            prismaClient_1.prisma.vote.findMany({
+                where: {
+                    electionId: id,
+                    ...dayFilter,
+                },
+                select: { castAt: true },
+                orderBy: { castAt: 'asc' },
+            }),
+            prismaClient_1.prisma.paperAnonymousVote.findMany({
+                where: {
+                    electionId: id,
+                    ...dayFilter,
+                },
+                select: { castAt: true },
+                orderBy: { castAt: 'asc' },
+            }),
+        ]);
+        // Initialize hourly buckets (24 hours) — local time from stored Date
         const hourlyCounts = new Map();
         for (let i = 0; i < 24; i++) {
             hourlyCounts.set(i, 0);
         }
-        // Count votes by hour
-        votes.forEach(vote => {
-            const hour = new Date(vote.castAt).getHours();
+        const bumpHour = (castAt) => {
+            const hour = new Date(castAt).getHours();
             hourlyCounts.set(hour, (hourlyCounts.get(hour) || 0) + 1);
-        });
+        };
+        votes.forEach((v) => bumpHour(v.castAt));
+        paperVotes.forEach((v) => bumpHour(v.castAt));
         // Convert to array format
         const hourlyData = Array.from(hourlyCounts.entries())
             .map(([hour, count]) => ({
@@ -1287,7 +2013,6 @@ app.get('/elections/:id/hourly-participation', async (req, res) => {
             count,
         }))
             .sort((a, b) => a.hour.localeCompare(b.hour));
-        // Find peak and slowest hours (handle empty data)
         let peakHour = { hour: '00:00', count: 0 };
         let slowestHour = { hour: '00:00', count: 0 };
         if (hourlyData.length > 0) {
@@ -1304,7 +2029,7 @@ app.get('/elections/:id/hourly-participation', async (req, res) => {
                 time: slowestHour.hour,
                 count: slowestHour.count,
             },
-            totalVotes: votes.length,
+            totalVotes: votes.length + paperVotes.length,
         });
     }
     catch (err) {
@@ -1318,7 +2043,6 @@ app.get('/elections/:id/hourly-participation', async (req, res) => {
         });
     }
 });
-// 12) Get integrity check data (blockchain vs database comparison)
 app.get('/elections/:id/integrity-check', async (req, res) => {
     const { id } = req.params;
     try {
@@ -1327,16 +2051,12 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
         const bytes = await contract.evaluateTransaction('GetElectionResults', id);
         const responseText = Buffer.from(bytes).toString('utf8').trim();
         const blockchainResults = responseText ? JSON.parse(responseText) : {};
-        // Get vote counts from database (Prisma Vote table)
+        // Get vote counts from database
         const dbVotes = await prismaClient_1.prisma.vote.findMany({
-            where: {
-                electionId: id,
-            },
-            select: {
-                selections: true,
-            },
+            where: { electionId: id },
+            select: { selections: true },
         });
-        // Count votes by position and candidate in database
+        // Count database votes
         const dbResults = {};
         dbVotes.forEach((vote) => {
             const selections = vote.selections;
@@ -1350,9 +2070,8 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
                 dbResults[sel.positionId][sel.candidateId]++;
             });
         });
-        // Compare blockchain vs database
+        // Build comparison sets
         const comparison = [];
-        // Get all positions and candidates
         const allPositions = new Set();
         const allCandidates = new Map();
         // From blockchain
@@ -1375,7 +2094,7 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
                 allCandidates.get(positionId).add(candidateId);
             });
         });
-        // Build comparison
+        // Build comparison results
         allPositions.forEach((positionId) => {
             const candidates = allCandidates.get(positionId) || new Set();
             candidates.forEach((candidateId) => {
@@ -1390,12 +2109,13 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
                 });
             });
         });
-        // Calculate totals
+        // Totals
         const totalBlockchainVotes = Object.values(blockchainResults).reduce((sum, pos) => {
             return sum + Object.values(pos).reduce((posSum, count) => posSum + count, 0);
         }, 0);
         const totalDatabaseVotes = dbVotes.length;
-        const hasMismatch = comparison.some((item) => !item.match) || totalBlockchainVotes !== totalDatabaseVotes;
+        const hasMismatch = comparison.some((item) => !item.match) ||
+            totalBlockchainVotes !== totalDatabaseVotes;
         res.json({
             blockchainResults,
             databaseResults: dbResults,
@@ -1411,7 +2131,9 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
     }
     catch (err) {
         console.error('GetIntegrityCheck error:', err);
-        res.status(400).json({ error: err.message || 'GetIntegrityCheck failed' });
+        res.status(400).json({
+            error: err.message || 'GetIntegrityCheck failed',
+        });
     }
 });
 // Coerce to number so env PORT=4000 is not treated as a named pipe in error messages
@@ -1424,26 +2146,32 @@ try {
         console.error(`Invalid PORT: ${process.env.PORT}`);
         process.exit(1);
     }
-    server = app.listen(PORT, () => {
+    server = app.listen(PORT, async () => {
         console.log(`eCASVote gateway API listening on http://localhost:${PORT}`);
         console.log('Server is running. Press Ctrl+C to stop.');
+        // Log startup (callback must be async to use await)
+        try { }
+        catch (logErr) {
+            console.error('Failed to log server startup:', logErr);
+        }
     });
-    // Handle server errors (like port already in use)
+    // ❗ IMPORTANT: Do NOT use async here
     server.on('error', (error) => {
         if (error.syscall !== 'listen') {
             throw error;
         }
         const bind = `Port ${PORT}`;
         switch (error.code) {
-            case 'EACCES':
-                console.error(`${bind} requires elevated privileges`);
+            case 'EACCES': {
+                const description = `${bind} requires elevated privileges`;
+                console.error(description);
                 process.exit(1);
-                break;
-            case 'EADDRINUSE':
-                console.error(`${bind} is already in use`);
-                console.error('Please stop the existing server or use a different port.');
+            }
+            case 'EADDRINUSE': {
+                const description = `${bind} is already in use`;
+                console.error(description);
                 process.exit(1);
-                break;
+            }
             default:
                 throw error;
         }
@@ -1451,11 +2179,27 @@ try {
 }
 catch (error) {
     console.error('Failed to start server:', error);
-    process.exit(1);
+    // ❗ No top-level await → wrap in async IIFE
+    (async () => {
+        try { }
+        catch (logErr) {
+            console.error('Logging failed:', logErr);
+        }
+        finally {
+            process.exit(1);
+        }
+    })();
 }
-// Handle graceful shutdown
 const gracefulShutdown = async (signal) => {
     console.log(`\n${signal} signal received: closing HTTP server`);
+    try { }
+    catch (logErr) {
+        console.error('Failed to log shutdown initiation:', logErr);
+    }
+    if (!server) {
+        process.exit(0);
+        return;
+    }
     server.close(() => {
         console.log('HTTP server closed');
         prismaClient_1.prisma.$disconnect()
@@ -1469,14 +2213,9 @@ const gracefulShutdown = async (signal) => {
         });
     });
 };
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-// Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-    // Don't exit on unhandled rejection - log it instead
 });
-// Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
     console.error('Uncaught Exception:', error);
     gracefulShutdown('uncaughtException');
