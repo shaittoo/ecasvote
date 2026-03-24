@@ -17,6 +17,7 @@ import {
   fetchElection,
   fetchElections,
   fetchPositions,
+  scannerDebugImage,
   scannerScanImage,
   scannerValidate,
 } from "@/lib/ecasvoteApi";
@@ -126,9 +127,11 @@ export function BallotScanningContent() {
   const fileInputId = useId();
   const dropRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const autoCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const autoRunRef = useRef<number | null>(null);
+  const overlayRunRef = useRef<number | null>(null);
   const stableFramesRef = useRef(0);
   const captureCooldownRef = useRef(0);
   const capturedForCurrentPresenceRef = useRef(false);
@@ -151,9 +154,18 @@ export function BallotScanningContent() {
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [cameraDeviceId, setCameraDeviceId] = useState("");
   const [autoCapture, setAutoCapture] = useState(false);
+  const [showLiveBubbleOverlay, setShowLiveBubbleOverlay] = useState(true);
+  const [cameraPreviewTopAlign, setCameraPreviewTopAlign] = useState(true);
   const [edgeStatus, setEdgeStatus] = useState<
     "idle" | "searching" | "detected" | "captured"
   >("idle");
+  const [debugOverlayBusy, setDebugOverlayBusy] = useState(false);
+  const [debugOverlayImage, setDebugOverlayImage] = useState<string | null>(null);
+  const [debugOverlayMeta, setDebugOverlayMeta] = useState<{
+    contestsDetected?: number;
+    contestsInTemplate?: number;
+    fileName: string;
+  } | null>(null);
 
   const handleLogout = () => router.push("/login");
 
@@ -221,10 +233,56 @@ export function BallotScanningContent() {
     setBatchFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const previewDebugOverlay = useCallback(async () => {
+    if (!batchFiles.length) {
+      notify.error({ title: "Add a file first" });
+      return;
+    }
+    if (!electionId) {
+      notify.error({ title: "Select an election first" });
+      return;
+    }
+    setDebugOverlayBusy(true);
+    try {
+      let pos = positions;
+      if (!pos.length) pos = await fetchPositions(electionId);
+      const scannerTemplate = buildScannerTemplateFromPositions(
+        electionId,
+        electionName || electionId,
+        BALLOT_TEMPLATE_VERSION,
+        pos,
+        { includeAbstain }
+      );
+      const first = batchFiles[0];
+      const imageBase64 = await fileToBase64(first);
+      const dbg = await scannerDebugImage({ imageBase64, scannerTemplate });
+      if (!dbg.image_base64) {
+        throw new Error("No debug image returned by worker.");
+      }
+      setDebugOverlayImage(`data:image/png;base64,${dbg.image_base64}`);
+      setDebugOverlayMeta({
+        contestsDetected: dbg.contestsDetected,
+        contestsInTemplate: dbg.contestsInTemplate,
+        fileName: first.name,
+      });
+    } catch (e) {
+      notify.error({
+        title: "Debug overlay failed",
+        description: String(e),
+      });
+    } finally {
+      setDebugOverlayBusy(false);
+    }
+  }, [batchFiles, electionId, includeAbstain, positions]);
+
   const stopCamera = useCallback(() => {
     if (autoRunRef.current !== null) {
       cancelAnimationFrame(autoRunRef.current);
       autoRunRef.current = null;
+    }
+    if (overlayRunRef.current !== null) {
+      cancelAnimationFrame(overlayRunRef.current);
+      overlayRunRef.current = null;
     }
     stableFramesRef.current = 0;
     capturedForCurrentPresenceRef.current = false;
@@ -391,17 +449,265 @@ export function BallotScanningContent() {
     };
 
     // Uses SquareFiducials layout from PrintableBallotSheet (left/right top/mid/bottom).
-    const anchors: Array<[number, number]> = [
-      [0.07, 0.08],
-      [0.93, 0.08],
-      [0.07, 0.5],
-      [0.93, 0.5],
-      [0.07, 0.92],
-      [0.93, 0.92],
+    // 8 fiducials on the scan frame: TL, TM, TR, LM, RM, BL, BM, BR.
+    const frameAnchors: Array<[number, number]> = [
+      [0.0, 0.0],
+      [0.5, 0.0],
+      [1.0, 0.0],
+      [0.0, 0.5],
+      [1.0, 0.5],
+      [0.0, 1.0],
+      [0.5, 1.0],
+      [1.0, 1.0],
     ];
-    const hits = anchors.reduce((acc, [x, y]) => acc + (isDarkSquareAt(x, y) ? 1 : 0), 0);
-    return hits >= 5;
+    const hits = frameAnchors.reduce(
+      (acc, [x, y]) => acc + (isDarkSquareAt(x, y) ? 1 : 0),
+      0
+    );
+    return hits >= 6;
   }, []);
+
+  useEffect(() => {
+    if (!cameraOn) {
+      if (overlayRunRef.current !== null) {
+        cancelAnimationFrame(overlayRunRef.current);
+        overlayRunRef.current = null;
+      }
+      const canvas = overlayCanvasRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
+    const frameAnchors: Array<[number, number]> = [
+      [0.0, 0.0],
+      [0.5, 0.0],
+      [1.0, 0.0],
+      [0.0, 0.5],
+      [1.0, 0.5],
+      [0.0, 1.0],
+      [0.5, 1.0],
+      [1.0, 1.0],
+    ];
+
+    const loop = () => {
+      const video = videoRef.current;
+      const canvas = overlayCanvasRef.current;
+      if (!video || !canvas || !cameraOn) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      const rect = video.getBoundingClientRect();
+      const w = Math.max(1, Math.round(rect.width));
+      const h = Math.max(1, Math.round(rect.height));
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      ctx.clearRect(0, 0, w, h);
+
+      // Probe anchor points against downsampled frame using the same detector canvas.
+      let detectedHits = 0;
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        if (!autoCanvasRef.current) autoCanvasRef.current = document.createElement("canvas");
+        const sample = autoCanvasRef.current;
+        const sampleW = 320;
+        const sampleH = Math.max(180, Math.round((sampleW * video.videoHeight) / video.videoWidth));
+        sample.width = sampleW;
+        sample.height = sampleH;
+        const sctx = sample.getContext("2d", { willReadFrequently: true });
+        if (sctx) {
+          sctx.drawImage(video, 0, 0, sampleW, sampleH);
+          const { data, width, height } = sctx.getImageData(0, 0, sampleW, sampleH);
+          const luminanceAt = (x: number, y: number): number => {
+            const i = (y * width + x) * 4;
+            return data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+          };
+          const isDarkSquareAt = (cxNorm: number, cyNorm: number): boolean => {
+            const cx = Math.round(width * cxNorm);
+            const cy = Math.round(height * cyNorm);
+            const half = Math.max(4, Math.round(Math.min(width, height) * 0.02));
+            const x0 = Math.max(0, cx - half);
+            const x1 = Math.min(width - 1, cx + half);
+            const y0 = Math.max(0, cy - half);
+            const y1 = Math.min(height - 1, cy + half);
+            let dark = 0;
+            let total = 0;
+            for (let y = y0; y <= y1; y += 1) {
+              for (let x = x0; x <= x1; x += 1) {
+                total += 1;
+                if (luminanceAt(x, y) < 85) dark += 1;
+              }
+            }
+            return total > 0 && dark / total > 0.42;
+          };
+
+          // Estimate current paper rectangle from bright region (works well for white sheet
+          // over dark desk/background), then evaluate fiducials relative to this box.
+          const brightThreshold = 168;
+          let minX = width;
+          let minY = height;
+          let maxX = 0;
+          let maxY = 0;
+          let brightCount = 0;
+          for (let y = 0; y < height; y += 1) {
+            for (let x = 0; x < width; x += 1) {
+              if (luminanceAt(x, y) >= brightThreshold) {
+                brightCount += 1;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+              }
+            }
+          }
+          const hasPaperBox = brightCount > width * height * 0.12 && maxX > minX && maxY > minY;
+          const bx0 = hasPaperBox ? minX : Math.round(width * 0.05);
+          const by0 = hasPaperBox ? minY : Math.round(height * 0.06);
+          const bx1 = hasPaperBox ? maxX : Math.round(width * 0.95);
+          const by1 = hasPaperBox ? maxY : Math.round(height * 0.94);
+          const bw = Math.max(1, bx1 - bx0);
+          const bh = Math.max(1, by1 - by0);
+
+          // Draw detected paper rectangle.
+          const rx0 = (bx0 / width) * w;
+          const ry0 = (by0 / height) * h;
+          const rw = (bw / width) * w;
+          const rh = (bh / height) * h;
+          ctx.strokeStyle = edgeStatus === "detected" ? "#22c55e" : "#f59e0b";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(rx0, ry0, rw, rh);
+
+          for (const [fx, fy] of frameAnchors) {
+            const ax = (bx0 + bw * fx) / width;
+            const ay = (by0 + bh * fy) / height;
+            const hit = isDarkSquareAt(ax, ay);
+            if (hit) detectedHits += 1;
+            const px = ax * w;
+            const py = ay * h;
+            ctx.beginPath();
+            ctx.arc(px, py, 8, 0, Math.PI * 2);
+            ctx.fillStyle = hit ? "rgba(34,197,94,0.9)" : "rgba(239,68,68,0.85)";
+            ctx.fill();
+            ctx.strokeStyle = "rgba(255,255,255,0.9)";
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          }
+
+          if (showLiveBubbleOverlay) {
+            // Live bubble candidate detection in the detected paper box.
+            // This is a lightweight contour-based approximation for operator guidance.
+            const roiW = Math.max(1, bx1 - bx0);
+            const roiH = Math.max(1, by1 - by0);
+            const grayRoi = new Uint8ClampedArray(roiW * roiH);
+            for (let yy = 0; yy < roiH; yy += 1) {
+              for (let xx = 0; xx < roiW; xx += 1) {
+                grayRoi[yy * roiW + xx] = luminanceAt(bx0 + xx, by0 + yy);
+              }
+            }
+
+            // Build a temporary canvas for contour extraction.
+            const contourCanvas = document.createElement("canvas");
+            contourCanvas.width = roiW;
+            contourCanvas.height = roiH;
+            const cctx = contourCanvas.getContext("2d", { willReadFrequently: true });
+            if (cctx) {
+              const imgData = cctx.createImageData(roiW, roiH);
+              for (let i = 0; i < grayRoi.length; i += 1) {
+                const g = grayRoi[i];
+                const p = i * 4;
+                imgData.data[p] = g;
+                imgData.data[p + 1] = g;
+                imgData.data[p + 2] = g;
+                imgData.data[p + 3] = 255;
+              }
+              cctx.putImageData(imgData, 0, 0);
+
+              // Binary pass (dark marks and bubble outlines).
+              const bin = cctx.getImageData(0, 0, roiW, roiH);
+              for (let i = 0; i < bin.data.length; i += 4) {
+                const g = bin.data[i];
+                const v = g < 145 ? 255 : 0;
+                bin.data[i] = v;
+                bin.data[i + 1] = v;
+                bin.data[i + 2] = v;
+              }
+              cctx.putImageData(bin, 0, 0);
+
+              // Connected components via browser contours are limited;
+              // use coarse sampling windows to infer likely circle centers.
+              const step = Math.max(6, Math.round(Math.min(roiW, roiH) * 0.012));
+              let rendered = 0;
+              for (let y = step; y < roiH - step; y += step) {
+                for (let x = step; x < roiW - step; x += step) {
+                  const r = Math.max(4, Math.round(step * 0.75));
+                  let edgeDark = 0;
+                  let edgeTotal = 0;
+                  let coreDark = 0;
+                  let coreTotal = 0;
+                  for (let a = 0; a < 360; a += 20) {
+                    const rad = (a * Math.PI) / 180;
+                    const ex = Math.round(x + r * Math.cos(rad));
+                    const ey = Math.round(y + r * Math.sin(rad));
+                    if (ex <= 0 || ey <= 0 || ex >= roiW - 1 || ey >= roiH - 1) continue;
+                    edgeTotal += 1;
+                    if (grayRoi[ey * roiW + ex] < 150) edgeDark += 1;
+                  }
+                  for (let yy = y - Math.round(r * 0.45); yy <= y + Math.round(r * 0.45); yy += 1) {
+                    for (let xx = x - Math.round(r * 0.45); xx <= x + Math.round(r * 0.45); xx += 1) {
+                      if (xx <= 0 || yy <= 0 || xx >= roiW - 1 || yy >= roiH - 1) continue;
+                      coreTotal += 1;
+                      if (grayRoi[yy * roiW + xx] < 125) coreDark += 1;
+                    }
+                  }
+                  if (edgeTotal < 8 || coreTotal < 8) continue;
+                  const edgeRatio = edgeDark / edgeTotal;
+                  const coreRatio = coreDark / coreTotal;
+
+                  // Bubble-like pattern: visible ring; fill when core is dark enough.
+                  if (edgeRatio < 0.42) continue;
+                  const isFilled = coreRatio > 0.32;
+                  const px = ((bx0 + x) / width) * w;
+                  const py = ((by0 + y) / height) * h;
+                  const pr = (r / width) * w;
+                  ctx.beginPath();
+                  ctx.arc(px, py, Math.max(4, pr), 0, Math.PI * 2);
+                  ctx.strokeStyle = isFilled
+                    ? "rgba(34,197,94,0.95)"
+                    : "rgba(251,191,36,0.85)";
+                  ctx.lineWidth = isFilled ? 2.2 : 1.4;
+                  ctx.stroke();
+                  if (isFilled) {
+                    ctx.fillStyle = "rgba(34,197,94,0.20)";
+                    ctx.fill();
+                  }
+                  rendered += 1;
+                  if (rendered > 180) break;
+                }
+                if (rendered > 180) break;
+              }
+            }
+          }
+        }
+      }
+
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(8, 8, 148, 24);
+      ctx.fillStyle = "#fff";
+      ctx.font = "12px sans-serif";
+      ctx.fillText(`Fiducials: ${detectedHits}/8`, 14, 24);
+
+      overlayRunRef.current = requestAnimationFrame(loop);
+    };
+
+    overlayRunRef.current = requestAnimationFrame(loop);
+    return () => {
+      if (overlayRunRef.current !== null) {
+        cancelAnimationFrame(overlayRunRef.current);
+        overlayRunRef.current = null;
+      }
+    };
+  }, [cameraOn, edgeStatus]);
 
   useEffect(() => {
     if (!cameraOn || !autoCapture) {
@@ -1091,13 +1397,22 @@ export function BallotScanningContent() {
                         </select>
                       </div>
                     )}
-                    <div className="mt-3 overflow-hidden rounded border bg-black/90">
+                    <div className="relative mt-3 overflow-hidden rounded border bg-black/90">
                       <video
                         ref={videoRef}
-                        className="mx-auto max-h-72 w-full max-w-2xl object-contain"
+                        className={`mx-auto max-h-[36rem] w-full max-w-xl object-contain ${
+                          cameraPreviewTopAlign ? "object-top" : "object-center"
+                        }`}
                         playsInline
                         muted
                         autoPlay
+                      />
+                      <canvas
+                        ref={overlayCanvasRef}
+                        className={`pointer-events-none absolute inset-0 mx-auto max-h-[36rem] w-full max-w-xl object-contain ${
+                          cameraPreviewTopAlign ? "object-top" : "object-center"
+                        }`}
+                        aria-hidden
                       />
                     </div>
                     {cameraOn && (
@@ -1121,6 +1436,24 @@ export function BallotScanningContent() {
                                 ? "fiducials detected"
                                 : "captured"}
                         </span>
+                        <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={showLiveBubbleOverlay}
+                            onChange={(e) => setShowLiveBubbleOverlay(e.target.checked)}
+                          />
+                          Live encircle detection overlay
+                        </label>
+                        <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={cameraPreviewTopAlign}
+                            onChange={(e) => setCameraPreviewTopAlign(e.target.checked)}
+                          />
+                          Align camera preview to top
+                        </label>
                       </div>
                     )}
                     <p className="mt-2 text-xs text-muted-foreground">
@@ -1169,7 +1502,38 @@ export function BallotScanningContent() {
                         Clear queue
                       </Button>
                     )}
+                    {batchFiles.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={debugOverlayBusy}
+                        onClick={() => void previewDebugOverlay()}
+                      >
+                        {debugOverlayBusy ? "Rendering overlay…" : "Preview OpenCV overlay"}
+                      </Button>
+                    )}
                   </div>
+
+                  {debugOverlayImage && (
+                    <div className="rounded-md border bg-white p-3">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-gray-900">
+                          OpenCV contour/rectangle preview
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {debugOverlayMeta?.fileName ?? "file"} · detected contests{" "}
+                          {debugOverlayMeta?.contestsDetected ?? "?"}/
+                          {debugOverlayMeta?.contestsInTemplate ?? "?"}
+                        </p>
+                      </div>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={debugOverlayImage}
+                        alt="OpenCV debug overlay"
+                        className="mx-auto max-h-[520px] w-full rounded border object-contain"
+                      />
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 

@@ -732,6 +732,13 @@ export type ScannerScanImageWorkerUnavailable = {
   hint?: string;
 };
 
+export type ScannerDebugImageResult = {
+  image_base64: string;
+  contestsDetected?: number;
+  contestsInTemplate?: number;
+  selectionsByPosition?: Record<string, string[]>;
+};
+
 export async function scannerScanImage(params: {
   imageBase64: string;
   fileName: string;
@@ -765,6 +772,44 @@ export async function scannerScanImage(params: {
       ? (data.omr as Record<string, unknown>)
       : {}) as Record<string, unknown>,
     tokenValidation: data.tokenValidation as ScannerScanImageOmrResult["tokenValidation"],
+  };
+}
+
+/** POST /scanner/debug-image — OMR worker annotated overlay image (base64 PNG) */
+export async function scannerDebugImage(params: {
+  imageBase64: string;
+  scannerTemplate: unknown;
+}): Promise<ScannerDebugImageResult> {
+  const res = await fetch(`${getGatewayBase()}/scanner/debug-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const data = (await res.json()) as Record<string, unknown>;
+  if (!res.ok) {
+    throw new Error(
+      typeof data.error === "string"
+        ? data.error
+        : `debug-image failed (${res.status})`
+    );
+  }
+  return {
+    image_base64:
+      typeof data.image_base64 === "string" ? data.image_base64 : "",
+    contestsDetected:
+      typeof data.contestsDetected === "number"
+        ? data.contestsDetected
+        : undefined,
+    contestsInTemplate:
+      typeof data.contestsInTemplate === "number"
+        ? data.contestsInTemplate
+        : undefined,
+    selectionsByPosition:
+      data.selectionsByPosition &&
+      typeof data.selectionsByPosition === "object" &&
+      !Array.isArray(data.selectionsByPosition)
+        ? (data.selectionsByPosition as Record<string, string[]>)
+        : undefined,
   };
 }
 

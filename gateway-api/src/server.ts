@@ -1124,6 +1124,41 @@ app.post('/scanner/scan-image', async (req, res) => {
   }
 });
 
+/**
+ * Debug overlay: forwards image + template to the OMR worker /debug-json endpoint
+ * and returns the annotated PNG as base64 JSON for the scanning UI to display inline.
+ */
+app.post('/scanner/debug-image', async (req, res) => {
+  const imageBase64 = String(req.body?.imageBase64 ?? '');
+  const scannerTemplate = req.body?.scannerTemplate;
+
+  if (!imageBase64 || !scannerTemplate || typeof scannerTemplate !== 'object') {
+    return res.status(400).json({ error: 'imageBase64 and scannerTemplate are required' });
+  }
+
+  const workerUrl = process.env.OMR_WORKER_URL?.trim().replace(/\/$/, '');
+  if (!workerUrl) {
+    return res.status(503).json({ error: 'OMR_WORKER_NOT_CONFIGURED' });
+  }
+
+  try {
+    const wr = await fetch(`${workerUrl}/debug-json`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_base64: imageBase64, template: scannerTemplate }),
+    });
+    const data = await wr.json() as Record<string, unknown>;
+    if (!wr.ok) {
+      return res.status(502).json({
+        error: typeof data.detail === 'string' ? data.detail : 'OMR debug request failed',
+      });
+    }
+    return res.json(data);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'debug-image failed' });
+  }
+});
+
 /** Scanner: validate QR payload — token exists for election and is not used. Returns mock selections (OpenCV placeholder). */
 app.post('/scanner/validate', async (req, res) => {
   const electionId = String(req.body?.electionId ?? '');

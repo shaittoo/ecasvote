@@ -96,18 +96,15 @@ function CandidateOmrRow({
       <div className="grid min-h-[22px] grid-cols-[1.75rem_1.125rem_1fr] items-center gap-x-1 py-0.5 print:min-h-[18px]" />
     );
   }
-  const { name, affiliation } = candidate;
+  const { name } = candidate;
   return (
     <div className="grid grid-cols-[1.75rem_1.125rem_1fr] items-center gap-x-1 border-b border-neutral-200/80 py-0.5 print:border-neutral-300 print:py-px">
-      <span className="text-right text-[8px] font-bold tabular-nums text-orange-600 print:text-[7px]">
+      <span className="text-right text-[8.5px] font-bold tabular-nums text-orange-600 print:text-[8px]">
         {numLabel}
       </span>
       <BallotBubble />
-      <span className="min-w-0 text-[7.5px] font-semibold uppercase leading-snug text-black print:text-[6.5px]">
+      <span className="min-w-0 text-[8.5px] font-semibold uppercase leading-snug text-black print:text-[7.5px]">
         {name.trim()}
-        {affiliation?.trim() ? (
-          <span className="font-normal normal-case text-neutral-800">, {affiliation.trim()}</span>
-        ) : null}
       </span>
     </div>
   );
@@ -119,7 +116,7 @@ export function PrintableBallotSheet({
   templateVersion,
   electionName,
   positions,
-  qrWidth = 88,
+  qrWidth = 124,
   institutionLines = BALLOT_V2_INSTITUTION_LINES,
   academicYearLine = "A.Y. 2025-2026",
   showAbstain = true,
@@ -208,28 +205,24 @@ export function PrintableBallotSheet({
                     key={i}
                     className={`font-bold uppercase tracking-wide text-black ${
                       i === 0
-                        ? "text-sm print:text-[11px]"
-                        : "mt-0.5 text-[9px] leading-tight print:text-[8px]"
+                        ? "text-[13px] print:text-[12px]"
+                        : "mt-0.5 text-[10px] leading-tight print:text-[9px]"
                     }`}
                   >
                     {line}
                   </p>
                 ))}
-                <p className="mt-1 text-[10px] font-bold uppercase leading-tight print:text-[9px]">
+                <p className="mt-1 text-[11px] font-bold uppercase leading-tight print:text-[10px]">
                   {electionName || "ELECTION"} · {academicYearLine}
                 </p>
                 {jurisdictionLine?.trim() ? (
-                  <p className="mt-0.5 text-[8px] font-semibold normal-case leading-snug text-neutral-800 print:text-[7px]">
+                  <p className="mt-0.5 text-[8.5px] font-semibold normal-case leading-snug text-neutral-800 print:text-[7.5px]">
                     {jurisdictionLine.trim()}
                   </p>
                 ) : null}
-                {ballotRecipientLine?.trim() ? (
-                  <p className="mt-1 border border-black px-1.5 py-0.5 text-[8px] font-semibold normal-case print:text-[7px]">
-                    {ballotRecipientLine.trim()}
-                  </p>
-                ) : null}
+                {/* Recipient identity line intentionally omitted from printed ballot. */}
               </div>
-              <aside className="w-full shrink-0 border border-black bg-white p-1.5 text-[6.5px] leading-tight text-black sm:max-w-[200px] print:max-w-[190px] print:p-1 print:text-[6px]">
+              <aside className="w-full shrink-0 border border-black bg-white p-1.5 text-[7.5px] leading-tight text-black sm:max-w-[230px] print:max-w-[220px] print:p-1 print:text-[7px]">
                 <p className="font-bold uppercase">Instructions</p>
                 <p className="mt-0.5 text-justify">{BALLOT_V2_INSTRUCTIONS}</p>
               </aside>
@@ -249,10 +242,10 @@ export function PrintableBallotSheet({
                     <div
                       className={`border-b border-black px-1 py-1 text-center ${barBg} print:py-0.5`}
                     >
-                      <h2 className="text-[9px] font-bold uppercase leading-tight text-black print:text-[8px]">
+                      <h2 className="text-[10px] font-bold uppercase leading-tight text-black print:text-[9px]">
                         {pos.positionName}
                       </h2>
-                      <p className="mt-0.5 text-[7.5px] font-bold uppercase tracking-wide text-neutral-900 print:text-[7px]">
+                      <p className="mt-0.5 text-[8.5px] font-bold uppercase tracking-wide text-neutral-900 print:text-[8px]">
                         {chooseInstructionLine(pos.maxVotes)}
                       </p>
                     </div>
@@ -277,11 +270,11 @@ export function PrintableBallotSheet({
                       {showAbstain ? (
                         <div className="mt-1 border-t-2 border-dotted border-neutral-500 pt-1 print:mt-0.5">
                           <div className="grid grid-cols-[1.75rem_1.125rem_1fr] items-center gap-x-1 py-0.5 print:py-px">
-                            <span className="text-right text-[8px] font-bold tabular-nums text-orange-600 print:text-[7px]">
+                            <span className="text-right text-[8.5px] font-bold tabular-nums text-orange-600 print:text-[8px]">
                               —
                             </span>
                             <BallotBubble />
-                            <span className="text-[7.5px] font-bold uppercase text-black print:text-[7px]">
+                            <span className="text-[8.5px] font-bold uppercase text-black print:text-[8px]">
                               Abstain
                             </span>
                           </div>
@@ -308,13 +301,13 @@ export function PrintableBallotSheet({
       {/* Footer outside fiducial frame: identifier + QR (non-overlapping scan marks) */}
       <footer className="mx-3 mb-4 flex flex-col gap-2 border-t-4 border-neutral-500 bg-white px-2 py-2 print:mx-4 print:mb-3 print:flex-row print:items-end print:justify-between print:gap-4 print:px-1 print:py-1.5">
         <div className="min-w-0 flex-1">
-          <p className="text-[6.5px] font-bold uppercase text-neutral-800 print:text-[6px]">
+          <p className="text-[7.5px] font-bold uppercase text-neutral-800 print:text-[7px]">
             Identifier / sequence
           </p>
-          <p className="mt-0.5 break-all font-mono text-[7px] leading-snug text-black print:text-[6.5px]">
+          <p className="mt-0.5 break-all font-mono text-[8px] leading-snug text-black print:text-[7.5px]">
             {footerIdentifier}
           </p>
-          <p className="mt-1 text-[6px] text-neutral-600 print:text-[5.5px]">
+          <p className="mt-1 text-[7px] text-neutral-600 print:text-[6px]">
             eCASVote · Scan QR for ballot token validation · Do not mark this area
           </p>
         </div>
@@ -336,7 +329,7 @@ export function PrintableBallotSheet({
               {qrError ?? "…"}
             </div>
           )}
-          <span className="mt-0.5 text-center font-mono text-[6px] text-neutral-700 print:text-right">
+          <span className="mt-0.5 text-center font-mono text-[7px] text-neutral-700 print:text-right">
             Ballot QR
           </span>
         </div>
