@@ -62,6 +62,7 @@ TEMPLATE_LAYOUT_PROFILES: dict[str, dict[str, Any]] = {
 # circle probes to the physically printed bubble position.
 LEGACY_SIDE_MARGIN_RATIO = 0.082
 LEGACY_BUBBLE_CENTER_X = 0.16
+CONTEST_HEADER_SKIP_PX = 53
 
 def decode_image_b64(image_b64: str) -> np.ndarray:
     raw = base64.b64decode(image_b64)
@@ -316,6 +317,10 @@ def find_corner_homography(gray: np.ndarray) -> np.ndarray | None:
     # Search zone size: 18 % of the shorter image dimension.
     # Slightly larger than before to handle images with visible background.
     m = int(min(w, h) * 0.18)
+    # Top fiducials should stay near the page edge; use a shallower top band so
+    # TC/TR do not drift down to nearby interior timing marks.
+    top_band = max(18, int(min(w, h) * 0.11))
+    edge_inset = max(2, int(min(w, h) * 0.01))
     hm = m // 2  # half-zone radius used for mid-edge zones
 
     dw, dh = 900, int(900 * 297 / 210)  # A4 canonical output (900 × 1272 px)
@@ -324,14 +329,14 @@ def find_corner_homography(gray: np.ndarray) -> np.ndarray | None:
     # 4 corners first, then 4 edge midpoints.
     zone_defs: list[tuple[tuple[int, int, int, int], tuple[int, int]]] = [
         # 4 corners
-        ((0, 0, m, m),                               (0,       0       )),  # TL
-        ((w - m, 0, w, m),                           (dw - 1,  0       )),  # TR
-        ((w - m, h - m, w, h),                       (dw - 1,  dh - 1  )),  # BR
-        ((0, h - m, m, h),                           (0,       dh - 1  )),  # BL
+        ((0, 0, m, top_band),                        (0,       0       )),  # TL
+        ((w - m - edge_inset, 0, w - edge_inset, top_band),                    (dw - 1,  0       )),  # TR
+        ((w - m - edge_inset, h - m - edge_inset, w - edge_inset, h - edge_inset),                       (dw - 1,  dh - 1  )),  # BR
+        ((0, h - m - edge_inset, m, h - edge_inset),                           (0,       dh - 1  )),  # BL
         # 4 edge midpoints
-        ((w // 2 - hm, 0, w // 2 + hm, m),          (dw // 2, 0       )),  # TC
-        ((w - m, h // 2 - hm, w, h // 2 + hm),      (dw - 1,  dh // 2 )),  # MR
-        ((w // 2 - hm, h - m, w // 2 + hm, h),      (dw // 2, dh - 1  )),  # BC
+        ((w // 2 - hm, 0, w // 2 + hm, top_band),   (dw // 2, 0       )),  # TC
+        ((w - m - edge_inset, h // 2 - hm, w - edge_inset, h // 2 + hm),      (dw - 1,  dh // 2 )),  # MR
+        ((w // 2 - hm, h - m - edge_inset, w // 2 + hm, h - edge_inset),      (dw // 2, dh - 1  )),  # BC
         ((0, h // 2 - hm, m, h // 2 + hm),          (0,       dh // 2 )),  # ML
     ]
 
@@ -540,6 +545,7 @@ def _normalize_warp_to_paper_bbox(warped: np.ndarray) -> tuple[np.ndarray, dict[
     min_area = float(h * w) * 0.28
     best = None
     best_area = 0.0
+    best_contour = None
     for c in contours:
         area = cv2.contourArea(c)
         if area < min_area:
@@ -552,9 +558,35 @@ def _normalize_warp_to_paper_bbox(warped: np.ndarray) -> tuple[np.ndarray, dict[
         if score > best_area:
             best_area = score
             best = (x, y, bw, bh, area)
+            best_contour = c
     if best is None:
         return warped, {"paper_bbox": (0, 0, w, h), "paper_bbox_confidence": 0.0}
     x, y, bw, bh, area = best
+    if best_contour is not None:
+        peri = cv2.arcLength(best_contour, True)
+        if peri > 1:
+            approx = cv2.approxPolyDP(best_contour, 0.02 * peri, True)
+            if len(approx) == 4:
+                quad = approx.reshape(4, 2).astype(np.float32)
+                s = quad.sum(axis=1)
+                d = np.diff(quad, axis=1).reshape(-1)
+                tl = quad[np.argmin(s)]
+                br = quad[np.argmax(s)]
+                tr = quad[np.argmin(d)]
+                bl = quad[np.argmax(d)]
+                src = np.array([tl, tr, br, bl], dtype=np.float32)
+                dst = np.array(
+                    [(0, 0), (w - 1, 0), (w - 1, h - 1), (0, h - 1)],
+                    dtype=np.float32,
+                )
+                Hq = cv2.getPerspectiveTransform(src, dst)
+                normalized = cv2.warpPerspective(warped, Hq, (w, h))
+                conf = float(min(1.0, area / (h * w)))
+                return normalized, {
+                    "paper_bbox": (int(x), int(y), int(x + bw), int(y + bh)),
+                    "paper_bbox_confidence": conf,
+                    "paper_quad": src.astype(int).tolist(),
+                }
     # Keep a tiny safety inset to avoid black desk pixels.
     pad = 2
     x0 = max(0, x + pad)
@@ -953,7 +985,7 @@ def score_bubbles_v2(warped_bgr: np.ndarray, template: dict[str, Any]) -> dict[s
             selections_by_position[pid] = []
             continue
         sh, sw = strip.shape[:2]
-        hdr = max(8, int(sh * LAYOUT_SPEC.contest_header_frac))
+        hdr = min(CONTEST_HEADER_SKIP_PX, max(2, sh - 16))
         grid = strip[hdr:, :]
         gh, gw = grid.shape[:2]
         if gh < 20 or gw < 30:
@@ -1060,34 +1092,20 @@ def read_bubbles_from_template(warped_bgr: np.ndarray, template: dict[str, Any])
         }
 
     H, W = warped_bgr.shape[:2]
-    # Skip the header (institution lines + instructions box) at the top of the scan frame
-    # and the small system/template line at the bottom.
-    # The QR code lives *outside* the fiducial frame (in the HTML footer), so it is already
-    # cropped away by the perspective warp — only a thin padding band remains at the bottom.
-    #
-    # PrintableBallotSheet layout (print CSS):
-    #   top:    pt-5(20px) + header content + mb-2(8px) ≈ 13 % of warped frame height
-    #   bottom: system line + pb-3(12px)                 ≈  5 % of warped frame height
-    top_skip = int(H * 0.13)
-    bottom_skip = int(H * 0.05)
-    y_body1 = min(H - bottom_skip, H)
+    # Keep crop window synced to exported scanner layout constants.
+    top_skip = int(H * LAYOUT_SPEC.content_y0)
+    y_body1 = int(H * LAYOUT_SPEC.content_y1)
     if y_body1 <= top_skip + 80:
         top_skip = int(H * 0.10)
-        bottom_skip = int(H * 0.03)
-        y_body1 = min(H - bottom_skip, H)
+        y_body1 = int(H * 0.97)
     body = warped_bgr[top_skip:y_body1, :]
     bh, bw = body.shape[:2]
     if bh < 80 or bw < 80:
         return {"raw_scores": {}, "selectionsByPosition": {}, "error": "body_too_small"}
 
-    # The scan frame has timing strips + padding that eat into the left and right edges.
-    # PrintableBallotSheet (print CSS) per side:
-    #   pl-6 (24 px) + timing w-1.5 (6 px) + gap-1 (4 px) + border (1 px) + px-1.5 (6 px) = 41 px
-    # At a frame width of ≈762 px (A4 printable at 96 DPI), 41/762 ≈ 5.4 %.
-    # The warp preserves this fraction, so use the same ratio against bw (≈900 px).
-    side_margin = int(bw * LEGACY_SIDE_MARGIN_RATIO)
+    side_margin = int(W * LAYOUT_SPEC.content_x0)
     content_x0 = side_margin
-    content_w = bw - 2 * side_margin
+    content_w = int(W * (LAYOUT_SPEC.content_x1 - LAYOUT_SPEC.content_x0))
 
     # --- Contest boundary detection -------------------------------------------
     # The scanning template may include more contests than are actually printed
@@ -1176,8 +1194,8 @@ def read_bubbles_from_template(warped_bgr: np.ndarray, template: dict[str, Any])
         num_rows = max(1, (num_opts + 2) // 3)
         sh, sw = strip.shape[:2]
         # Omit colored title + "Choose — N" band at top of each contest block.
-        header_frac = 0.12
-        hdr = max(6, int(sh * header_frac))
+        # Absolute skip across all contests.
+        hdr = min(CONTEST_HEADER_SKIP_PX, max(2, sh - 16))
         grid = strip[hdr:, :] if sh > hdr + 16 else strip
         sh, sw = grid.shape[:2]
         if sh < 20 or sw < 30:
@@ -1387,18 +1405,16 @@ def debug_annotate_ballot(
         return canvas
 
     # ── Recompute the same geometry as read_bubbles_from_template ──────────
-    top_skip = int(H * 0.13)
-    bottom_skip = int(H * 0.05)
-    y_body1 = min(H - bottom_skip, H)
+    top_skip = int(H * LAYOUT_SPEC.content_y0)
+    y_body1 = int(H * LAYOUT_SPEC.content_y1)
     if y_body1 <= top_skip + 80:
         top_skip = int(H * 0.10)
-        bottom_skip = int(H * 0.03)
-        y_body1 = H - bottom_skip
+        y_body1 = int(H * 0.97)
 
     bh = y_body1 - top_skip
-    side_margin = int(W * LEGACY_SIDE_MARGIN_RATIO)
+    side_margin = int(W * LAYOUT_SPEC.content_x0)
     content_x0 = side_margin
-    content_w = W - 2 * side_margin
+    content_w = int(W * (LAYOUT_SPEC.content_x1 - LAYOUT_SPEC.content_x0))
     col_w = content_w / 3.0
 
     # Skip-zone overlay (semi-transparent red)
@@ -1429,15 +1445,17 @@ def debug_annotate_ballot(
     blur_dbg = cv2.GaussianBlur(gray_dbg, (3, 3), 0)
     _, inv_dbg = cv2.threshold(blur_dbg, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     m_dbg = int(min(W, H) * 0.18)
+    top_band_dbg = max(18, int(min(W, H) * 0.11))
+    edge_inset_dbg = max(2, int(min(W, H) * 0.01))
     hm_dbg = m_dbg // 2
     fid_zones = [
-        ((0, 0, m_dbg, m_dbg),                                    "TL"),
-        ((W - m_dbg, 0, W, m_dbg),                               "TR"),
-        ((W - m_dbg, H - m_dbg, W, H),                           "BR"),
-        ((0, H - m_dbg, m_dbg, H),                               "BL"),
-        ((W // 2 - hm_dbg, 0, W // 2 + hm_dbg, m_dbg),          "TC"),
-        ((W - m_dbg, H // 2 - hm_dbg, W, H // 2 + hm_dbg),      "MR"),
-        ((W // 2 - hm_dbg, H - m_dbg, W // 2 + hm_dbg, H),      "BC"),
+        ((0, 0, m_dbg, top_band_dbg),                            "TL"),
+        ((W - m_dbg - edge_inset_dbg, 0, W - edge_inset_dbg, top_band_dbg),                        "TR"),
+        ((W - m_dbg - edge_inset_dbg, H - m_dbg - edge_inset_dbg, W - edge_inset_dbg, H - edge_inset_dbg),                           "BR"),
+        ((0, H - m_dbg - edge_inset_dbg, m_dbg, H - edge_inset_dbg),                               "BL"),
+        ((W // 2 - hm_dbg, 0, W // 2 + hm_dbg, top_band_dbg),   "TC"),
+        ((W - m_dbg - edge_inset_dbg, H // 2 - hm_dbg, W - edge_inset_dbg, H // 2 + hm_dbg),      "MR"),
+        ((W // 2 - hm_dbg, H - m_dbg - edge_inset_dbg, W // 2 + hm_dbg, H - edge_inset_dbg),      "BC"),
         ((0, H // 2 - hm_dbg, m_dbg, H // 2 + hm_dbg),          "ML"),
     ]
     for (fxa, fya, fxb, fyb), flabel in fid_zones:
@@ -1530,7 +1548,7 @@ def debug_annotate_ballot(
 
         # Header-bar skip line (dark yellow)
         strip_h = y1_rel - y0_rel
-        hdr = max(6, int(strip_h * 0.12))
+        hdr = min(CONTEST_HEADER_SKIP_PX, max(2, strip_h - 16))
         cv2.line(canvas, (content_x0, y0 + hdr), (content_x0 + content_w, y0 + hdr),
                  (0, 180, 180), 1)
 

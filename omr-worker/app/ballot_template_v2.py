@@ -44,7 +44,7 @@ class LayoutSpec:
     # Keep-out around timing marks / corner fiducials.
     content_x0: float = 0.105
     content_x1: float = 0.895
-    content_y0: float = 0.118
+    content_y0: float = 0.145
     content_y1: float = 0.975
     # Header and metadata zones inside content.
     header_y1: float = 0.245
