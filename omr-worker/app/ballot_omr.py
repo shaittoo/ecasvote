@@ -62,7 +62,8 @@ TEMPLATE_LAYOUT_PROFILES: dict[str, dict[str, Any]] = {
 # circle probes to the physically printed bubble position.
 LEGACY_SIDE_MARGIN_RATIO = 0.082
 LEGACY_BUBBLE_CENTER_X = 0.16
-CONTEST_HEADER_SKIP_PX = 53
+CONTEST_HEADER_SKIP_PX = 38
+ROW_HEIGHT_PX = 20
 
 def decode_image_b64(image_b64: str) -> np.ndarray:
     raw = base64.b64decode(image_b64)
@@ -867,6 +868,37 @@ def _is_abstain_option(option_id: str) -> bool:
     return option_id.startswith("abstain:")
 
 
+def _contest_option_layout(
+    options: list[dict[str, Any]],
+    num_cols: int,
+) -> tuple[list[tuple[dict[str, Any], int, int]], int]:
+    """
+    Build per-option (row, col) layout.
+    For multi-column contests, reserve dedicated full-width row(s) for abstain
+    after candidate rows so abstain is not forced into the 3-column candidate grid.
+    """
+    candidates = [o for o in options if not _is_abstain_option(str(o.get("optionId") or ""))]
+    abstains = [o for o in options if _is_abstain_option(str(o.get("optionId") or ""))]
+    layout: list[tuple[dict[str, Any], int, int]] = []
+
+    if num_cols <= 1:
+        for i, opt in enumerate(candidates):
+            layout.append((opt, i, 0))
+        base = len(candidates)
+        for j, opt in enumerate(abstains):
+            layout.append((opt, base + j, 0))
+        return layout, max(1, len(layout))
+
+    cand_rows = max(1, (len(candidates) + (num_cols - 1)) // num_cols) if candidates else 0
+    for i, opt in enumerate(candidates):
+        layout.append((opt, i // num_cols, i % num_cols))
+    for j, opt in enumerate(abstains):
+        # Abstain occupies its own extra row; use left-most lane for bubble.
+        layout.append((opt, cand_rows + j, 0))
+    total_rows = max(1, cand_rows + len(abstains))
+    return layout, total_rows
+
+
 def _score_bubble_in_grid_cell(cell_bgr: np.ndarray) -> float:
     """OMR v2 cell: [#][round bubble][name]. Score via bubble core-vs-ring contrast."""
     if cell_bgr.size == 0:
@@ -992,24 +1024,17 @@ def score_bubbles_v2(warped_bgr: np.ndarray, template: dict[str, Any]) -> dict[s
             raw_scores[pid] = {}
             selections_by_position[pid] = []
             continue
-        if profile["num_cols"] == 1:
-            num_rows = max(1, len(options))
-        else:
-            num_rows = max(1, (len(options) + 2) // 3)
-        row_h = gh / num_rows
+        opt_layout, num_rows = _contest_option_layout(options, int(profile["num_cols"]))
+        row_h = min(float(ROW_HEIGHT_PX), gh / max(num_rows, 1))
         col_w = content_w / float(profile["num_cols"])
         pad_x = int(col_w * LAYOUT_SPEC.contest_inner_pad_x)
         pad_y = int(row_h * LAYOUT_SPEC.contest_inner_pad_y)
         scores: dict[str, float] = {}
         bubble_dbg: list[dict[str, Any]] = []
-        for oi, opt in enumerate(options):
+        for opt, rr, cc in opt_layout:
             oid = str(opt.get("optionId") or "")
             if not oid:
                 continue
-            if profile["num_cols"] == 1:
-                rr, cc = oi, 0
-            else:
-                rr, cc = oi // 3, oi % 3
             ys0 = max(0, int(rr * row_h) + pad_y)
             ys1 = min(gh, int((rr + 1) * row_h) - pad_y)
             if profile["bubble_lane"] is not None:
@@ -1190,8 +1215,7 @@ def read_bubbles_from_template(warped_bgr: np.ndarray, template: dict[str, Any])
             selections_by_position[pid] = []
             continue
 
-        num_opts = len(options)
-        num_rows = max(1, (num_opts + 2) // 3)
+        opt_layout, num_rows = _contest_option_layout(options, 3)
         sh, sw = strip.shape[:2]
         # Omit colored title + "Choose — N" band at top of each contest block.
         # Absolute skip across all contests.
@@ -1200,16 +1224,15 @@ def read_bubbles_from_template(warped_bgr: np.ndarray, template: dict[str, Any])
         sh, sw = grid.shape[:2]
         if sh < 20 or sw < 30:
             continue
-        row_h = sh / num_rows
+        row_h = min(float(ROW_HEIGHT_PX), sh / max(num_rows, 1))
         # Divide only the content-area width (between timing strips) into 3 columns.
         col_w = content_w / 3.0
 
         scores: dict[str, float] = {}
-        for oi, opt in enumerate(options):
+        for opt, r, c in opt_layout:
             oid = str(opt.get("optionId") or "")
             if not oid:
                 continue
-            r, c = oi // 3, oi % 3
             ys0 = int(r * row_h)
             ys1 = int((r + 1) * row_h)
             # Offset columns by the side margin so they align with the printed content.
@@ -1538,8 +1561,7 @@ def debug_annotate_ballot(
         color = strip_colors[idx % len(strip_colors)]
         pid = str(contest.get("positionId") or "")
         options = contest.get("options") or []
-        num_opts = len(options)
-        num_rows = max(1, (num_opts + 2) // 3)
+        opt_layout, num_rows = _contest_option_layout(options, 3)
 
         # Contest strip rectangle
         cv2.rectangle(canvas, (content_x0, y0), (content_x0 + content_w, y1), color, 2)
@@ -1555,14 +1577,13 @@ def debug_annotate_ballot(
         grid_h = strip_h - hdr
         if grid_h < 20:
             continue
-        row_h = grid_h / num_rows
+        row_h = min(float(ROW_HEIGHT_PX), grid_h / max(num_rows, 1))
 
         contest_scores: dict[str, Any] = raw_scores.get(pid) or {}
         picked: list[str] = selections.get(pid) or []
 
-        for oi, opt in enumerate(options):
+        for opt, row_i, col_i in opt_layout:
             oid = str(opt.get("optionId") or "")
-            row_i, col_i = oi // 3, oi % 3
 
             ys0 = y0 + hdr + int(row_i * row_h)
             ys1 = y0 + hdr + int((row_i + 1) * row_h)

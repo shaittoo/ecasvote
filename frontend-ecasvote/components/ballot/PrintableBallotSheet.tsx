@@ -349,7 +349,7 @@ export function PrintableBallotSheet({
                     className="break-inside-avoid border-2 border-black bg-white"
                   >
                     <div
-                      className={`flex items-center justify-center border-b-2 border-black px-1 py-1 text-center ${barBg} ${SCAN_GEOMETRY.contestHeaderHeight} print:py-0.5`}
+                      className={`flex items-center justify-center border-b-2 border-black px-1 py-1.5 text-center ${barBg} ${SCAN_GEOMETRY.contestHeaderHeight} print:py-1`}
                     >
                       <h2 className="text-[10px] font-bold uppercase leading-tight text-black print:text-[9px]">
                         {pos.positionName}
