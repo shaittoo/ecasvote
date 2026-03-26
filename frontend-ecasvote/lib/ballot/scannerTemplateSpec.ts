@@ -2,8 +2,9 @@
  * Machine-readable description of the **printed** paper ballot for OMR pipelines
  * (Open MCR, ExamGrader-style tools, or a custom OpenCV worker).
  *
- * Aligns with {@link PrintableBallotSheet}: OMR scan frame (fiducials + timing strips),
- * stacked contests with 3-column row-major bubbles, footer QR (identity only).
+ * Aligns with {@link PrintableBallotSheet}: full-page registration frame
+ * (unique corner fiducials + edge timing squares), stacked contests with
+ * 3-column row-major bubbles, and an in-frame QR metadata zone.
  * **Multiple shading** = up to `maxMarks` filled bubbles per contest (same as `maxVotes`).
  */
 
@@ -15,21 +16,31 @@ export const SCANNER_TEMPLATE_SCHEMA = "ecasvote-scanner-template/1" as const;
 /** How the physical sheet is laid out (for alignment / CV tuning). */
 export type ScannerSheetLayout = {
   fiducials: {
-    count: 6 | 8;
-    style: "filled-square";
+    count: 8 | 12;
+    style: "filled-square" | "unique-corner-square";
     placement:
       | "corners-and-vertical-mid-edges"
       | "scan-frame-corners-and-edge-centers";
+    /** Orientation can be inferred from corner patterns alone. */
+    cornerPatterns?: "unique-per-corner";
   };
   qr: {
     role: "ballot-identity-only";
     payloadShape: "{ electionId, ballotToken, templateVersion }";
     /** Optional: human note for export / worker docs */
     placementNote?: string;
+    quietZoneModules?: number;
   };
   bubbles: {
     shape: "horizontal-oval" | "round";
     implementationNote: string;
+    rowGrid?: "uniform-fixed-height";
+    columnModel?: "single-column-per-contest" | "multi-column";
+  };
+  localAnchors?: {
+    contestLevel: boolean;
+    rowLevel: boolean;
+    note?: string;
   };
 };
 
@@ -125,18 +136,27 @@ function positionsFromPrintable(
 
 const DEFAULT_SHEET: ScannerSheetLayout = {
   fiducials: {
-    count: 8,
-    style: "filled-square",
+    count: 12,
+    style: "unique-corner-square",
     placement: "scan-frame-corners-and-edge-centers",
+    cornerPatterns: "unique-per-corner",
   },
   qr: {
     role: "ballot-identity-only",
     payloadShape: "{ electionId, ballotToken, templateVersion }",
-    placementNote: "Footer below scan frame (OMR); worker also tries legacy top-right crops",
+    placementNote: "Bottom-right metadata zone inside the registration frame",
+    quietZoneModules: 4,
   },
   bubbles: {
     shape: "round",
-    implementationNote: "PrintableBallotSheet BallotBubble; 3-column row-major grid per contest",
+    implementationNote: "PrintableBallotSheet BallotBubble; v4 uses single-column bubbles with row alignment rails",
+    rowGrid: "uniform-fixed-height",
+    columnModel: "single-column-per-contest",
+  },
+  localAnchors: {
+    contestLevel: true,
+    rowLevel: true,
+    note: "v4 favors rail-based local anchors (row markers) over large inner contest boxes",
   },
 };
 

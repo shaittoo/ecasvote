@@ -326,10 +326,16 @@ export function BallotScanningContent() {
         video: cameraDeviceId
           ? {
               deviceId: { exact: cameraDeviceId },
-              width: { ideal: 1920 },
-              height: { ideal: 1080 },
+              // Prefer uncropped full-frame capture; avoid hard 16:9 assumptions.
+              width: { ideal: 1920, min: 960 },
+              height: { ideal: 1440, min: 720 },
+              aspectRatio: { ideal: 4 / 3 },
             }
-          : { width: { ideal: 1920 }, height: { ideal: 1080 } },
+          : {
+              width: { ideal: 1920, min: 960 },
+              height: { ideal: 1440, min: 720 },
+              aspectRatio: { ideal: 4 / 3 },
+            },
       };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
@@ -543,7 +549,7 @@ export function BallotScanningContent() {
           };
 
           // Estimate current paper rectangle from bright region (works well for white sheet
-          // over dark desk/background), then evaluate fiducials relative to this box.
+          // over dark desk/background), then refine using fiducial probes.
           const brightThreshold = 168;
           let minX = width;
           let minY = height;
@@ -569,22 +575,101 @@ export function BallotScanningContent() {
           const bw = Math.max(1, bx1 - bx0);
           const bh = Math.max(1, by1 - by0);
 
-          // Draw detected paper rectangle.
-          const rx0 = (bx0 / width) * w;
-          const ry0 = (by0 / height) * h;
-          const rw = (bw / width) * w;
-          const rh = (bh / height) * h;
-          ctx.strokeStyle = edgeStatus === "detected" ? "#22c55e" : "#f59e0b";
+          const locateDarkSquareNear = (
+            ex: number,
+            ey: number,
+            rx: number,
+            ry: number
+          ): { x: number; y: number; score: number } | null => {
+            const xStart = Math.max(4, Math.round(ex - rx));
+            const xEnd = Math.min(width - 5, Math.round(ex + rx));
+            const yStart = Math.max(4, Math.round(ey - ry));
+            const yEnd = Math.min(height - 5, Math.round(ey + ry));
+            let best: { x: number; y: number; score: number } | null = null;
+            const patch = 4;
+            for (let yy = yStart; yy <= yEnd; yy += 2) {
+              for (let xx = xStart; xx <= xEnd; xx += 2) {
+                let dark = 0;
+                let total = 0;
+                for (let py = yy - patch; py <= yy + patch; py += 1) {
+                  for (let px = xx - patch; px <= xx + patch; px += 1) {
+                    total += 1;
+                    if (luminanceAt(px, py) < 95) dark += 1;
+                  }
+                }
+                const score = total > 0 ? dark / total : 0;
+                if (!best || score > best.score) {
+                  best = { x: xx, y: yy, score };
+                }
+              }
+            }
+            return best && best.score >= 0.26 ? best : null;
+          };
+
+          const foundAnchors: Array<{ x: number; y: number; hit: boolean }> = [];
+          const probeRx = Math.max(12, Math.round(bw * 0.09));
+          const probeRy = Math.max(12, Math.round(bh * 0.09));
+          for (const [fx, fy] of frameAnchors) {
+            const ex = bx0 + bw * fx;
+            const ey = by0 + bh * fy;
+            const best = locateDarkSquareNear(ex, ey, probeRx, probeRy);
+            if (best) {
+              detectedHits += 1;
+              foundAnchors.push({ x: best.x, y: best.y, hit: true });
+            } else {
+              foundAnchors.push({ x: ex, y: ey, hit: false });
+            }
+          }
+
+          // Build paper frame from detected fiducials when available.
+          let frameX0 = bx0;
+          let frameY0 = by0;
+          let frameX1 = bx1;
+          let frameY1 = by1;
+          const foundOnly = foundAnchors.filter((a) => a.hit);
+          if (foundOnly.length >= 4) {
+            frameX0 = Math.min(...foundOnly.map((p) => p.x));
+            frameY0 = Math.min(...foundOnly.map((p) => p.y));
+            frameX1 = Math.max(...foundOnly.map((p) => p.x));
+            frameY1 = Math.max(...foundOnly.map((p) => p.y));
+          }
+
+          // Enforce A4 proportion so width tracks actual paper size (prevents over-wide boxes).
+          const fw0 = Math.max(1, frameX1 - frameX0);
+          const fh0 = Math.max(1, frameY1 - frameY0);
+          const cx = (frameX0 + frameX1) / 2;
+          const cy = (frameY0 + frameY1) / 2;
+          const isLandscape = fw0 > fh0;
+          const targetRatio = isLandscape ? 297 / 210 : 210 / 297; // width / height
+          let fw = fw0;
+          let fh = fh0;
+          const currentRatio = fw0 / fh0;
+          if (currentRatio > targetRatio) {
+            fw = fh0 * targetRatio;
+          } else {
+            fh = fw0 / targetRatio;
+          }
+          frameX0 = Math.max(0, cx - fw / 2);
+          frameX1 = Math.min(width - 1, cx + fw / 2);
+          frameY0 = Math.max(0, cy - fh / 2);
+          frameY1 = Math.min(height - 1, cy + fh / 2);
+
+          // Draw corrected paper rectangle.
+          const rx0 = (frameX0 / width) * w;
+          const ry0 = (frameY0 / height) * h;
+          const rw = ((frameX1 - frameX0) / width) * w;
+          const rh = ((frameY1 - frameY0) / height) * h;
+          ctx.strokeStyle = detectedHits >= 6 ? "#22c55e" : "#f59e0b";
           ctx.lineWidth = 2;
           ctx.strokeRect(rx0, ry0, rw, rh);
 
-          for (const [fx, fy] of frameAnchors) {
-            const ax = (bx0 + bw * fx) / width;
-            const ay = (by0 + bh * fy) / height;
-            const hit = isDarkSquareAt(ax, ay);
-            if (hit) detectedHits += 1;
-            const px = ax * w;
-            const py = ay * h;
+          // Draw anchor markers snapped to refined frame.
+          for (const [i, { hit }] of foundAnchors.entries()) {
+            const [fx, fy] = frameAnchors[i];
+            const ax = frameX0 + (frameX1 - frameX0) * fx;
+            const ay = frameY0 + (frameY1 - frameY0) * fy;
+            const px = (ax / width) * w;
+            const py = (ay / height) * h;
             ctx.beginPath();
             ctx.arc(px, py, 8, 0, Math.PI * 2);
             ctx.fillStyle = hit ? "rgba(34,197,94,0.9)" : "rgba(239,68,68,0.85)";
@@ -597,12 +682,15 @@ export function BallotScanningContent() {
           if (showLiveBubbleOverlay) {
             // Live bubble candidate detection in the detected paper box.
             // This is a lightweight contour-based approximation for operator guidance.
-            const roiW = Math.max(1, bx1 - bx0);
-            const roiH = Math.max(1, by1 - by0);
+            const roiW = Math.max(1, Math.round(frameX1 - frameX0));
+            const roiH = Math.max(1, Math.round(frameY1 - frameY0));
             const grayRoi = new Uint8ClampedArray(roiW * roiH);
             for (let yy = 0; yy < roiH; yy += 1) {
               for (let xx = 0; xx < roiW; xx += 1) {
-                grayRoi[yy * roiW + xx] = luminanceAt(bx0 + xx, by0 + yy);
+                grayRoi[yy * roiW + xx] = luminanceAt(
+                  Math.round(frameX0) + xx,
+                  Math.round(frameY0) + yy
+                );
               }
             }
 
@@ -667,8 +755,8 @@ export function BallotScanningContent() {
                   // Bubble-like pattern: visible ring; fill when core is dark enough.
                   if (edgeRatio < 0.42) continue;
                   const isFilled = coreRatio > 0.32;
-                  const px = ((bx0 + x) / width) * w;
-                  const py = ((by0 + y) / height) * h;
+                  const px = ((frameX0 + x) / width) * w;
+                  const py = ((frameY0 + y) / height) * h;
                   const pr = (r / width) * w;
                   ctx.beginPath();
                   ctx.arc(px, py, Math.max(4, pr), 0, Math.PI * 2);
@@ -1155,9 +1243,20 @@ export function BallotScanningContent() {
         scannerTemplate,
         ballots,
       });
+      if (exportPayload.ballots.length === 0) {
+        exportPayload.ballots.push({
+          fileName: "scan-run",
+          scanOk: false,
+          source: "client",
+          message: "No scan rows produced. Check OMR worker connectivity and try again.",
+          selectionsByPosition: {},
+        });
+      }
 
       const validCount = ballots.filter((b) => b.scanOk).length;
-      const alreadyCounted = ballots.filter((b) => isTokenUsedValidation(b.tokenValidation)).length;
+      const alreadyCounted = ballots.filter((b) =>
+        isTokenUsedValidation(b.tokenValidation)
+      ).length;
       const batchId = `batch-${Date.now()}`;
       setScanHistory((h) => [
         {
@@ -1166,7 +1265,7 @@ export function BallotScanningContent() {
           electionLabel: label,
           export: exportPayload,
           validCount,
-          errorCount: ballots.length - validCount,
+          errorCount: exportPayload.ballots.length - validCount,
         },
         ...h,
       ]);
@@ -1193,7 +1292,35 @@ export function BallotScanningContent() {
         });
       }
     } catch (e) {
-      notify.error({ title: "Scan failed", description: String(e) });
+      const msg = String(e);
+      // Preserve operator visibility: even when scan pipeline throws, create a batch row
+      // so "Results & raw export" is not empty and raw diagnostics remain downloadable.
+      const exportPayload = buildScanExportBatch({
+        electionId,
+        electionName: label,
+        ballotTemplateVersion: BALLOT_TEMPLATE_VERSION,
+        scannerTemplate: {},
+        ballots: filesToScan.map((f) => ({
+          fileName: f.name,
+          scanOk: false,
+          source: "client" as const,
+          message: `Scan pipeline error: ${msg}`,
+          selectionsByPosition: {},
+        })),
+      });
+      const batchId = `batch-${Date.now()}`;
+      setScanHistory((h) => [
+        {
+          id: batchId,
+          at: exportPayload.generatedAt,
+          electionLabel: label,
+          export: exportPayload,
+          validCount: 0,
+          errorCount: exportPayload.ballots.length,
+        },
+        ...h,
+      ]);
+      notify.error({ title: "Scan failed", description: msg });
     } finally {
       setIsScanning(false);
     }

@@ -9,10 +9,19 @@ export function buildBallotQrPayload(
   ballotToken: string,
   templateVersion: string
 ): BallotQrPayload {
+  const eid = electionId.trim();
+  const tok = ballotToken.trim();
+  const tv = templateVersion.trim();
+  if (!eid || !tok || !tv) {
+    throw new Error(
+      "Ballot QR payload requires non-empty electionId, ballotToken, and templateVersion"
+    );
+  }
   return {
-    electionId,
-    ballotToken,
-    templateVersion,
+    // Keep key order stable for deterministic QR JSON.
+    electionId: eid,
+    ballotToken: tok,
+    templateVersion: tv,
   };
 }
 
