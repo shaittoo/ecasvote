@@ -4,11 +4,21 @@ import type { Position } from "@/lib/ecasvoteApi";
  * Normalize voter department to match chaincode position ids (e.g. `elektrons-governor`).
  */
 function departmentSlug(department: string): string {
-  return department
+  const raw = department
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+  // Normalize known org naming variants to chaincode position ids.
+  const aliases: Record<string, string> = {
+    "red-bolts": "redbolts",
+    redbolts: "redbolts",
+    skimmers: "skimmers",
+    clovers: "clovers",
+    elektrons: "elektrons",
+    elecktrons: "elektrons",
+  };
+  return aliases[raw] ?? raw;
 }
 
 /**

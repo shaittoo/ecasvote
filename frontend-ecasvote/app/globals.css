@@ -104,6 +104,12 @@ body {
     size: A4 portrait;
     margin: 8mm;
   }
+  /* Dedicated ballot page profile: avoid extra browser page margins that
+     can push timing marks into header/footer content on physical printouts. */
+  @page ballot-sheet {
+    size: A4 portrait;
+    margin: 0;
+  }
 
   body {
     background: #fff !important;
@@ -116,8 +122,12 @@ body {
     display: none !important;
   }
 
-  /* Single-page ballot (template v2): keep on one sheet */
-  .print-ballot-v2-root {
+  /* Ballot sheet uses its own @page profile and internal spacing. */
+  .print-ballot-omr-root {
+    page: ballot-sheet;
+    width: 210mm !important;
+    max-width: 210mm !important;
+    margin: 0 auto !important;
     page-break-after: avoid;
     page-break-inside: avoid;
     break-inside: avoid;
