@@ -20,6 +20,15 @@ export function parseBallotQrPayload(text: string): BallotQrPayload | null {
         electionId: o.electionId,
         ballotToken: o.ballotToken,
         templateVersion: o.templateVersion,
+        ...(typeof o.templateId === "string" && o.templateId.length > 0
+          ? { templateId: o.templateId }
+          : {}),
+        ...(typeof o.ballotId === "string" && o.ballotId.length > 0
+          ? { ballotId: o.ballotId }
+          : {}),
+        ...(typeof o.layoutHash === "string" && o.layoutHash.length > 0
+          ? { layoutHash: o.layoutHash }
+          : {}),
       };
     }
   } catch {

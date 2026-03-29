@@ -9,6 +9,7 @@
  */
 
 import type { PrintableBallotPosition } from "@/lib/ballot/printableBallotTypes";
+import type { OmGeometryTemplate } from "@/lib/ballot/omGeometryTemplate";
 import type { Position } from "@/lib/ecasvoteApi";
 
 export const SCANNER_TEMPLATE_SCHEMA = "ecasvote-scanner-template/1" as const;
@@ -26,7 +27,7 @@ export type ScannerSheetLayout = {
   };
   qr: {
     role: "ballot-identity-only";
-    payloadShape: "{ electionId, ballotToken, templateVersion }";
+    payloadShape: "{ electionId, ballotToken, templateVersion, templateId? }";
     /** Optional: human note for export / worker docs */
     placementNote?: string;
     quietZoneModules?: number;
@@ -69,6 +70,11 @@ export type EcasvoteScannerTemplateV1 = {
   sheet: ScannerSheetLayout;
   contests: ScannerContestSpec[];
   /**
+   * Measured bubble boxes (CSS px) from the print page root; when present the OMR worker
+   * must use these coordinates only — no layout inference.
+   */
+  geometry?: OmGeometryTemplate;
+  /**
    * OMR tuning hints: consider a bubble "filled" if darkness exceeds threshold;
    * for multi-mark contests, take the top `maxMarks` by confidence / darkness.
    */
@@ -80,6 +86,14 @@ export type EcasvoteScannerTemplateV1 = {
       | "reject-if-too-many-marks";
   };
 };
+
+/** Attach measured geometry to a scanner template; overwrites any existing `geometry`. */
+export function mergeGeometryIntoScannerTemplate(
+  base: EcasvoteScannerTemplateV1,
+  geometry: OmGeometryTemplate
+): EcasvoteScannerTemplateV1 {
+  return { ...base, geometry };
+}
 
 function positionsFromApi(
   positions: Position[],
@@ -143,7 +157,7 @@ const DEFAULT_SHEET: ScannerSheetLayout = {
   },
   qr: {
     role: "ballot-identity-only",
-    payloadShape: "{ electionId, ballotToken, templateVersion }",
+    payloadShape: "{ electionId, ballotToken, templateVersion, templateId? }",
     placementNote: "Bottom-right metadata zone inside the registration frame",
     quietZoneModules: 4,
   },

@@ -1050,12 +1050,12 @@ app.post('/elections/:id/paper-tokens/generate-all', async (req, res) => {
 app.post('/scanner/scan-image', async (req, res) => {
   const imageBase64 = String(req.body?.imageBase64 ?? '');
   const fileName = String(req.body?.fileName ?? 'image');
+  // scannerTemplate is optional — worker fetches layout from /api/omr-layout using ballotId.
+  // Keep accepting it for backward compat but no longer required.
   const scannerTemplate = req.body?.scannerTemplate;
 
-  if (!imageBase64 || !scannerTemplate || typeof scannerTemplate !== 'object') {
-    return res.status(400).json({
-      error: 'imageBase64 and scannerTemplate (object) are required',
-    });
+  if (!imageBase64) {
+    return res.status(400).json({ error: 'imageBase64 is required' });
   }
 
   const workerUrl = process.env.OMR_WORKER_URL?.trim().replace(/\/$/, '');
@@ -1069,13 +1069,14 @@ app.post('/scanner/scan-image', async (req, res) => {
   }
 
   try {
+    const workerBody: Record<string, unknown> = { image_base64: imageBase64 };
+    if (scannerTemplate && typeof scannerTemplate === 'object') {
+      workerBody.template = scannerTemplate; // forwarded for backward compat
+    }
     const wr = await fetch(`${workerUrl}/scan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        image_base64: imageBase64,
-        template: scannerTemplate,
-      }),
+      body: JSON.stringify(workerBody),
     });
     const omr = (await wr.json()) as Record<string, unknown>;
     if (!wr.ok) {
@@ -1093,29 +1094,36 @@ app.post('/scanner/scan-image', async (req, res) => {
       });
     }
 
-    const qr = omr.qr as
-      | { electionId?: string; ballotToken?: string; templateVersion?: string }
-      | null
-      | undefined;
+    // Resolve ballotId + electionId from new flat format OR legacy nested format.
+    const ballotId =
+      typeof omr.ballotId === 'string' && omr.ballotId
+        ? omr.ballotId
+        : (() => {
+            const qr = omr.qr as Record<string, unknown> | null | undefined;
+            return typeof qr?.ballotToken === 'string' ? qr.ballotToken
+              : typeof qr?.ballotId === 'string' ? qr.ballotId
+              : '';
+          })();
+    const electionId =
+      typeof omr.electionId === 'string' && omr.electionId
+        ? omr.electionId
+        : (() => {
+            const qr = omr.qr as Record<string, unknown> | null | undefined;
+            return typeof qr?.electionId === 'string' ? qr.electionId : '';
+          })();
+    const templateVersion = (() => {
+      const qr = omr.qr as Record<string, unknown> | null | undefined;
+      return typeof qr?.templateVersion === 'string' ? qr.templateVersion : '';
+    })();
 
     let tokenValidation:
       | { ok: true; templateVersion: string }
       | { ok: false; error: string }
       | { skipped: true; reason: string };
 
-    if (
-      qr &&
-      typeof qr.electionId === 'string' &&
-      typeof qr.ballotToken === 'string' &&
-      qr.electionId.length > 0 &&
-      qr.ballotToken.length > 0
-    ) {
-      const electionId = qr.electionId;
-      const ballotToken = qr.ballotToken;
-      const templateVersion = String(qr.templateVersion ?? '');
-
+    if (ballotId && electionId) {
       const issuance = await prisma.paperBallotIssuance.findFirst({
-        where: { electionId, ballotToken },
+        where: { electionId, ballotToken: ballotId },
       });
       if (!issuance) {
         tokenValidation = { ok: false, error: 'UNKNOWN_TOKEN' };
@@ -1127,13 +1135,17 @@ app.post('/scanner/scan-image', async (req, res) => {
         tokenValidation = { ok: true, templateVersion: issuance.templateVersion };
       }
     } else {
-      tokenValidation = { skipped: true, reason: 'NO_QR_IN_OMR_OUTPUT' };
+      tokenValidation = { skipped: true, reason: 'NO_BALLOT_ID_IN_OMR_OUTPUT' };
     }
 
     const tvOk = 'ok' in tokenValidation && tokenValidation.ok === true;
     res.json({
       ok: tvOk,
       fileName,
+      ballotId: ballotId || undefined,
+      electionId: electionId || undefined,
+      selections: omr.selections ?? (omr as Record<string, unknown>).selectionsFlat ?? {},
+      confidence: typeof omr.confidence === 'number' ? omr.confidence : 0,
       omr,
       tokenValidation,
     });
@@ -1164,7 +1176,10 @@ app.post('/scanner/debug-image', async (req, res) => {
     const wr = await fetch(`${workerUrl}/debug-json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_base64: imageBase64, template: scannerTemplate }),
+      body: JSON.stringify({
+        image_base64: imageBase64,
+        template: scannerTemplate,
+      }),
     });
     const data = await wr.json() as Record<string, unknown>;
     if (!wr.ok) {
@@ -1302,6 +1317,78 @@ app.post('/scanner/confirm-vote', async (req, res) => {
     }
     console.error('POST /scanner/confirm-vote error:', err);
     res.status(500).json({ error: err.message || 'confirm-vote failed' });
+  }
+});
+
+// ─── OMR Layout store ────────────────────────────────────────────────────────
+
+/**
+ * POST /api/omr-layout
+ * Store measured bubble geometry for a ballot.  Called by the print page when
+ * onGeometryTemplateReady fires (after DOM layout).  Uses UPSERT so re-prints
+ * of the same ballotId always have the latest measured positions.
+ * Body: { ballotId, electionId, templateId, templateVersion, layout, layoutHash }
+ */
+app.post('/api/omr-layout', async (req, res) => {
+  const ballotId = String(req.body?.ballotId ?? '').trim();
+  const electionId = String(req.body?.electionId ?? '').trim();
+  const templateId = String(req.body?.templateId ?? '').trim();
+  const templateVersion = String(req.body?.templateVersion ?? '').trim();
+  const layout = req.body?.layout;
+  const layoutHash = String(req.body?.layoutHash ?? '').trim();
+
+  if (!ballotId || !electionId || !templateId || !templateVersion || !layout || !layoutHash) {
+    return res.status(400).json({
+      error: 'ballotId, electionId, templateId, templateVersion, layout, and layoutHash are required',
+    });
+  }
+  if (typeof layout !== 'object' || Array.isArray(layout)) {
+    return res.status(400).json({ error: 'layout must be an object (OmGeometryTemplate)' });
+  }
+
+  try {
+    const layoutJson = JSON.stringify(layout);
+    await prisma.ballotLayout.upsert({
+      where: { ballotId },
+      update: { electionId, templateId, templateVersion, layoutJson, layoutHash },
+      create: { ballotId, electionId, templateId, templateVersion, layoutJson, layoutHash },
+    });
+    return res.json({ ok: true, ballotId });
+  } catch (err: any) {
+    console.error('POST /api/omr-layout error:', err);
+    return res.status(500).json({ error: err.message || 'omr-layout save failed' });
+  }
+});
+
+/**
+ * GET /api/omr-layout/:ballotId
+ * Returns the stored bubble geometry for a ballot.  Called by the OMR worker
+ * after decoding the QR to obtain the layout without requiring it in the QR payload.
+ */
+app.get('/api/omr-layout/:ballotId', async (req, res) => {
+  const { ballotId } = req.params;
+  try {
+    const record = await prisma.ballotLayout.findUnique({ where: { ballotId } });
+    if (!record) {
+      return res.status(404).json({ error: 'NOT_FOUND', ballotId });
+    }
+    let layout: unknown;
+    try {
+      layout = JSON.parse(record.layoutJson);
+    } catch {
+      return res.status(500).json({ error: 'LAYOUT_JSON_CORRUPT', ballotId });
+    }
+    return res.json({
+      ballotId: record.ballotId,
+      electionId: record.electionId,
+      templateId: record.templateId,
+      templateVersion: record.templateVersion,
+      layoutHash: record.layoutHash,
+      layout,
+    });
+  } catch (err: any) {
+    console.error('GET /api/omr-layout/:ballotId error:', err);
+    return res.status(500).json({ error: err.message || 'omr-layout fetch failed' });
   }
 });
 

@@ -900,6 +900,33 @@ export interface HourlyParticipationResponse {
   totalVotes: number;
 }
 
+// ─── OMR Layout ───────────────────────────────────────────────────────────────
+
+export interface SaveOmrLayoutParams {
+  ballotId: string;
+  electionId: string;
+  templateId: string;
+  templateVersion: string;
+  /** OmGeometryTemplate — serialised to JSON by the gateway. */
+  layout: object;
+  /** SHA-256 hash of the layout JSON string (e.g. "sha256:abcdef…"). */
+  layoutHash: string;
+}
+
+/** POST /api/omr-layout — store measured bubble geometry for a ballot. */
+export async function saveOmrLayout(params: SaveOmrLayoutParams): Promise<{ ok: boolean }> {
+  const res = await fetch(`${getGatewayBase()}/api/omr-layout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `saveOmrLayout failed (${res.status})`);
+  }
+  return res.json();
+}
+
 export async function fetchHourlyParticipation(
   electionId: string,
   dateYyyyMmDd: string

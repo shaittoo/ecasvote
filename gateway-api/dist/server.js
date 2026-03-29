@@ -34,6 +34,23 @@ async function isVoterOnElectionRoster(electionId, voterId) {
     });
     return !!row;
 }
+function normalizeTemplateVersion(templateVersion) {
+    return String(templateVersion ?? '').trim().toLowerCase();
+}
+function isTemplateVersionCompatible(issuedTemplateVersion, scannedTemplateVersion) {
+    const issued = normalizeTemplateVersion(issuedTemplateVersion);
+    const scanned = normalizeTemplateVersion(scannedTemplateVersion);
+    if (!scanned)
+        return true; // If QR/template omitted this field, keep existing permissive behavior.
+    if (!issued)
+        return false;
+    if (issued === scanned)
+        return true;
+    // Transition compatibility: treat v1 and v2 paper templates as equivalent.
+    const v1 = 'ballot-template-v1';
+    const v2 = 'ballot-template-v2';
+    return (issued === v1 && scanned === v2) || (issued === v2 && scanned === v1);
+}
 const app = (0, express_1.default)();
 // Enable CORS for all routes
 app.use((req, res, next) => {
@@ -717,7 +734,7 @@ app.get('/elections/:id/paper-check-in', async (req, res) => {
 app.post('/elections/:id/paper-ballots/issue', async (req, res) => {
     const { id: electionId } = req.params;
     const voterId = Number(req.body?.voterId);
-    const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v1');
+    const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v2');
     if (!Number.isFinite(voterId)) {
         return res.status(400).json({ error: 'voterId (number) is required' });
     }
@@ -847,7 +864,7 @@ app.get('/elections/:id/paper-tokens', async (req, res) => {
  */
 app.post('/elections/:id/paper-tokens/generate-all', async (req, res) => {
     const { id: electionId } = req.params;
-    const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v1');
+    const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v2');
     try {
         const rosterIds = await getElectionRosterVoterIds(electionId);
         if (rosterIds.length === 0) {
@@ -984,7 +1001,7 @@ app.post('/scanner/scan-image', async (req, res) => {
             if (!issuance) {
                 tokenValidation = { ok: false, error: 'UNKNOWN_TOKEN' };
             }
-            else if (templateVersion && issuance.templateVersion !== templateVersion) {
+            else if (!isTemplateVersionCompatible(issuance.templateVersion, templateVersion)) {
                 tokenValidation = { ok: false, error: 'TEMPLATE_MISMATCH' };
             }
             else if (issuance.used) {
@@ -1010,6 +1027,38 @@ app.post('/scanner/scan-image', async (req, res) => {
         res.status(500).json({ error: err.message || 'scan-image failed' });
     }
 });
+/**
+ * Debug overlay: forwards image + template to the OMR worker /debug-json endpoint
+ * and returns the annotated PNG as base64 JSON for the scanning UI to display inline.
+ */
+app.post('/scanner/debug-image', async (req, res) => {
+    const imageBase64 = String(req.body?.imageBase64 ?? '');
+    const scannerTemplate = req.body?.scannerTemplate;
+    if (!imageBase64 || !scannerTemplate || typeof scannerTemplate !== 'object') {
+        return res.status(400).json({ error: 'imageBase64 and scannerTemplate are required' });
+    }
+    const workerUrl = process.env.OMR_WORKER_URL?.trim().replace(/\/$/, '');
+    if (!workerUrl) {
+        return res.status(503).json({ error: 'OMR_WORKER_NOT_CONFIGURED' });
+    }
+    try {
+        const wr = await fetch(`${workerUrl}/debug-json`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_base64: imageBase64, template: scannerTemplate }),
+        });
+        const data = await wr.json();
+        if (!wr.ok) {
+            return res.status(502).json({
+                error: typeof data.detail === 'string' ? data.detail : 'OMR debug request failed',
+            });
+        }
+        return res.json(data);
+    }
+    catch (err) {
+        return res.status(500).json({ error: err.message || 'debug-image failed' });
+    }
+});
 /** Scanner: validate QR payload — token exists for election and is not used. Returns mock selections (OpenCV placeholder). */
 app.post('/scanner/validate', async (req, res) => {
     const electionId = String(req.body?.electionId ?? '');
@@ -1025,7 +1074,7 @@ app.post('/scanner/validate', async (req, res) => {
         if (!issuance) {
             return res.status(404).json({ ok: false, error: 'UNKNOWN_TOKEN' });
         }
-        if (templateVersion && issuance.templateVersion !== templateVersion) {
+        if (!isTemplateVersionCompatible(issuance.templateVersion, templateVersion)) {
             return res.status(400).json({ ok: false, error: 'TEMPLATE_MISMATCH' });
         }
         if (issuance.used) {
@@ -1061,7 +1110,7 @@ app.post('/scanner/validate', async (req, res) => {
 app.post('/scanner/confirm-vote', async (req, res) => {
     const electionId = String(req.body?.electionId ?? '');
     const ballotToken = String(req.body?.ballotToken ?? '');
-    const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v1');
+    const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v2');
     const ciphertextB64 = String(req.body?.ciphertextB64 ?? 'mock-encrypted-data');
     const selections = req.body?.selections;
     if (!electionId || !ballotToken || typeof selections !== 'object' || selections === null) {
@@ -1080,7 +1129,7 @@ app.post('/scanner/confirm-vote', async (req, res) => {
             if (issuance.used) {
                 throw Object.assign(new Error('TOKEN_USED'), { code: 400 });
             }
-            if (issuance.templateVersion !== templateVersion) {
+            if (!isTemplateVersionCompatible(issuance.templateVersion, templateVersion)) {
                 throw Object.assign(new Error('TEMPLATE_MISMATCH'), { code: 400 });
             }
             const castAt = new Date();
@@ -1300,6 +1349,44 @@ app.put('/elections/:id', async (req, res) => {
         res.status(400).json({
             error: err.message || 'UpdateElection failed',
         });
+    }
+});
+/** Delete election from database (votes, roster, positions, etc.) and remove ledger world state. */
+app.delete('/elections/:id', async (req, res) => {
+    const { id } = req.params;
+    if (!id) {
+        return res.status(400).json({ error: 'Election id is required' });
+    }
+    try {
+        const existing = await prismaClient_1.prisma.election.findUnique({ where: { id } });
+        if (!existing) {
+            return res.status(404).json({ error: 'Election not found' });
+        }
+        await prismaClient_1.prisma.$transaction(async (tx) => {
+            await tx.vote.deleteMany({ where: { electionId: id } });
+            await tx.paperBallotIssuance.deleteMany({ where: { electionId: id } });
+            await tx.paperAnonymousVote.deleteMany({ where: { electionId: id } });
+            await tx.candidate.deleteMany({ where: { electionId: id } });
+            await tx.position.deleteMany({ where: { electionId: id } });
+            await tx.ballot.deleteMany({ where: { electionId: id } });
+            await tx.auditLog.deleteMany({ where: { electionId: id } });
+            await tx.electionVoter.deleteMany({
+                where: { electionId: id },
+            });
+            await tx.election.delete({ where: { id } });
+        });
+        try {
+            const contract = await (0, fabricClient_1.getContract)();
+            await contract.submitTransaction('DeleteElection', id);
+        }
+        catch (ledgerErr) {
+            console.warn(`⚠️ Election ${id} removed from database but ledger delete failed (redeploy chaincode if needed):`, ledgerErr?.message || ledgerErr);
+        }
+        res.json({ ok: true, id });
+    }
+    catch (err) {
+        console.error('DELETE /elections/:id error:', err);
+        res.status(500).json({ error: err.message || 'Failed to delete election' });
     }
 });
 // 3) Open election (change status from DRAFT to OPEN)
