@@ -5,7 +5,7 @@
  * raw JSON export (ecasvote-scan-export/1).
  */
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,9 +24,12 @@ import {
 import type { Election, Position } from "@/lib/ecasvoteApi";
 import { notify } from "@/lib/notify";
 import { BALLOT_TEMPLATE_VERSION } from "@/lib/ballot/ballotTemplate";
+import type { BallotQrPayload } from "@/lib/ballot/printableBallotTypes";
 import { parseBallotQrPayload } from "@/lib/ballot/decodeBallotQr";
 import { tryDecodeQrTextFromFile } from "@/lib/ballot/decodeQrFromImage";
-import { buildScannerTemplateFromPositions } from "@/lib/ballot/scannerTemplateSpec";
+import { PrintableBallotSheet } from "@/components/ballot/PrintableBallotSheet";
+import { mapPositionsToPrintableBallot } from "@/lib/ballot/mapPositionsToPrintable";
+import { buildPreviewBallotToken } from "@/lib/ballot/previewBallotId";
 import {
   buildScanExportBatch,
   parseSelectionsByPosition,
@@ -35,6 +38,12 @@ import {
   type ScanExportBatch,
   SCAN_EXPORT_ALL_SCHEMA,
 } from "@/lib/ballot/scanExport";
+import type { OmGeometryTemplate } from "@/lib/ballot/omGeometryTemplate";
+
+/** Gateway/worker expect `scannerTemplate` object with a `geometry` field (DOM-measured layout). */
+function scannerTemplateFromGeometry(geom: OmGeometryTemplate): { geometry: OmGeometryTemplate } {
+  return { geometry: geom };
+}
 
 const OPEN_MCR_URL =
   "https://github.com/iansan5653/open-mcr?tab=readme-ov-file";
@@ -94,22 +103,14 @@ function formatMarksLine(sbp: Record<string, string[]>): string {
     .join(" · ");
 }
 
-function qrFromOmr(omr: Record<string, unknown>): Record<string, string> | null {
+function qrFromOmr(omr: Record<string, unknown>): BallotQrPayload | null {
   const q = omr["qr"];
   if (!q || typeof q !== "object" || Array.isArray(q)) return null;
-  const o = q as Record<string, unknown>;
-  if (
-    typeof o.electionId === "string" &&
-    typeof o.ballotToken === "string" &&
-    typeof o.templateVersion === "string"
-  ) {
-    return {
-      electionId: o.electionId,
-      ballotToken: o.ballotToken,
-      templateVersion: o.templateVersion,
-    };
+  try {
+    return parseBallotQrPayload(JSON.stringify(q));
+  } catch {
+    return null;
   }
-  return null;
 }
 
 type StoredScanBatch = {
@@ -166,6 +167,7 @@ export function BallotScanningContent() {
     contestsInTemplate?: number;
     fileName: string;
   } | null>(null);
+  const [omGeometryTemplate, setOmGeometryTemplate] = useState<OmGeometryTemplate | null>(null);
 
   const handleLogout = () => router.push("/login");
 
@@ -212,6 +214,15 @@ export function BallotScanningContent() {
     void loadElectionMeta(electionId);
   }, [electionId, loadElectionMeta]);
 
+  useEffect(() => {
+    setOmGeometryTemplate(null);
+  }, [electionId, includeAbstain]);
+
+  const printablePositions = useMemo(
+    () => mapPositionsToPrintableBallot(positions),
+    [positions]
+  );
+
   const addFiles = useCallback((files: FileList | File[]) => {
     const next = Array.from(files).filter((f) => {
       const t = f.type.toLowerCase();
@@ -242,19 +253,29 @@ export function BallotScanningContent() {
       notify.error({ title: "Select an election first" });
       return;
     }
+    const first = batchFiles[0];
+    const imageBase64 = await fileToBase64(first);
+    if (!imageBase64) {
+      throw new Error("Missing imageBase64");
+    }
+    if (!omGeometryTemplate) {
+      window.alert(
+        "Scanner template not ready yet. Wait for “OMR geometry: Ready” below, or check that contests loaded."
+      );
+      return;
+    }
+    const scannerTemplate = scannerTemplateFromGeometry(omGeometryTemplate);
+    console.log({
+      hasImageBase64: !!imageBase64,
+      hasTemplate: !!omGeometryTemplate,
+      templateType: typeof omGeometryTemplate,
+    });
+    console.log("DEBUG sending /scanner/debug-image payload keys:", [
+      "imageBase64",
+      "scannerTemplate",
+    ]);
     setDebugOverlayBusy(true);
     try {
-      let pos = positions;
-      if (!pos.length) pos = await fetchPositions(electionId);
-      const scannerTemplate = buildScannerTemplateFromPositions(
-        electionId,
-        electionName || electionId,
-        BALLOT_TEMPLATE_VERSION,
-        pos,
-        { includeAbstain }
-      );
-      const first = batchFiles[0];
-      const imageBase64 = await fileToBase64(first);
       const dbg = await scannerDebugImage({ imageBase64, scannerTemplate });
       if (!dbg.image_base64) {
         throw new Error("No debug image returned by worker.");
@@ -273,7 +294,7 @@ export function BallotScanningContent() {
     } finally {
       setDebugOverlayBusy(false);
     }
-  }, [batchFiles, electionId, includeAbstain, positions]);
+  }, [batchFiles, electionId, omGeometryTemplate]);
 
   const stopCamera = useCallback(() => {
     if (autoRunRef.current !== null) {
@@ -862,21 +883,19 @@ export function BallotScanningContent() {
       notify.error({ title: "Select an election first" });
       return;
     }
+    if (!omGeometryTemplate) {
+      notify.error({
+        title: "Template not ready",
+        description: "Wait for ballot geometry to finish measuring (see OMR geometry status below).",
+      });
+      return;
+    }
     setExporting(true);
     try {
-      let pos = positions;
-      if (!pos.length) {
-        pos = await fetchPositions(electionId);
-        setPositions(pos);
-      }
-      const template = buildScannerTemplateFromPositions(
-        electionId,
-        electionName || electionId,
-        BALLOT_TEMPLATE_VERSION,
-        pos,
-        { includeAbstain }
+      downloadJson(
+        `scanner-template-${electionId}.json`,
+        scannerTemplateFromGeometry(omGeometryTemplate)
       );
-      downloadJson(`scanner-template-${electionId}.json`, template);
       notify.success({ title: "Template downloaded" });
     } catch (e) {
       notify.error({ title: "Export failed", description: String(e) });
@@ -908,6 +927,14 @@ export function BallotScanningContent() {
       notify.error({
         title: "Add ballot images",
         description: "Drop files or choose images, then scan.",
+      });
+      return;
+    }
+    if (!omGeometryTemplate) {
+      notify.error({
+        title: "Scanner geometry not ready",
+        description:
+          "Wait for “OMR geometry: Ready” (ballot preview below), or reload after contests load.",
       });
       return;
     }
@@ -1015,13 +1042,7 @@ export function BallotScanningContent() {
         pos = await fetchPositions(electionId);
         setPositions(pos);
       }
-      const scannerTemplate = buildScannerTemplateFromPositions(
-        electionId,
-        electionName || electionId,
-        BALLOT_TEMPLATE_VERSION,
-        pos,
-        { includeAbstain }
-      );
+      const scannerTemplate = scannerTemplateFromGeometry(omGeometryTemplate);
 
       let useOmr = true;
       let warnedWorkerOff = false;
@@ -1400,6 +1421,40 @@ export function BallotScanningContent() {
                     ) : null}
                   </div>
 
+                  {electionId && positions.length > 0 ? (
+                    <div className="rounded-md border border-dashed border-muted bg-muted/30 p-3">
+                      <p className="text-sm font-medium text-gray-900">OMR layout (required for scan / debug)</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Geometry:{" "}
+                        {omGeometryTemplate ? (
+                          <span className="font-medium text-emerald-800">Ready</span>
+                        ) : (
+                          <span className="text-amber-800">Measuring ballot preview…</span>
+                        )}{" "}
+                        — matches the printable ballot grid (v2).
+                      </p>
+                      <div className="pointer-events-none fixed left-[-10000px] top-0 z-0 w-[210mm] bg-white">
+                        <PrintableBallotSheet
+                          key={`${electionId}-${includeAbstain}`}
+                          electionId={electionId}
+                          ballotToken={buildPreviewBallotToken(electionId)}
+                          templateVersion={BALLOT_TEMPLATE_VERSION}
+                          electionName={electionName || electionId}
+                          positions={printablePositions}
+                          showAbstain={includeAbstain}
+                          onGeometryTemplateReady={(geom) => 
+                            {
+                              console.log("GEOM PAGE:", geom.page);
+                              console.log("GEOM FIRST CONTEST:", geom.contests[0]);
+                              console.log("GEOM FIRST BUBBLE:", geom.contests[0]?.bubbles?.[0]);
+                              setOmGeometryTemplate(geom);
+                            }
+                          }
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div
                     ref={dropRef}
                     role="button"
@@ -1619,7 +1674,12 @@ export function BallotScanningContent() {
                   <div className="flex flex-wrap gap-2">
                     <Button
                       className="bg-[#7A0019] text-white hover:bg-[#5c0013]"
-                      disabled={!electionId || batchFiles.length === 0 || isScanning}
+                      disabled={
+                        !electionId ||
+                        batchFiles.length === 0 ||
+                        isScanning ||
+                        !omGeometryTemplate
+                      }
                       onClick={() => void runScanBatch()}
                     >
                       {isScanning ? "Scanning…" : "Scan ballots"}
@@ -1633,7 +1693,7 @@ export function BallotScanningContent() {
                       <Button
                         type="button"
                         variant="outline"
-                        disabled={debugOverlayBusy}
+                        disabled={debugOverlayBusy || !omGeometryTemplate}
                         onClick={() => void previewDebugOverlay()}
                       >
                         {debugOverlayBusy ? "Rendering overlay…" : "Preview OpenCV overlay"}
@@ -1811,7 +1871,7 @@ export function BallotScanningContent() {
                       type="button"
                       variant="outline"
                       size="sm"
-                      disabled={!electionId || exporting}
+                      disabled={!electionId || exporting || !omGeometryTemplate}
                       onClick={() => void handleExportTemplate()}
                     >
                       {exporting ? "…" : "Scanner template JSON"}

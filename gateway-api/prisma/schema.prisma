@@ -162,3 +162,20 @@ model AuditLog {
   details    Json?    // any extra metadata
   createdAt  DateTime @default(now())
 }
+
+/** Stores measured bubble geometry for each issued ballot (ballotId = ballotToken). */
+model BallotLayout {
+  ballotId        String   @id
+  electionId      String
+  templateId      String
+  templateVersion String
+  /** JSON-serialised OmGeometryTemplate (CSS-px bubble boxes, page dims). */
+  layoutJson      String
+  /** SHA-256 of layoutJson string; verified by OMR worker against QR payload. */
+  layoutHash      String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([electionId])
+  @@index([templateId])
+}
