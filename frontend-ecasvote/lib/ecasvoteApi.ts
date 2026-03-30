@@ -732,6 +732,14 @@ export type ScannerScanImageWorkerUnavailable = {
   hint?: string;
 };
 
+export type ScannerDeviceScanResult = {
+  ok: true;
+  scannerDevice: string;
+  fileName: string;
+  mimeType: "image/png";
+  imageBase64: string;
+};
+
 export async function scannerScanImage(params: {
   imageBase64: string;
   fileName: string;
@@ -765,6 +773,37 @@ export async function scannerScanImage(params: {
       ? (data.omr as Record<string, unknown>)
       : {}) as Record<string, unknown>,
     tokenValidation: data.tokenValidation as ScannerScanImageOmrResult["tokenValidation"],
+  };
+}
+
+export async function scannerScanDevice(): Promise<ScannerDeviceScanResult> {
+  const res = await fetch(`${getGatewayBase()}/scanner/scan-device`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const data = (await res.json()) as Record<string, unknown>;
+  if (!res.ok || data.ok !== true) {
+    const hint =
+      typeof data.hint === "string"
+        ? ` (${data.hint})`
+        : typeof data.detail === "string"
+          ? ` (${data.detail})`
+          : "";
+    throw new Error(
+      typeof data.error === "string"
+        ? `${data.error}${hint}`
+        : typeof data.detail === "string"
+          ? String(data.detail)
+          : `scan-device failed (${res.status})`
+    );
+  }
+  return {
+    ok: true,
+    scannerDevice: String(data.scannerDevice ?? ""),
+    fileName: String(data.fileName ?? `scanner-${Date.now()}.png`),
+    mimeType: "image/png",
+    imageBase64: String(data.imageBase64 ?? ""),
   };
 }
 

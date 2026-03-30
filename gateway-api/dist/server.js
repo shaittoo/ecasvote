@@ -9,6 +9,8 @@ require("dotenv/config");
 const express_1 = __importDefault(require("express"));
 const body_parser_1 = __importDefault(require("body-parser"));
 const crypto_1 = __importDefault(require("crypto"));
+const child_process_1 = require("child_process");
+const util_1 = require("util");
 const fabricClient_1 = require("./fabricClient");
 const prismaClient_1 = require("./prismaClient");
 /** Unique paper ballot token (QR identifies ballot only — not vote data). */
@@ -35,6 +37,7 @@ async function isVoterOnElectionRoster(electionId, voterId) {
     return !!row;
 }
 const app = (0, express_1.default)();
+const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 // Enable CORS for all routes
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
@@ -1010,6 +1013,72 @@ app.post('/scanner/scan-image', async (req, res) => {
         res.status(500).json({ error: err.message || 'scan-image failed' });
     }
 });
+/**
+ * Capture a ballot image from a locally connected SANE scanner (Linux).
+ * Uses `scanimage` and returns PNG bytes as base64 for frontend preview/queue.
+ */
+app.post('/scanner/scan-device', async (_req, res) => {
+    const requestedDevice = String(process.env.SCAN_DEVICE_NAME ?? '').trim();
+    const requestedResolution = Number(process.env.SCAN_RESOLUTION_DPI ?? 300);
+    const resolution = Number.isFinite(requestedResolution) && requestedResolution > 0
+        ? Math.floor(requestedResolution)
+        : 300;
+    try {
+        const { stdout: listOut } = await execFileAsync('scanimage', ['-L'], {
+            timeout: 15000,
+            maxBuffer: 1024 * 1024,
+        });
+        const discovered = String(listOut ?? '');
+        const parsedDevice = discovered.match(/device `([^`]+)'/);
+        const scannerDevice = requestedDevice || (parsedDevice ? parsedDevice[1] : '');
+        if (!scannerDevice) {
+            return res.status(404).json({
+                ok: false,
+                error: 'SCANNER_NOT_FOUND',
+                hint: 'No scanner found. Check USB/cable and run `scanimage -L` on host.',
+            });
+        }
+        const scanArgs = [
+            '--device-name',
+            scannerDevice,
+            '--format=png',
+            '--resolution',
+            String(resolution),
+        ];
+        const { stdout: imageBytes } = await execFileAsync('scanimage', scanArgs, {
+            encoding: 'buffer',
+            timeout: 120000,
+            maxBuffer: 1024 * 1024 * 40,
+        });
+        const imageBuffer = Buffer.isBuffer(imageBytes)
+            ? imageBytes
+            : Buffer.from(imageBytes);
+        if (!imageBuffer.length) {
+            return res.status(502).json({
+                ok: false,
+                error: 'EMPTY_SCAN_RESULT',
+            });
+        }
+        res.json({
+            ok: true,
+            scannerDevice,
+            fileName: `scanner-${Date.now()}.png`,
+            mimeType: 'image/png',
+            imageBase64: imageBuffer.toString('base64'),
+        });
+    }
+    catch (err) {
+        const stderr = String(err?.stderr ?? '').trim();
+        const errorText = stderr || err?.message || String(err);
+        const noDevice = /no scanners? were identified|no devices available|open of device failed/i.test(errorText);
+        const timeout = /timed out/i.test(errorText);
+        return res.status(noDevice ? 404 : timeout ? 504 : 500).json({
+            ok: false,
+            error: noDevice ? 'SCANNER_NOT_FOUND' : timeout ? 'SCANNER_TIMEOUT' : 'SCANNER_SCAN_FAILED',
+            detail: errorText,
+        });
+    }
+});
 /** Scanner: validate QR payload — token exists for election and is not used. Returns mock selections (OpenCV placeholder). */
 app.post('/scanner/validate', async (req, res) => {
     const electionId = String(req.body?.electionId ?? '');
@@ -1300,6 +1369,44 @@ app.put('/elections/:id', async (req, res) => {
         res.status(400).json({
             error: err.message || 'UpdateElection failed',
         });
+    }
+});
+/** Delete election from database (votes, roster, positions, etc.) and remove ledger world state. */
+app.delete('/elections/:id', async (req, res) => {
+    const { id } = req.params;
+    if (!id) {
+        return res.status(400).json({ error: 'Election id is required' });
+    }
+    try {
+        const existing = await prismaClient_1.prisma.election.findUnique({ where: { id } });
+        if (!existing) {
+            return res.status(404).json({ error: 'Election not found' });
+        }
+        await prismaClient_1.prisma.$transaction(async (tx) => {
+            await tx.vote.deleteMany({ where: { electionId: id } });
+            await tx.paperBallotIssuance.deleteMany({ where: { electionId: id } });
+            await tx.paperAnonymousVote.deleteMany({ where: { electionId: id } });
+            await tx.candidate.deleteMany({ where: { electionId: id } });
+            await tx.position.deleteMany({ where: { electionId: id } });
+            await tx.ballot.deleteMany({ where: { electionId: id } });
+            await tx.auditLog.deleteMany({ where: { electionId: id } });
+            await tx.electionVoter.deleteMany({
+                where: { electionId: id },
+            });
+            await tx.election.delete({ where: { id } });
+        });
+        try {
+            const contract = await (0, fabricClient_1.getContract)();
+            await contract.submitTransaction('DeleteElection', id);
+        }
+        catch (ledgerErr) {
+            console.warn(`⚠️ Election ${id} removed from database but ledger delete failed (redeploy chaincode if needed):`, ledgerErr?.message || ledgerErr);
+        }
+        res.json({ ok: true, id });
+    }
+    catch (err) {
+        console.error('DELETE /elections/:id error:', err);
+        res.status(500).json({ error: err.message || 'Failed to delete election' });
     }
 });
 // 3) Open election (change status from DRAFT to OPEN)

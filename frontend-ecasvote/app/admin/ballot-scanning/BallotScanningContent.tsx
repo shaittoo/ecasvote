@@ -64,6 +64,13 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
+function downloadBase64Png(fileName: string, base64: string) {
+  const a = document.createElement("a");
+  a.href = `data:image/png;base64,${base64}`;
+  a.download = fileName.toLowerCase().endsWith(".png") ? fileName : `${fileName}.png`;
+  a.click();
+}
+
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], {
     type: "application/json",
@@ -105,6 +112,91 @@ function qrFromOmr(omr: Record<string, unknown>): Record<string, string> | null 
   return null;
 }
 
+async function pickScannerVideoDeviceId(): Promise<string | undefined> {
+  if (!navigator.mediaDevices?.getUserMedia) return undefined;
+  const warm = await navigator.mediaDevices.getUserMedia({
+    video: true,
+    audio: false,
+  });
+  warm.getTracks().forEach((t) => t.stop());
+  const inputs = (await navigator.mediaDevices.enumerateDevices()).filter(
+    (d) => d.kind === "videoinput"
+  );
+  if (!inputs.length) return undefined;
+  if (inputs.length === 1) return inputs[0].deviceId;
+
+  const byLabel = (re: RegExp) => inputs.find((d) => re.test(d.label));
+  const netum = byLabel(/netum/i);
+  if (netum?.deviceId) return netum.deviceId;
+  const usb = byLabel(/usb/i);
+  if (usb?.deviceId) return usb.deviceId;
+
+  const external = inputs.find(
+    (d) =>
+      d.label.trim() !== "" &&
+      !/integrated|facetime|iris|hd user facing|user-facing/i.test(d.label)
+  );
+  if (external?.deviceId) return external.deviceId;
+
+  const anyLabeled = inputs.some((d) => d.label.trim() !== "");
+  if (!anyLabeled) return inputs[inputs.length - 1].deviceId;
+
+  return (
+    inputs.find(
+      (d) =>
+        !/integrated|facetime|iris|hd user facing|user-facing/i.test(d.label)
+    ) ?? inputs[inputs.length - 1]
+  ).deviceId;
+}
+
+/** Widen FOV / use full sensor when the driver reports zoom + resolution caps. */
+async function applyWidestCameraConstraints(track: MediaStreamTrack): Promise<void> {
+  const caps = track.getCapabilities?.() as {
+    width?: { min?: number; max?: number };
+    height?: { min?: number; max?: number };
+    zoom?: { min?: number; max?: number };
+  };
+  if (!caps) return;
+
+  if (caps.zoom != null && typeof caps.zoom.min === "number") {
+    try {
+      await track.applyConstraints({
+        advanced: [{ zoom: caps.zoom.min } as MediaTrackConstraintSet],
+      });
+    } catch {
+      // Driver may ignore zoom.
+    }
+  }
+
+  const wMax = caps.width?.max;
+  const hMax = caps.height?.max;
+  if (wMax != null && hMax != null) {
+    try {
+      await track.applyConstraints({
+        width: { ideal: wMax },
+        height: { ideal: hMax },
+      });
+    } catch {
+      try {
+        await track.applyConstraints({ width: wMax, height: hMax });
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+/** Align canvas capture with a fully decoded video frame (avoids torn / half-exposed rows). */
+function waitForVideoFrame(video: HTMLVideoElement): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof video.requestVideoFrameCallback === "function") {
+      video.requestVideoFrameCallback(() => resolve());
+    } else {
+      requestAnimationFrame(() => resolve());
+    }
+  });
+}
+
 type StoredScanBatch = {
   id: string;
   at: string;
@@ -119,6 +211,8 @@ export function BallotScanningContent() {
   const pathname = usePathname();
   const fileInputId = useId();
   const dropRef = useRef<HTMLDivElement>(null);
+  const liveVideoRef = useRef<HTMLVideoElement>(null);
+  const liveStreamRef = useRef<MediaStream | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [elections, setElections] = useState<Election[]>([]);
@@ -132,6 +226,11 @@ export function BallotScanningContent() {
   const [scanHistory, setScanHistory] = useState<StoredScanBatch[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [capturedImageFile, setCapturedImageFile] = useState<File | null>(null);
+  const [capturedPreviewUrl, setCapturedPreviewUrl] = useState<string | null>(null);
+  const [capturedImageName, setCapturedImageName] = useState("ballot-scan.png");
+  const [isLiveFeedActive, setIsLiveFeedActive] = useState(false);
+  const [isLiveFeedStarting, setIsLiveFeedStarting] = useState(false);
 
   const handleLogout = () => router.push("/login");
 
@@ -178,6 +277,46 @@ export function BallotScanningContent() {
     void loadElectionMeta(electionId);
   }, [electionId, loadElectionMeta]);
 
+  useEffect(() => {
+    if (!capturedImageFile) {
+      setCapturedPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(capturedImageFile);
+    setCapturedPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [capturedImageFile]);
+
+  const stopLiveFeed = useCallback(() => {
+    const stream = liveStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((t) => t.stop());
+    }
+    liveStreamRef.current = null;
+    if (liveVideoRef.current) {
+      liveVideoRef.current.srcObject = null;
+    }
+    setIsLiveFeedActive(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopLiveFeed();
+    };
+  }, [stopLiveFeed]);
+
+  useEffect(() => {
+    if (!isLiveFeedActive) return;
+    const video = liveVideoRef.current;
+    const stream = liveStreamRef.current;
+    if (!video || !stream) return;
+    video.srcObject = stream;
+    void video.play().catch(() => undefined);
+    return () => {
+      video.srcObject = null;
+    };
+  }, [isLiveFeedActive]);
+
   const addFiles = useCallback((files: FileList | File[]) => {
     const next = Array.from(files).filter((f) => {
       const t = f.type.toLowerCase();
@@ -197,6 +336,135 @@ export function BallotScanningContent() {
 
   const removeFileAt = (index: number) => {
     setBatchFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const startLiveFeed = async () => {
+    if (isLiveFeedActive) return;
+    setIsLiveFeedStarting(true);
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Camera access is not available in this browser.");
+      }
+
+      stopLiveFeed();
+
+      const deviceId = await pickScannerVideoDeviceId();
+      // Avoid forcing 1920×1080 — on many document cameras that selects a cropped 16:9 mode.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: deviceId ? { deviceId: { ideal: deviceId } } : true,
+      });
+      const track = stream.getVideoTracks()[0];
+      if (track) await applyWidestCameraConstraints(track);
+
+      liveStreamRef.current = stream;
+      setIsLiveFeedActive(true);
+    } catch (e) {
+      stopLiveFeed();
+      notify.error({
+        title: "Live feed failed",
+        description: String(e),
+      });
+    } finally {
+      setIsLiveFeedStarting(false);
+    }
+  };
+
+  const captureFromLiveFeed = async () => {
+    const video = liveVideoRef.current;
+    const stream = liveStreamRef.current;
+    if (!video || !isLiveFeedActive || !stream) {
+      notify.error({ title: "Open live feed first" });
+      return;
+    }
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      await new Promise<void>((resolve) => {
+        const done = () => resolve();
+        video.addEventListener("loadeddata", done, { once: true });
+        window.setTimeout(done, 3000);
+      });
+    }
+
+    // Live <video> is composited on a separate path from single-frame grabs; drawing without
+    // syncing to a full decode can show a sharp horizontal band (rolling shutter / torn frame).
+    await waitForVideoFrame(video);
+    await waitForVideoFrame(video);
+
+    const track = stream.getVideoTracks()[0];
+    let blob: Blob | null = null;
+
+    if (track && typeof ImageCapture !== "undefined") {
+      try {
+        const ic = new ImageCapture(track);
+        const bitmap = await (
+          ic as ImageCapture & { grabFrame: () => Promise<ImageBitmap> }
+        ).grabFrame();
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(bitmap, 0, 0);
+          bitmap.close();
+          blob = await new Promise<Blob | null>((resolve) =>
+            canvas.toBlob((b) => resolve(b), "image/png")
+          );
+        } else {
+          bitmap.close();
+        }
+      } catch {
+        // Fall back to canvas + video below.
+      }
+    }
+
+    if (!blob) {
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      if (!width || !height) {
+        notify.error({ title: "Video not ready — try capture again." });
+        return;
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        notify.error({ title: "Could not access capture canvas" });
+        return;
+      }
+      ctx.drawImage(video, 0, 0, width, height);
+      blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob((b) => resolve(b), "image/png")
+      );
+    }
+
+    if (!blob) {
+      notify.error({ title: "Failed to capture frame" });
+      return;
+    }
+    const fileName = `live-capture-${Date.now()}.png`;
+    const file = new File([blob], fileName, { type: "image/png" });
+    stopLiveFeed();
+    setCapturedImageFile(file);
+    setCapturedImageName(fileName);
+    notify.success({ title: "Photo captured" });
+  };
+
+  const handleSaveCapturedImage = async () => {
+    if (!capturedImageFile) {
+      notify.error({ title: "Capture a photo first" });
+      return;
+    }
+    try {
+      const base64 = await fileToBase64(capturedImageFile);
+      downloadBase64Png(
+        capturedImageName || capturedImageFile.name || "ballot-scan.png",
+        base64
+      );
+      notify.success({ title: "Image saved" });
+    } catch (e) {
+      notify.error({ title: "Failed to save image", description: String(e) });
+    }
   };
 
   const handleExportTemplate = async () => {
@@ -543,7 +811,7 @@ export function BallotScanningContent() {
           {loading ? (
             <div className="py-12 text-center text-gray-500">Loading elections…</div>
           ) : (
-            <div className="mx-auto max-w-4xl space-y-6">
+            <div className="mx-auto max-w-7xl space-y-6">
               <Card className="border-[#7A0019]/20 shadow-sm">
                 <CardHeader>
                   <CardTitle className="text-xl">Scan paper ballots</CardTitle>
@@ -680,6 +948,58 @@ export function BallotScanningContent() {
                           </li>
                         ))}
                       </ul>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={isLiveFeedActive || isLiveFeedStarting}
+                        onClick={() => void startLiveFeed()}
+                      >
+                        {isLiveFeedStarting ? "Opening…" : "Open live feed"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={!isLiveFeedActive}
+                        onClick={() => void captureFromLiveFeed()}
+                      >
+                        Capture photo
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={!capturedImageFile}
+                        onClick={() => void handleSaveCapturedImage()}
+                      >
+                        Save image
+                      </Button>
+                  </div>
+
+                  {(isLiveFeedActive || capturedPreviewUrl) && (
+                    <div className="rounded-md border bg-white p-3">
+                      <div className="mb-2 text-sm font-medium text-gray-900">
+                        {isLiveFeedActive ? "Live feed" : "Captured photo"}
+                      </div>
+                      {isLiveFeedActive ? (
+                        // eslint-disable-next-line jsx-a11y/media-has-caption
+                        <video
+                          ref={liveVideoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="max-h-[min(82vh,960px)] min-h-[48vh] w-full rounded border bg-black/5 object-contain"
+                        />
+                      ) : capturedPreviewUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={capturedPreviewUrl}
+                          alt="Captured ballot"
+                          className="max-h-[min(82vh,960px)] min-h-[48vh] w-full rounded border bg-black/5 object-contain"
+                        />
+                      ) : null}
                     </div>
                   )}
 

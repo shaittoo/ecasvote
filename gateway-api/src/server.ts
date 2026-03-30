@@ -5,6 +5,8 @@ import 'dotenv/config';
 import express from 'express';
 import bodyParser from 'body-parser';
 import crypto from 'crypto';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { getContract, getNetwork } from './fabricClient';
 import { prisma } from './prismaClient';
 
@@ -35,6 +37,7 @@ async function isVoterOnElectionRoster(electionId: string, voterId: number): Pro
 }
 
 const app = express();
+const execFileAsync = promisify(execFile);
 
 // Enable CORS for all routes
 app.use((req, res, next) => {
@@ -1121,6 +1124,101 @@ app.post('/scanner/scan-image', async (req, res) => {
   } catch (err: any) {
     console.error('POST /scanner/scan-image error:', err);
     res.status(500).json({ error: err.message || 'scan-image failed' });
+  }
+});
+
+/**
+ * Capture a ballot image from a locally connected SANE scanner (Linux).
+ * Uses `scanimage` and returns PNG bytes as base64 for frontend preview/queue.
+ */
+app.post('/scanner/scan-device', async (_req, res) => {
+  const requestedDevice = String(process.env.SCAN_DEVICE_NAME ?? '').trim();
+  const requestedResolution = Number(process.env.SCAN_RESOLUTION_DPI ?? 300);
+  const resolution = Number.isFinite(requestedResolution) && requestedResolution > 0
+    ? Math.floor(requestedResolution)
+    : 300;
+
+  try {
+    const { stdout: listOut } = await execFileAsync('scanimage', ['-L'], {
+      timeout: 15000,
+      maxBuffer: 1024 * 1024,
+    });
+    const discovered = String(listOut ?? '');
+
+    const parsedDevice = discovered.match(/device `([^`]+)'/);
+    const scannerDevice = requestedDevice || (parsedDevice ? parsedDevice[1] : '');
+    if (!scannerDevice) {
+      const workerUrl = process.env.OMR_WORKER_URL?.trim().replace(/\/$/, '');
+      if (workerUrl) {
+        try {
+          const wr = await fetch(`${workerUrl}/capture-device`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          const data = (await wr.json()) as Record<string, unknown>;
+          if (wr.ok && data.ok === true && typeof data.imageBase64 === 'string') {
+            return res.json({
+              ok: true,
+              scannerDevice: `camera:/dev/video${String(data.cameraIndex ?? 0)}`,
+              fileName: String(data.fileName ?? `scanner-${Date.now()}.png`),
+              mimeType: 'image/png',
+              imageBase64: data.imageBase64,
+              source: 'camera',
+            });
+          }
+        } catch {
+          // Fall through to SCANNER_NOT_FOUND response below.
+        }
+      }
+      return res.status(404).json({
+        ok: false,
+        error: 'SCANNER_NOT_FOUND',
+        hint:
+          'No SANE scanner found (`scanimage -L`). NETUM appears as camera device; start omr-worker and set OMR_WORKER_URL for camera capture fallback.',
+      });
+    }
+
+    const scanArgs = [
+      '--device-name',
+      scannerDevice,
+      '--format=png',
+      '--resolution',
+      String(resolution),
+    ];
+    const { stdout: imageBytes } = await execFileAsync('scanimage', scanArgs, {
+      encoding: 'buffer',
+      timeout: 120000,
+      maxBuffer: 1024 * 1024 * 40,
+    });
+
+    const imageBuffer = Buffer.isBuffer(imageBytes)
+      ? imageBytes
+      : Buffer.from(imageBytes as string);
+    if (!imageBuffer.length) {
+      return res.status(502).json({
+        ok: false,
+        error: 'EMPTY_SCAN_RESULT',
+      });
+    }
+
+    res.json({
+      ok: true,
+      scannerDevice,
+      fileName: `scanner-${Date.now()}.png`,
+      mimeType: 'image/png',
+      imageBase64: imageBuffer.toString('base64'),
+    });
+  } catch (err: any) {
+    const stderr = String(err?.stderr ?? '').trim();
+    const errorText = stderr || err?.message || String(err);
+    const noDevice = /no scanners? were identified|no devices available|open of device failed/i.test(errorText);
+    const timeout = /timed out/i.test(errorText);
+    return res.status(noDevice ? 404 : timeout ? 504 : 500).json({
+      ok: false,
+      error: noDevice ? 'SCANNER_NOT_FOUND' : timeout ? 'SCANNER_TIMEOUT' : 'SCANNER_SCAN_FAILED',
+      detail: errorText,
+    });
   }
 });
 
