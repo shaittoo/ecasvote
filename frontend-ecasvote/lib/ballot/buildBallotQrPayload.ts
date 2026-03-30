@@ -29,7 +29,6 @@ export function buildBallotQrPayload(
     // Stable key order for deterministic QR JSON.
     electionId: eid,
     ballotToken: tok,
-    ballotId: tok,
     templateVersion: tv,
     ...(tid ? { templateId: tid } : {}),
     ...(lh ? { layoutHash: lh } : {}),

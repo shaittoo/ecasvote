@@ -36,6 +36,8 @@ from app.omr_layout_v1 import (
     reproduce_warped_after_rotation,
     rotate_input,
     run_layout_scan_on_bgr,
+    score_bubble_fixed_roi,
+    _zone_fiducial_anchor_inv,
 )
 
 TEMPLATE_LAYOUT_PROFILES: dict[str, dict[str, Any]] = {
@@ -493,21 +495,28 @@ def detect_corner_fiducials(img: np.ndarray) -> dict[str, Any]:
     """
     Detect fiducials in 4 corner zones and score unique corner patterns.
     Returns geometric corners for homography and pattern confidence for orientation checks.
+    Zones match the robust grid: shallow top band + edge inset so TL/TR do not drift inward.
     """
     prep = preprocess_image(img)
     gray = prep["gray"]
-    inv = prep["inv"]
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    _, inv = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     h, w = gray.shape[:2]
-    m = int(min(w, h) * 0.20)
+    m = int(min(w, h) * 0.18)
+    top_band = max(18, int(min(w, h) * 0.11))
+    edge_inset = max(2, int(min(w, h) * 0.01))
     zones = {
-        "img_tl": (0, 0, m, m),
-        "img_tr": (w - m, 0, w, m),
-        "img_br": (w - m, h - m, w, h),
-        "img_bl": (0, h - m, m, h),
+        "img_tl": ((0, 0, m, top_band), (0.0, 0.0)),
+        "img_tr": ((w - m - edge_inset, 0, w - edge_inset, top_band), (float(w - 1), 0.0)),
+        "img_br": (
+            (w - m - edge_inset, h - m - edge_inset, w - edge_inset, h - edge_inset),
+            (float(w - 1), float(h - 1)),
+        ),
+        "img_bl": ((0, h - m - edge_inset, m, h - edge_inset), (0.0, float(h - 1))),
     }
     found: dict[str, dict[str, Any]] = {}
-    for name, (x0, y0, x1, y1) in zones.items():
-        c = _zone_best_centroid(inv, x0, y0, x1, y1)
+    for name, ((x0, y0, x1, y1), (ax, ay)) in zones.items():
+        c = _zone_fiducial_anchor_inv(inv, x0, y0, x1, y1, ax, ay)
         if c is None:
             continue
         patch = _extract_corner_patch(gray, c[0], c[1], size=max(28, int(min(w, h) * 0.04)))
@@ -1546,6 +1555,7 @@ def debug_annotate_ballot(
     side_margin = int(W * LAYOUT_SPEC.content_x0)
     content_x0 = side_margin
     content_w = int(W * (LAYOUT_SPEC.content_x1 - LAYOUT_SPEC.content_x0))
+    col_w = content_w // 3
 
     # Skip-zone overlay (semi-transparent red)
     overlay = canvas.copy()
@@ -1616,6 +1626,18 @@ def debug_annotate_ballot(
     raw_scores: dict[str, Any] = bubble_result.get("raw_scores") or {}
     selections: dict[str, list[str]] = bubble_result.get("selectionsByPosition") or {}
 
+    # Overlay key (drawn once; must not live inside per-bubble loop or legend is unset when bubbles=[]).
+    legend: list[tuple[tuple[int, int, int], str]] = [
+        ((0, 255, 0), "Picked mark"),
+        ((0, 220, 255), "Above threshold"),
+        ((60, 60, 255), "Below threshold"),
+        ((0, 0, 255), "Skip zone"),
+        ((0, 140, 255), "Side margin"),
+        ((255, 200, 0), "Column divider"),
+        ((0, 255, 80), "Fiducial detected"),
+        ((0, 0, 220), "Fiducial NOT found"),
+    ]
+
     for idx, contest in enumerate(contests):
         if idx not in contests_to_read:
             continue
@@ -1664,17 +1686,6 @@ def debug_annotate_ballot(
             else:
                 cv2.circle(canvas, (bx, by_), br, (60, 60, 255), 1)
 
-            # Legend (bottom-left)
-            legend = [
-                ((0, 255, 0), "Picked mark"),
-                ((0, 220, 255), "Above threshold"),
-                ((60, 60, 255), "Below threshold"),
-                ((0, 0, 255), "Skip zone"),
-        ((0, 140, 255), "Side margin"),
-        ((255, 200, 0), "Column divider"),
-        ((0, 255, 80), "Fiducial detected"),
-        ((0, 0, 220), "Fiducial NOT found"),
-    ]
     lx, ly = 4, H - 4 - len(legend) * 14
     for lc, lt in legend:
         cv2.rectangle(canvas, (lx, ly), (lx + 10, ly + 10), lc, -1)
@@ -1716,6 +1727,7 @@ def _finalize_layout_scan_result(res: dict[str, Any], rotation_deg: int) -> dict
     election_id = res.get("electionId")
     conf = bubble.get("confidence")
     conf_f = float(conf) if isinstance(conf, (int, float)) else 0.0
+    warp_applied = bool(wmeta.get("fiducial_warp", True))
     return {
         "qr": res.get("qr"),
         "qrRaw": res.get("qrRaw"),
@@ -1723,7 +1735,7 @@ def _finalize_layout_scan_result(res: dict[str, Any], rotation_deg: int) -> dict
         "selectionsByPosition": by_pos,
         "rawBubbleScores": res.get("rawBubbleScores") or {},
         "selectionsFlat": selections_multi_to_flat(by_pos),
-        "warpApplied": True,
+        "warpApplied": warp_applied,
         "ballotId": ballot_id,
         "electionId": election_id,
         "layoutResult": {
@@ -1859,26 +1871,85 @@ def _attach_input_rotation(result: dict[str, Any], deg: int) -> None:
             bubble["warpDebug"] = {"inputRotationDeg": deg}
 
 
+def _log_template_contest_ids(template: dict[str, Any] | None, label: str) -> None:
+    if not template:
+        print("WORKER TEMPLATE CONTEST IDS:", [])
+        print(f"{label}: <no template>")
+        return
+    top = template.get("contests") or []
+    print(
+        "WORKER TEMPLATE CONTEST IDS:",
+        [c.get("positionId") or c.get("id") for c in top if isinstance(c, dict)],
+    )
+    geom = template.get("geometry")
+    contests: list[Any] = []
+    if isinstance(geom, dict):
+        contests = list(geom.get("contests") or [])
+    if not contests:
+        contests = list(top)
+    ids = [
+        str(c.get("positionId") or c.get("id") or "")
+        for c in contests
+        if isinstance(c, dict)
+    ]
+    print(f"{label}: {[x for x in ids if x]}")
+
+
+def scan_ballot_image_with_warp(
+    image_b64: str, template: dict[str, Any] | None = None
+) -> tuple[dict[str, Any], np.ndarray | None]:
+    """
+    Like scan_ballot_image but returns the v2 warped BGR canvas when the gateway
+    pipeline succeeds (for debug overlay parity).
+    When GATEWAY_URL is set, the v2 path uses only /api/omr-layout — we do not
+    fall back to the client template (often election-wide and wrong per ballot).
+    Set OMR_ALLOW_TEMPLATE_FALLBACK=1 to restore legacy fallback.
+    """
+    import os
+
+    gateway_url = os.getenv("GATEWAY_URL", "").rstrip("/")
+    img = decode_image_b64(image_b64)
+    if gateway_url:
+        print(
+            "WORKER: client template (if present) is not used for contests when "
+            "GATEWAY_URL is set; layout + AUTO FILTERED CONTEST IDS come from GET /api/omr-layout"
+        )
+    _log_template_contest_ids(template, "WORKER TEMPLATE CONTEST IDS (client payload advisory)")
+    if gateway_url:
+        result, warped = _scan_ballot_image_v2(img, gateway_url)
+        if result.get("ok"):
+            return result, warped
+        allow_fb = os.getenv("OMR_ALLOW_TEMPLATE_FALLBACK", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if allow_fb:
+            print(
+                "WORKER: v2 failed; OMR_ALLOW_TEMPLATE_FALLBACK=1 — using template pipeline"
+            )
+            return _scan_ballot_image_once(img, template or {}), None
+        print(
+            "WORKER: v2 failed; returning error (no election-wide template fallback). "
+            "Fix QR/layout/hash or set OMR_ALLOW_TEMPLATE_FALLBACK=1 for dev only."
+        )
+        return result, warped
+    return _scan_ballot_image_once(img, template or {}), None
+
+
 def scan_ballot_image(image_b64: str, template: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Main entry point for ballot scanning.
 
     When GATEWAY_URL env var is set the new pipeline runs:
-      decode image → find rotation (QR corner) → warp once → decode QR
-      → fetch layout from gateway → verify hash → Otsu bubble scoring → return clean result.
+      decode image → try rotations 0°/90°/270° → warp → decode QR
+      → fetch layout from gateway → verify hash → fixed-ROI bubble scoring → return clean result.
 
     Falls back to the old template-based pipeline if GATEWAY_URL is not set or the
     new pipeline fails to find the QR / fetch the layout.
     """
-    import os
-    gateway_url = os.getenv("GATEWAY_URL", "").rstrip("/")
-    img = decode_image_b64(image_b64)
-    if gateway_url:
-        result = _scan_ballot_image_v2(img, gateway_url)
-        if result.get("ok"):
-            return result
-    # Fallback: template-based pipeline (layout from QR payload or template.geometry)
-    return _scan_ballot_image_once(img, template or {})
+    r, _ = scan_ballot_image_with_warp(image_b64, template)
+    return r
 
 
 # ─── V2 Pipeline (QR → fetch layout from gateway) ────────────────────────────
@@ -1917,41 +1988,7 @@ def _verify_layout_hash(stored_hash: str, qr_hash: str) -> bool:
     return _strip(stored_hash) == _strip(qr_hash)
 
 
-def _eval_bubble_otsu(
-    gray: np.ndarray,
-    cx_px: int,
-    cy_px: int,
-    half: int = 10,
-    tol: int = 7,
-) -> float:
-    """
-    Evaluate bubble fill using Otsu threshold.
-    Returns dark pixel ratio in [0, 1]; searches ±tol pixels around expected center.
-    """
-    h_img, w_img = gray.shape[:2]
-    cx = max(tol + half, min(w_img - 1 - tol - half, cx_px))
-    cy = max(tol + half, min(h_img - 1 - tol - half, cy_px))
-    best_r = 0.0
-    for dy in range(-tol, tol + 1):
-        for dx in range(-tol, tol + 1):
-            if dx * dx + dy * dy > tol * tol:
-                continue
-            px, py = cx + dx, cy + dy
-            x0 = max(0, px - half)
-            x1 = min(w_img, px + half + 1)
-            y0 = max(0, py - half)
-            y1 = min(h_img, py + half + 1)
-            patch = gray[y0:y1, x0:x1]
-            if patch.size < 4:
-                continue
-            _, th = cv2.threshold(patch, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            r = float(np.mean(th > 128))
-            if r > best_r:
-                best_r = r
-    return best_r
-
-
-BUBBLE_FILL_THRESHOLD = 0.45  # dark pixel ratio → filled
+BUBBLE_FILL_THRESHOLD = 0.45  # circular ROI ink score → filled
 
 
 def _score_bubbles_v3(
@@ -1959,34 +1996,25 @@ def _score_bubbles_v3(
     layout: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Score all bubbles using stored absolute CSS-px coordinates + Otsu threshold.
+    Score bubbles from layout geometry: normalized center (nx,ny) then warped pixels;
+    fixed circular ROI + optional ±2 px (score_bubble_fixed_roi).
 
-    layout must be an OmGeometryTemplate dict:
-      { page: {width, height}, contests: [{positionId, maxVotes, bubbles: [{optionId,x,y,w,h}]}] }
-
-    Returns:
-      { selectionsByPosition: {pid: [optionId, ...]},
-        rawBubbleScores: {pid: {oid: float}},
-        confidence: float }
+    layout: { page: {width, height}, contests: [...] }
     """
     gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
     h_img, w_img = warped.shape[:2]
 
     page = layout.get("page") or {}
-    pw = float(page.get("width") or 0)
-    ph = float(page.get("height") or 0)
+    pw = float(page.get("width") or CANONICAL_W)
+    ph = float(page.get("height") or CANONICAL_H)
     if pw <= 0 or ph <= 0:
         return {"selectionsByPosition": {}, "rawBubbleScores": {}, "confidence": 0.0,
-                "error": "layout_page_invalid"}
-
-    sx = w_img / pw
-    sy = h_img / ph
-    # Bubble half-size in canonical pixels (≈15px CSS × scale)
-    bub_half = max(6, int(7.5 * min(sx, sy)))
+                "error": "layout_page_invalid", "bubbleOverlay": []}
 
     selections: dict[str, list[str]] = {}
     raw_scores: dict[str, dict[str, float]] = {}
     contest_confs: list[float] = []
+    bubble_overlay: list[dict[str, Any]] = []
 
     for contest in (layout.get("contests") or []):
         pid = str(contest.get("positionId") or "")
@@ -2003,10 +2031,26 @@ def _score_bubbles_v3(
             yf = float(bubble.get("y") or 0)
             wf = float(bubble.get("w") or 0)
             hf = float(bubble.get("h") or 0)
-            # Center of bubble in warped-image pixels
-            cx_px = int((xf + wf / 2.0) * sx)
-            cy_px = int((yf + hf / 2.0) * sy)
-            scores[oid] = _eval_bubble_otsu(gray, cx_px, cy_px, half=bub_half, tol=7)
+            if wf > 1e-9 or hf > 1e-9:
+                nx = (xf + wf / 2.0) / pw
+                ny = (yf + hf / 2.0) / ph
+            else:
+                nx, ny = xf, yf
+            nx = max(0.0, min(1.0, nx))
+            ny = max(0.0, min(1.0, ny))
+            ex = int(round(max(0, min(w_img - 1, nx * w_img))))
+            ey = int(round(max(0, min(h_img - 1, ny * h_img))))
+            sc, rx, ry = score_bubble_fixed_roi(gray, ex, ey)
+            scores[oid] = sc
+            bubble_overlay.append(
+                {
+                    "positionId": pid,
+                    "optionId": oid,
+                    "expected": [ex, ey],
+                    "evaluated": [rx, ry],
+                    "score": sc,
+                }
+            )
 
         raw_scores[pid] = scores
 
@@ -2036,19 +2080,18 @@ def _score_bubbles_v3(
         "selectionsByPosition": selections,
         "rawBubbleScores": raw_scores,
         "confidence": overall,
+        "bubbleOverlay": bubble_overlay,
     }
 
 
-def _scan_ballot_image_v2(img: np.ndarray, gateway_url: str) -> dict[str, Any]:
+def _scan_ballot_image_v2(
+    img: np.ndarray, gateway_url: str
+) -> tuple[dict[str, Any], np.ndarray | None]:
     """
-    New pipeline:
-    1. Find best rotation using QR corner-position check.
-    2. Warp ONCE with corner fiducials.
-    3. Decode QR → ballotId, layoutHash.
-    4. Fetch layout from gateway.
-    5. Verify layoutHash.
-    6. Score bubbles (Otsu, position-based only).
-    7. Return structured result.
+    1. Try rotations 0°, 90°, 270°: fiducial warp + QR on warped canvas; pick best composite score.
+    2. Decode QR → ballotId, layoutHash.
+    3. Fetch layout, verify hash, score bubbles (fixed circular ROI).
+    Returns (result_dict, warped_bgr_or_None) — same warped image for debug overlay.
     """
     from app.omr_layout_v1 import (
         apply_corner_fiducial_warp_only,
@@ -2056,60 +2099,109 @@ def _scan_ballot_image_v2(img: np.ndarray, gateway_url: str) -> dict[str, Any]:
         rotate_input,
     )
 
-    # ── Step 1: Find correct rotation ────────────────────────────────────────
-    best_deg = 0
-    found_ok = False
-    for deg in (0, 90, 180, 270):
+    def _ballot_id_from_qr(q: Any) -> str:
+        if not isinstance(q, dict):
+            return ""
+        return str(q.get("ballotId") or q.get("ballotToken") or "").strip()
+
+    best: tuple[float, int, np.ndarray, dict[str, Any], Any, str | None, float, dict] | None = None
+    for deg in (0, 90, 270):
         rotated = rotate_input(img, deg)
-        qr_pos = _detect_qr_corner_position(rotated)
-        if qr_pos.get("qr_corner_ok"):
-            best_deg = deg
-            found_ok = True
-            break
-        if qr_pos.get("has_qr") and not found_ok:
-            best_deg = deg
+        warped_try, wmeta_try = apply_corner_fiducial_warp_only(
+            rotated, detect_corner_fiducials, compute_homography
+        )
+        if warped_try is None:
+            continue
+        qr_obj, qr_raw, qr_conf, qr_dbg = decode_qr_on_warped(
+            warped_try, parse_ballot_qr_extended
+        )
+        fid_c = float(wmeta_try.get("corner_confidence") or 0.0)
+        bid = _ballot_id_from_qr(qr_obj)
+        has_bid = 1.0 if bid else 0.0
+        qconf = float(qr_conf or 0.0)
+        composite = has_bid * 500.0 + qconf * 80.0 + fid_c
+        if best is None or composite > best[0]:
+            best = (
+                composite,
+                deg,
+                warped_try,
+                wmeta_try,
+                qr_obj,
+                qr_raw,
+                qconf,
+                qr_dbg,
+            )
 
-    rotated = rotate_input(img, best_deg)
+    if best is None:
+        return (
+            {"ok": False, "error": "warp_failed", "warpMeta": {}},
+            None,
+        )
 
-    # ── Step 2: Warp ─────────────────────────────────────────────────────────
-    warped, wmeta = apply_corner_fiducial_warp_only(
-        rotated, detect_corner_fiducials, compute_homography
-    )
-    if warped is None:
-        return {"ok": False, "error": "warp_failed", "warpMeta": wmeta}
+    _score, best_deg, warped, wmeta, qr_obj, qr_raw, qr_conf, qr_dbg = best
 
-    # ── Step 3: Decode QR ────────────────────────────────────────────────────
-    qr_obj, qr_raw, qr_conf, qr_dbg = decode_qr_on_warped(warped, parse_ballot_qr_extended)
     if not isinstance(qr_obj, dict):
-        return {"ok": False, "error": "qr_decode_failed", "warpMeta": wmeta,
-                "inputRotationDeg": best_deg}
+        return (
+            {
+                "ok": False,
+                "error": "qr_decode_failed",
+                "warpMeta": wmeta,
+                "inputRotationDeg": best_deg,
+            },
+            warped,
+        )
 
-    ballot_id = str(qr_obj.get("ballotId") or qr_obj.get("ballotToken") or "").strip()
+    ballot_id = _ballot_id_from_qr(qr_obj)
     election_id = str(qr_obj.get("electionId") or "").strip()
     template_id = str(qr_obj.get("templateId") or "").strip()
     qr_layout_hash = str(qr_obj.get("layoutHash") or "").strip()
 
     if not ballot_id:
-        return {"ok": False, "error": "no_ballot_id_in_qr", "qr": qr_obj,
-                "inputRotationDeg": best_deg}
+        return (
+            {"ok": False, "error": "no_ballot_id_in_qr", "qr": qr_obj,
+             "inputRotationDeg": best_deg},
+            warped,
+        )
 
-    # ── Step 4: Fetch layout ──────────────────────────────────────────────────
     layout_record = _fetch_ballot_layout(ballot_id, gateway_url)
     if layout_record is None:
-        return {"ok": False, "error": "layout_not_found", "ballotId": ballot_id,
-                "inputRotationDeg": best_deg}
+        return (
+            {"ok": False, "error": "layout_not_found", "ballotId": ballot_id,
+             "inputRotationDeg": best_deg},
+            warped,
+        )
 
-    # ── Step 5: Verify hash ───────────────────────────────────────────────────
     stored_hash = str(layout_record.get("layoutHash") or "")
     if not _verify_layout_hash(stored_hash, qr_layout_hash):
-        return {"ok": False, "error": "layout_hash_mismatch", "ballotId": ballot_id,
-                "inputRotationDeg": best_deg}
+        return (
+            {"ok": False, "error": "layout_hash_mismatch", "ballotId": ballot_id,
+             "inputRotationDeg": best_deg},
+            warped,
+        )
 
     layout = layout_record.get("layout")
     if not isinstance(layout, dict):
-        return {"ok": False, "error": "layout_invalid", "ballotId": ballot_id}
+        return (
+            {
+                "ok": False,
+                "error": "layout_invalid",
+                "ballotId": ballot_id,
+                "inputRotationDeg": best_deg,
+            },
+            warped,
+        )
 
-    # ── Step 6: Score bubbles ─────────────────────────────────────────────────
+    _lc = layout.get("contests") or []
+    _acct = str(layout_record.get("academicOrg") or "").strip()
+    if _acct:
+        print("AUTO ORG (from issuance / GET omr-layout):", _acct)
+    _fc = [
+        str(c.get("positionId") or c.get("id") or "")
+        for c in _lc
+        if isinstance(c, dict) and (c.get("positionId") or c.get("id"))
+    ]
+    print("AUTO FILTERED CONTEST IDS (stored layout):", _fc)
+
     bubble_result = _score_bubbles_v3(warped, layout)
 
     by_pos = bubble_result.get("selectionsByPosition") or {}
@@ -2122,38 +2214,44 @@ def _scan_ballot_image_v2(img: np.ndarray, gateway_url: str) -> dict[str, Any]:
 
     warp_debug = dict(wmeta)
     warp_debug["inputRotationDeg"] = best_deg
+    warp_applied = bool(wmeta.get("fiducial_warp", True))
 
-    return {
-        "ok": True,
-        "ballotId": ballot_id,
-        "electionId": resolved_election_id,
-        "templateId": resolved_template_id,
-        "selections": selections_flat,
-        "confidence": overall_conf,
-        # Legacy / debug fields (keep for backward compat with gateway + UI)
-        "qr": qr_obj,
-        "qrRaw": qr_raw,
-        "selectionsByPosition": by_pos,
-        "rawBubbleScores": bubble_result.get("rawBubbleScores") or {},
-        "selectionsFlat": selections_flat,
-        "warpApplied": True,
-        "bubbleRead": {
-            "pipeline": "layout-v2-gateway",
-            "confidence": overall_conf,
-            "warpDebug": warp_debug,
-            "contestsDetected": len(by_pos),
-            "contestsInTemplate": len((layout.get("contests") or [])),
-            "selectionsByPosition": by_pos,
-            "error": None,
-        },
-        "layoutResult": {
+    return (
+        {
+            "ok": True,
             "ballotId": ballot_id,
             "electionId": resolved_election_id,
             "templateId": resolved_template_id,
             "selections": selections_flat,
             "confidence": overall_conf,
+            "qr": qr_obj,
+            "qrRaw": qr_raw,
+            "qrDecodeConfidence": qr_conf,
+            "qrDebug": qr_dbg,
+            "selectionsByPosition": by_pos,
+            "rawBubbleScores": bubble_result.get("rawBubbleScores") or {},
+            "selectionsFlat": selections_flat,
+            "warpApplied": warp_applied,
+            "bubbleRead": {
+                "pipeline": "layout-v2-gateway",
+                "confidence": overall_conf,
+                "warpDebug": warp_debug,
+                "contestsDetected": len(by_pos),
+                "contestsInTemplate": len((layout.get("contests") or [])),
+                "selectionsByPosition": by_pos,
+                "bubbleOverlay": bubble_result.get("bubbleOverlay") or [],
+                "error": None,
+            },
+            "layoutResult": {
+                "ballotId": ballot_id,
+                "electionId": resolved_election_id,
+                "templateId": resolved_template_id,
+                "selections": selections_flat,
+                "confidence": overall_conf,
+            },
         },
-    }
+        warped,
+    )
 
 
 def _debug_annotate_v2(
@@ -2161,25 +2259,27 @@ def _debug_annotate_v2(
     layout: dict[str, Any],
     bubble_result: dict[str, Any],
 ) -> np.ndarray:
-    """
-    Draw debug overlay on the warped image:
-    - Cyan circles: expected bubble centers (from stored layout)
-    - Green filled circles: detected as filled
-    - Red circles: detected as blank
-    - Yellow squares: fiducial corner zones
-    """
+    """Same warped canvas as scan: blue expected, green/red at evaluated, yellow tie line if refined."""
     canvas = warped.copy()
     h_img, w_img = canvas.shape[:2]
 
     page = layout.get("page") or {}
-    pw = float(page.get("width") or 1)
-    ph = float(page.get("height") or 1)
-    sx = w_img / pw
-    sy = h_img / ph
+    pw = float(page.get("width") or CANONICAL_W)
+    ph = float(page.get("height") or CANONICAL_H)
 
-    selections: dict[str, list[str]] = bubble_result.get("selectionsByPosition") or {}
+    br = bubble_result.get("bubbleRead") or {}
+    selections: dict[str, list[str]] = (
+        bubble_result.get("selectionsByPosition") or br.get("selectionsByPosition") or {}
+    )
     raw_scores: dict[str, dict[str, float]] = bubble_result.get("rawBubbleScores") or {}
-    bub_r = max(6, int(7.5 * min(sx, sy)))
+    overlay_list = br.get("bubbleOverlay") or bubble_result.get("bubbleOverlay") or []
+    overlay_by = {
+        (str(r.get("positionId")), str(r.get("optionId"))): r
+        for r in overlay_list
+        if r.get("positionId") is not None and r.get("optionId") is not None
+    }
+
+    bub_r = max(6, int(7.5 * min(w_img / pw, h_img / ph)))
 
     for contest in (layout.get("contests") or []):
         pid = str(contest.get("positionId") or "")
@@ -2187,28 +2287,50 @@ def _debug_annotate_v2(
         scores = raw_scores.get(pid) or {}
         for bubble in (contest.get("bubbles") or []):
             oid = str(bubble.get("optionId") or "")
-            xf = float(bubble.get("x") or 0)
-            yf = float(bubble.get("y") or 0)
-            wf = float(bubble.get("w") or 0)
-            hf = float(bubble.get("h") or 0)
-            cx = int((xf + wf / 2.0) * sx)
-            cy = int((yf + hf / 2.0) * sy)
+            row = overlay_by.get((pid, oid))
+            if row:
+                ex, ey = int(row["expected"][0]), int(row["expected"][1])
+                rx, ry = int(row["evaluated"][0]), int(row["evaluated"][1])
+                # BGR: expected center = blue ring + small inner dot; refined offset = yellow line
+                cv2.circle(canvas, (ex, ey), bub_r, (255, 0, 0), 2)
+                cv2.circle(canvas, (ex, ey), 3, (255, 100, 0), -1)
+                if (ex, ey) != (rx, ry):
+                    cv2.line(canvas, (ex, ey), (rx, ry), (0, 255, 255), 1)
+                cx, cy = rx, ry
+            else:
+                xf = float(bubble.get("x") or 0)
+                yf = float(bubble.get("y") or 0)
+                wf = float(bubble.get("w") or 0)
+                hf = float(bubble.get("h") or 0)
+                if wf > 1e-9 or hf > 1e-9:
+                    nx = (xf + wf / 2.0) / pw
+                    ny = (yf + hf / 2.0) / ph
+                else:
+                    nx, ny = xf, yf
+                nx = max(0.0, min(1.0, nx))
+                ny = max(0.0, min(1.0, ny))
+                ex = int(round(max(0, min(w_img - 1, nx * w_img))))
+                ey = int(round(max(0, min(h_img - 1, ny * h_img))))
+                cv2.circle(canvas, (ex, ey), bub_r, (255, 0, 0), 2)
+                cv2.circle(canvas, (ex, ey), 3, (255, 100, 0), -1)
+                cx, cy = ex, ey
             score = float(scores.get(oid) or 0.0)
             if oid in filled_set:
                 cv2.circle(canvas, (cx, cy), bub_r, (0, 255, 0), -1)
                 cv2.circle(canvas, (cx, cy), bub_r, (0, 200, 0), 2)
             elif score >= BUBBLE_FILL_THRESHOLD * 0.7:
-                cv2.circle(canvas, (cx, cy), bub_r, (0, 220, 255), 2)  # yellow – near threshold
+                cv2.circle(canvas, (cx, cy), bub_r, (0, 220, 255), 2)
             else:
-                cv2.circle(canvas, (cx, cy), bub_r, (60, 60, 255), 1)  # red – blank
+                cv2.circle(canvas, (cx, cy), bub_r, (60, 60, 255), 1)
             cv2.putText(canvas, f"{score:.2f}", (cx + bub_r + 2, cy + 4),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.22, (200, 200, 200), 1, cv2.LINE_AA)
 
-    # Legend
     legend = [
-        ((0, 255, 0), "Filled bubble"),
+        ((255, 0, 0), "Expected (geometry)"),
+        ((0, 255, 255), "Refine offset"),
+        ((0, 255, 0), "Filled (evaluated)"),
         ((0, 220, 255), "Near threshold"),
-        ((60, 60, 255), "Blank bubble"),
+        ((60, 60, 255), "Blank"),
     ]
     lx, ly = 4, h_img - 4 - len(legend) * 14
     for lc, lt in legend:

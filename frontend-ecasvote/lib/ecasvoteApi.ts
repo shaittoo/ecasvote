@@ -705,6 +705,8 @@ export type ScannerValidateSuccess = {
   electionId: string;
   ballotToken: string;
   templateVersion: string;
+  /** Issued voter's roster department — use for governor row (matches print `?department=`). */
+  voterDepartment?: string;
   mockSelections: Record<string, string>;
 };
 
@@ -925,6 +927,30 @@ export async function saveOmrLayout(params: SaveOmrLayoutParams): Promise<{ ok: 
     throw new Error(data.error ?? `saveOmrLayout failed (${res.status})`);
   }
   return res.json();
+}
+
+/** GET /api/omr-layout/:ballotId — stored geometry + issuance academic org + contest ids. */
+export type OmrLayoutRecord = {
+  ballotId: string;
+  electionId: string;
+  templateId: string;
+  templateVersion: string;
+  layoutHash: string;
+  layout: unknown;
+  academicOrg?: string;
+  allowedContestIds?: string[];
+};
+
+export async function fetchOmrLayout(ballotId: string): Promise<OmrLayoutRecord> {
+  const res = await fetch(
+    `${getGatewayBase()}/api/omr-layout/${encodeURIComponent(ballotId)}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `fetchOmrLayout failed (${res.status})`);
+  }
+  return res.json() as Promise<OmrLayoutRecord>;
 }
 
 export async function fetchHourlyParticipation(

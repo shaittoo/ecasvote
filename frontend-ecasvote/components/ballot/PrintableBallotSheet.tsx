@@ -79,8 +79,11 @@ const SCAN_GEOMETRY = {
   v2InnerCellPadPx: 5,
   v2TableRowHeightClass: "h-[40px] min-h-[40px] max-h-[40px]",
   contestHeaderHeight: "min-h-[24px] print:min-h-[20px]",
-  /** Rendered QR bitmap width/height (px); ~156 keeps scan decode reliable on A4. */
-  qrWidth: 156,
+  /**
+   * Rendered QR bitmap (screen px before print zoom). Larger modules decode more reliably
+   * on paper scans; EC level H adds margin for damaged print/photo.
+   */
+  qrWidth: 200,
   /** White padding around the QR image inside the footer (quiet zone; no border). */
   qrQuietZonePaddingPx: 14,
   /** Inset the QR block from bottom-right toward page center, away from timing tracks. */
@@ -88,9 +91,10 @@ const SCAN_GEOMETRY = {
   qrFooterInsetRightPx: 14,
   /** Below the single 24px top registration band + gap — z-[2] bg must not cover fiducials. */
   contentInsetTop: "pt-[32px]",
-  contentInsetBottom: "pb-10",
+  contentInsetBottom: "pb-10 print:pb-4",
   contentInsetX: "px-8",
-  contentInsetPrint: "print:pt-[32px] print:pb-9 print:px-7",
+  /** Tighter print insets so contests + QR share one A4; zoom-fit further compresses if needed. */
+  contentInsetPrint: "print:pt-7 print:pb-3 print:px-6",
 } as const;
 
 const SCAN_GEOMETRY_V3 = {
@@ -530,8 +534,8 @@ export function PrintableBallotSheet({
 
     QRCode.toDataURL(json, {
       width: qrWidth,
-      margin: 2,
-      errorCorrectionLevel: "M",
+      margin: 3,
+      errorCorrectionLevel: "H",
       color: { dark: "#000000", light: "#ffffff" },
     })
       .then((url) => {
@@ -552,6 +556,43 @@ export function PrintableBallotSheet({
     };
   }, [electionId, ballotToken, templateVersion, templateId, layoutHash, qrWidth]);
 
+  /** Shrink the whole ballot to one A4 sheet when content is tall (Chromium print + zoom).
+   *  Must register before the geometry `beforeprint` handler so bubble rects match the scaled print.
+   */
+  useLayoutEffect(() => {
+    const rootId = "printable-ballot-root";
+    const MM_TO_PX = 96 / 25.4;
+    /** Keep in sync with @page ballot-sheet in globals.css */
+    const printableHeightMm = 297 - 8 - 5;
+    const printableWidthMm = 210 - 5 - 5;
+    const MIN_ZOOM = 0.64;
+
+    const applyPrintFit = () => {
+      const root = document.getElementById(rootId) as HTMLElement | null;
+      if (!root) return;
+      root.style.removeProperty("zoom");
+      const targetH = printableHeightMm * MM_TO_PX;
+      const targetW = printableWidthMm * MM_TO_PX;
+      const h = root.scrollHeight;
+      const w = root.scrollWidth;
+      if (h <= 0 || w <= 0) return;
+      let scale = Math.min(1, (targetH / h) * 0.99, (targetW / w) * 0.99);
+      if (scale >= 0.998) return;
+      scale = Math.max(MIN_ZOOM, scale);
+      root.style.setProperty("zoom", String(scale));
+    };
+
+    const clearPrintFit = () => {
+      document.getElementById(rootId)?.style.removeProperty("zoom");
+    };
+
+    window.addEventListener("beforeprint", applyPrintFit);
+    window.addEventListener("afterprint", clearPrintFit);
+    return () => {
+      window.removeEventListener("beforeprint", applyPrintFit);
+      window.removeEventListener("afterprint", clearPrintFit);
+    };
+  }, []);
 
   useLayoutEffect(() => {
     if (isV3 || isV4 || !onGeometryReadyRef.current) return;
@@ -661,7 +702,7 @@ export function PrintableBallotSheet({
             className={`relative z-[2] flex h-full min-h-0 flex-col bg-white bg-clip-content ${SCAN_GEOMETRY.contentInsetTop} ${SCAN_GEOMETRY.contentInsetBottom} ${SCAN_GEOMETRY.contentInsetX} ${SCAN_GEOMETRY.contentInsetPrint}`}
           >
             {/* Header */}
-            <header className="mb-1 flex flex-col gap-1 border-b-2 border-black pb-1 print:mb-0.5 print:gap-0.5 print:pb-0.5 sm:flex-row sm:items-start sm:justify-between">
+            <header className="mb-1 flex flex-col gap-1 border-b-2 border-black pb-1 print:mb-0 print:gap-0.5 print:pb-0.5 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1 text-center sm:pr-2 sm:text-left">
                 {institutionLines.map((line, i) => (
                   <p
@@ -685,13 +726,13 @@ export function PrintableBallotSheet({
                 ) : null}
                 {/* Recipient identity line intentionally omitted from printed ballot. */}
               </div>
-              <aside className="w-full shrink-0 border-2 border-black bg-white p-1 text-[8px] leading-snug text-black sm:max-w-[240px] print:max-w-[220px] print:p-1 print:text-[7px]">
+              <aside className="w-full shrink-0 border-2 border-black bg-white p-1 text-[8px] leading-snug text-black sm:max-w-[240px] print:max-w-[200px] print:p-0.5 print:text-[6.5px] print:leading-tight">
                 <p className="text-justify">{BALLOT_V2_INSTRUCTIONS}</p>
               </aside>
             </header>
 
             {/* Contest geometry intentionally uniform for repeatable bubble cropping/scoring. */}
-            <section className="flex-1 space-y-2 print:space-y-2" aria-label="Ballot contests">
+            <section className="flex-1 space-y-2 print:space-y-1" aria-label="Ballot contests">
               {positionsSorted.map((pos, posIdx) => {
                 const barBg = SECTION_HEADER_BW;
                 let running = 0;
@@ -914,7 +955,7 @@ export function PrintableBallotSheet({
               })}
             </section>
 
-            <footer className="mt-1 flex items-end justify-end border-t-2 border-black pt-3 print:mt-0.5 print:pt-2">
+            <footer className="mt-1 flex items-end justify-end border-t-2 border-black pt-3 print:mt-0 print:pt-1.5">
               <div
                 className="shrink-0 bg-white"
                 style={{

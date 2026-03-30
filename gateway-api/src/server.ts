@@ -1071,7 +1071,16 @@ app.post('/scanner/scan-image', async (req, res) => {
   try {
     const workerBody: Record<string, unknown> = { image_base64: imageBase64 };
     if (scannerTemplate && typeof scannerTemplate === 'object') {
-      workerBody.template = scannerTemplate; // forwarded for backward compat
+      const st = scannerTemplate as {
+        contests?: { positionId?: string; id?: string }[];
+        geometry?: { contests?: { positionId?: string; id?: string }[] };
+      };
+      console.log(
+        'GATEWAY TEMPLATE CONTEST IDS:',
+        st.contests?.map((c) => c.positionId || c.id) ??
+          st.geometry?.contests?.map((c) => c.positionId || c.id),
+      );
+      workerBody.template = scannerTemplate; // optional; worker uses /api/omr-layout when configured
     }
     const wr = await fetch(`${workerUrl}/scan`, {
       method: 'POST',
@@ -1173,6 +1182,15 @@ app.post('/scanner/debug-image', async (req, res) => {
   }
 
   try {
+    const st = scannerTemplate as {
+      contests?: { positionId?: string; id?: string }[];
+      geometry?: { contests?: { positionId?: string; id?: string }[] };
+    };
+    console.log(
+      'GATEWAY TEMPLATE CONTEST IDS:',
+      st.contests?.map((c) => c.positionId || c.id) ??
+        st.geometry?.contests?.map((c) => c.positionId || c.id),
+    );
     const wr = await fetch(`${workerUrl}/debug-json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1206,6 +1224,7 @@ app.post('/scanner/validate', async (req, res) => {
   try {
     const issuance = await prisma.paperBallotIssuance.findFirst({
       where: { electionId, ballotToken },
+      include: { voter: true },
     });
 
     if (!issuance) {
@@ -1238,6 +1257,8 @@ app.post('/scanner/validate', async (req, res) => {
       electionId,
       ballotToken,
       templateVersion: issuance.templateVersion,
+      /** Academic org on the voter roster — same field used for ballot print `?department=` / governor row. */
+      voterDepartment: String(issuance.voter?.department ?? '').trim(),
       mockSelections,
     });
   } catch (err: any) {
@@ -1378,6 +1399,37 @@ app.get('/api/omr-layout/:ballotId', async (req, res) => {
     } catch {
       return res.status(500).json({ error: 'LAYOUT_JSON_CORRUPT', ballotId });
     }
+
+    const issuance = await prisma.paperBallotIssuance.findFirst({
+      where: { ballotToken: ballotId },
+      include: { voter: true },
+    });
+    const academicOrg = String(issuance?.voter?.department ?? '').trim();
+
+    const allowedContestIds: string[] = [];
+    if (layout && typeof layout === 'object' && !Array.isArray(layout) && 'contests' in layout) {
+      const raw = (layout as { contests?: unknown }).contests;
+      if (Array.isArray(raw)) {
+        for (const c of raw) {
+          if (c && typeof c === 'object' && !Array.isArray(c)) {
+            const pid = String(
+              (c as { positionId?: string; id?: string }).positionId ??
+                (c as { id?: string }).id ??
+                '',
+            ).trim();
+            if (pid) allowedContestIds.push(pid);
+          }
+        }
+      }
+    }
+
+    console.log(
+      '[GET /api/omr-layout] ballotId=%s academicOrg=%s contests=%s',
+      ballotId,
+      academicOrg || '(none)',
+      allowedContestIds.length ? allowedContestIds.join(',') : '(none)',
+    );
+
     return res.json({
       ballotId: record.ballotId,
       electionId: record.electionId,
@@ -1385,6 +1437,8 @@ app.get('/api/omr-layout/:ballotId', async (req, res) => {
       templateVersion: record.templateVersion,
       layoutHash: record.layoutHash,
       layout,
+      academicOrg,
+      allowedContestIds,
     });
   } catch (err: any) {
     console.error('GET /api/omr-layout/:ballotId error:', err);
