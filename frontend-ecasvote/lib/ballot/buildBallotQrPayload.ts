@@ -1,19 +1,16 @@
 import type { BallotQrPayload } from "./printableBallotTypes";
 
 /**
- * Builds the compact QR payload for a paper ballot.
- * Layout is NOT embedded in the QR — the OMR worker fetches it from the backend
- * using ballotId after scanning.  layoutHash is stored for integrity verification.
+ * Builds the logical QR payload for a paper ballot.
+ * Layout is NOT in the QR — the OMR worker fetches it from GET /api/omr-layout/:ballotId
+ * using ballotToken after decode.
  *
- * Payload is deterministically ordered and stays well under 500 bytes.
- * Shape: { ballotId, electionId, templateVersion, templateId?, layoutHash? }
+ * Encoded on paper as compact JSON `{ e, b, v }` (see {@link stringifyBallotQrPayload}).
  */
 export function buildBallotQrPayload(
   electionId: string,
   ballotToken: string,
-  templateVersion: string,
-  templateId?: string,
-  layoutHash?: string
+  templateVersion: string
 ): BallotQrPayload {
   const eid = electionId.trim();
   const tok = ballotToken.trim();
@@ -23,22 +20,21 @@ export function buildBallotQrPayload(
       "Ballot QR payload requires non-empty electionId, ballotToken, and templateVersion"
     );
   }
-  const tid = templateId?.trim();
-  const lh = layoutHash?.trim();
   return {
-    // Stable key order for deterministic QR JSON.
     electionId: eid,
     ballotToken: tok,
     templateVersion: tv,
-    ...(tid ? { templateId: tid } : {}),
-    ...(lh ? { layoutHash: lh } : {}),
   };
 }
 
 /** Same as {@link buildBallotQrPayload} — paper hybrid uses only this shape. */
 export const buildPaperBallotQrPayload = buildBallotQrPayload;
 
-/** Compact JSON string for QR (smaller, fewer modules than pretty-printed). */
+/** Encodes as `{ e, b, v }` — shorter keys + fewer QR modules than long property names. */
 export function stringifyBallotQrPayload(payload: BallotQrPayload): string {
-  return JSON.stringify(payload);
+  return JSON.stringify({
+    e: payload.electionId,
+    b: payload.ballotToken,
+    v: payload.templateVersion,
+  });
 }

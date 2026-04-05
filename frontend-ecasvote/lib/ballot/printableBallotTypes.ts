@@ -23,21 +23,18 @@ export type PrintableBallotPosition = {
 
 /**
  * JSON encoded in the paper ballot QR (identification only — no vote data, no bubble layout).
- * Field order: electionId → ballotToken → templateVersion (stable for docs / scanners).
- * The OMR worker fetches the full layout from /api/omr-layout/:ballotId after scanning.
+ * Printed QR uses only electionId, ballotToken, templateVersion.
+ * Optional fields are accepted when parsing legacy QRs or alternate scanner outputs.
  */
 export type BallotQrPayload = {
   electionId: string;
   ballotToken: string;
-  /** Same as `ballotToken`; preferred key for scanners. */
+  /** Same as `ballotToken` — some tools emit `ballotId` instead. */
   ballotId?: string;
   templateVersion: string;
-  /** Stable id matching {@link OmGeometryTemplate.templateId}. */
+  /** @deprecated Legacy QR; layout is loaded from the gateway by ballot token. */
   templateId?: string;
-  /**
-   * SHA-256 of the stored layoutJson (e.g. "sha256:abcdef…").
-   * OMR worker verifies this against the fetched layout before using it.
-   */
+  /** @deprecated Legacy QR; hash is stored server-side with the layout. */
   layoutHash?: string;
 };
 
@@ -76,14 +73,8 @@ export type PrintableBallotSheetProps = {
   /** Extra subtitle under title (e.g. locality) */
   jurisdictionLine?: string;
   /**
-   * SHA-256 hash of the stored layout JSON (e.g. "sha256:abcdef…").
-   * Set by the parent after saving layout to /api/omr-layout; used in QR instead
-   * of embedding the full bubble geometry.
-   */
-  layoutHash?: string;
-  /**
    * After layout, emits measured bubble boxes (v2 sheet) for scanner JSON.
-   * Coordinates are relative to `#printable-ballot-root`.
+   * Coordinates are relative to the scan frame (`#printable-ballot-scan-frame`).
    */
   onGeometryTemplateReady?: (template: OmGeometryTemplate) => void;
 };

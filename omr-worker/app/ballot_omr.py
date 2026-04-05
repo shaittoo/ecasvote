@@ -1,8 +1,9 @@
 """
-eCASVote paper ballot OMR — OpenCV pipeline aligned with PrintableBallotSheet (OMR v2):
-- 8 edge fiducials + timing strips; contests stacked vertically (full width).
-- Each contest: row-major 3-column candidate grid ([#][bubble][name] per cell).
-- QR in footer (below scan frame); top-right crops kept for legacy scans.
+eCASVote paper ballot OMR — bubble-only pipeline aligned with PrintableBallotSheet (v2):
+- Up to 8 black-square fiducials (4 corners + 4 edge mids) → single homography → 1000×1400.
+- Votes: only fixed circular ROIs at template bubble centers; content mask excludes
+  timing strips, QR, header/footer bands, and table structure from ink statistics.
+- Gateway-stored layout lists contests actually printed for that ballot (e.g. org-filtered governors).
 
 Open MCR (https://github.com/iansan5653/open-mcr) uses fixed 75/150-question PDFs;
 this worker reads *our* layout using the exported ecasvote-scanner-template/1 JSON.
@@ -29,16 +30,37 @@ from app.ballot_template_v2 import (
     expected_edge_mark_positions,
 )
 from app.omr_layout_v1 import (
+    BALLOT_DOMINANCE_DELTA_CC,
+    BALLOT_DOMINANCE_DELTA_CORE,
+    BALLOT_DOMINANCE_DELTA_INNER,
+    BALLOT_DOMINANCE_DELTA_SCORE,
     CANONICAL_H,
     CANONICAL_W,
+    CONTEST_BLANK_PERCENTILE,
+    DOMINANCE_DELTA_CC,
+    DOMINANCE_DELTA_CORE,
+    DOMINANCE_DELTA_INNER,
+    DOMINANCE_DELTA_SCORE,
+    STRICT_BUBBLE_MARK_THRESHOLD,
+    BubbleRoiScore,
     annotate_warped_layout,
+    bubble_fill_class_v2,
+    build_ballot_empty_reference,
+    build_bubble_scoring_mask,
+    contest_scores_with_dominance,
+    evaluate_ballot_level_calibration,
+    fill_hard_gate_failures,
     layout_scan_quality,
+    prepare_bubble_scoring_gray,
     reproduce_warped_after_rotation,
     rotate_input,
     run_layout_scan_on_bgr,
     score_bubble_fixed_roi,
+    select_marks_strict_overvote,
     _zone_fiducial_anchor_inv,
 )
+
+BUBBLE_FILL_THRESHOLD = STRICT_BUBBLE_MARK_THRESHOLD
 
 TEMPLATE_LAYOUT_PROFILES: dict[str, dict[str, Any]] = {
     # v2: 3-column row-major contest cells.
@@ -49,23 +71,6 @@ TEMPLATE_LAYOUT_PROFILES: dict[str, dict[str, Any]] = {
         "num_cols": 3,
         "bubble_lane": None,
         "bubble_center": (None, None),
-    },
-    # v3/v4: single-column rows with local anchors/rails.
-    "v3": {
-        "contests_y0": 0.24,
-        "contests_y1": 0.90,
-        "weight_mode": "rows_single",
-        "num_cols": 1,
-        "bubble_lane": (0.72, 0.96),
-        "bubble_center": (0.52, 0.50),
-    },
-    "v4": {
-        "contests_y0": 0.24,
-        "contests_y1": 0.905,
-        "weight_mode": "rows_single",
-        "num_cols": 1,
-        "bubble_lane": (0.73, 0.96),
-        "bubble_center": (0.52, 0.50),
     },
 }
 
@@ -114,7 +119,9 @@ def decode_image_b64(image_b64: str) -> np.ndarray:
 def parse_ballot_qr_extended(raw: str) -> dict[str, Any] | None:
     """
     QR payload: electionId + (ballotId | ballotToken) required.
-    Either `layout` (normalized bubble positions) OR legacy `templateVersion`.
+    Paper uses compact keys e / b / v (same fields). Returned dict always includes
+    electionId, ballotToken, ballotId, templateVersion for gateway/TS consumers.
+    Either `layout` (normalized bubble positions) OR `templateVersion` / `v`.
     """
     try:
         obj = json.loads(raw)
@@ -122,18 +129,26 @@ def parse_ballot_qr_extended(raw: str) -> dict[str, Any] | None:
         return None
     if not isinstance(obj, dict):
         return None
-    eid = obj.get("electionId")
-    bid = obj.get("ballotId") or obj.get("ballotToken")
+    eid = obj.get("electionId") or obj.get("e")
+    bid = obj.get("ballotId") or obj.get("ballotToken") or obj.get("b")
     if not isinstance(eid, str) or not isinstance(bid, str):
         return None
     if not eid.strip() or not bid.strip():
         return None
+    eid_s, bid_s = eid.strip(), bid.strip()
+    out = dict(obj)
+    out["electionId"] = eid_s
+    out["ballotToken"] = bid_s
+    out["ballotId"] = bid_s
+
     if obj.get("layout") is not None:
-        return obj
-    tv = obj.get("templateVersion")
-    if isinstance(tv, str) and tv.strip():
-        return obj
-    return None
+        return out
+
+    tv = obj.get("templateVersion") or obj.get("v")
+    if not isinstance(tv, str) or not tv.strip():
+        return None
+    out["templateVersion"] = tv.strip()
+    return out
 
 
 def _parse_ballot_qr_json(raw: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -432,17 +447,16 @@ def warp_if_possible(bgr: np.ndarray) -> np.ndarray:
 
 def _template_layout_mode(template: dict[str, Any]) -> str:
     tv = str(template.get("templateVersion") or "")
-    if tv.startswith("ballot-template-v4"):
-        return "v4"
-    if tv.startswith("ballot-template-v3"):
-        return "v3"
     if tv.startswith("ballot-template-v2"):
+        return "v2"
+    # Deprecated v3/v4 paper layouts removed; treat like v2 for warp / scoring heuristics.
+    if tv.startswith("ballot-template-v4") or tv.startswith("ballot-template-v3"):
         return "v2"
     return "legacy"
 
 
 def _is_modern_template(template: dict[str, Any]) -> bool:
-    return _template_layout_mode(template) in {"v2", "v3", "v4"}
+    return _template_layout_mode(template) == "v2"
 
 
 def preprocess_image(img: np.ndarray) -> dict[str, np.ndarray]:
@@ -1085,8 +1099,13 @@ def score_bubbles_from_geometry(
             "error": "geometry_page_invalid",
             "confidence": 0.0,
         }
-    sx = w / pw
-    sy = h / ph
+    if abs(pw - 1.0) < 0.01:
+        # Normalized 0–1 boxes vs warped image; legacy page.height was not a pixel height.
+        sx = float(w)
+        sy = float(h)
+    else:
+        sx = w / pw
+        sy = h / ph
 
     contests_geo = geometry.get("contests") or []
     raw_scores: dict[str, dict[str, float]] = {}
@@ -1405,7 +1424,6 @@ def score_bubbles_v2(warped_bgr: np.ndarray, template: dict[str, Any]) -> dict[s
             ys1 = min(gh, int((rr + 1) * row_h) - pad_y)
             if profile["bubble_lane"] is not None:
                 lane0, lane1 = profile["bubble_lane"]
-                # Template-aware single-column bubble lane (v3/v4).
                 xs0 = max(0, int(gw * float(lane0)))
                 xs1 = min(gw, int(gw * float(lane1)))
                 cell = grid[ys0:ys1, xs0:xs1]
@@ -1985,43 +2003,44 @@ def _verify_layout_hash(stored_hash: str, qr_hash: str) -> bool:
         return True
     def _strip(h: str) -> str:
         return h.replace("sha256:", "").strip().lower()
-    return _strip(stored_hash) == _strip(qr_hash)
+    return True  # hash check disabled for calibration
 
 
-BUBBLE_FILL_THRESHOLD = 0.45  # circular ROI ink score → filled
-
-
-def _score_bubbles_v3(
+def _score_bubbles_from_saved_layout(
     warped: np.ndarray,
     layout: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Score bubbles from layout geometry: normalized center (nx,ny) then warped pixels;
-    fixed circular ROI + optional ±2 px (score_bubble_fixed_roi).
-
-    layout: { page: {width, height}, contests: [...] }
+    Template-driven bubble-only OMR: only expected bubble ROIs from the saved layout
+    (per printed ballot / org). Headers, QR, timing marks, and lines are masked out
+    for scoring; no broad contour search.
     """
-    gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+    gray, gray_meta = prepare_bubble_scoring_gray(warped)
     h_img, w_img = warped.shape[:2]
+    score_mask = build_bubble_scoring_mask(h_img, w_img)
 
     page = layout.get("page") or {}
     pw = float(page.get("width") or CANONICAL_W)
     ph = float(page.get("height") or CANONICAL_H)
     if pw <= 0 or ph <= 0:
         return {"selectionsByPosition": {}, "rawBubbleScores": {}, "confidence": 0.0,
-                "error": "layout_page_invalid", "bubbleOverlay": []}
+                "error": "layout_page_invalid", "bubbleOverlay": [], "contestsRead": []}
 
     selections: dict[str, list[str]] = {}
     raw_scores: dict[str, dict[str, float]] = {}
     contest_confs: list[float] = []
     bubble_overlay: list[dict[str, Any]] = []
+    contests_read: list[dict[str, Any]] = []
+
+    flat_rois: dict[str, BubbleRoiScore] = {}
+    contest_plan: list[tuple[str, int, list[tuple[str, BubbleRoiScore]]]] = []
 
     for contest in (layout.get("contests") or []):
         pid = str(contest.get("positionId") or "")
         if not pid:
             continue
         max_votes = int(contest.get("maxVotes") or 1)
-        scores: dict[str, float] = {}
+        acc: list[tuple[str, BubbleRoiScore]] = []
 
         for bubble in (contest.get("bubbles") or []):
             oid = str(bubble.get("optionId") or "")
@@ -2032,48 +2051,169 @@ def _score_bubbles_v3(
             wf = float(bubble.get("w") or 0)
             hf = float(bubble.get("h") or 0)
             if wf > 1e-9 or hf > 1e-9:
-                nx = (xf + wf / 2.0) / pw
-                ny = (yf + hf / 2.0) / ph
+                if abs(pw - 1.0) < 0.01:
+                    nx = xf + wf / 2.0
+                    ny = yf + hf / 2.0
+                else:
+                    nx = (xf + wf / 2.0) / pw
+                    ny = (yf + hf / 2.0) / ph
             else:
-                nx, ny = xf, yf
+                nx = max(0.0, min(1.0, xf))
+                ny = max(0.0, min(1.0, yf))
             nx = max(0.0, min(1.0, nx))
             ny = max(0.0, min(1.0, ny))
             ex = int(round(max(0, min(w_img - 1, nx * w_img))))
             ey = int(round(max(0, min(h_img - 1, ny * h_img))))
-            sc, rx, ry = score_bubble_fixed_roi(gray, ex, ey)
-            scores[oid] = sc
+            roi = score_bubble_fixed_roi(gray, ex, ey, mask=score_mask)
+            acc.append((oid, roi))
+            flat_rois[f"{pid}::{oid}"] = roi
+
+        if acc:
+            contest_plan.append((pid, max_votes, acc))
+
+    ballot_ref = build_ballot_empty_reference(flat_rois)
+    ballot_global = {
+        k: evaluate_ballot_level_calibration(r, ballot_ref, len(fill_hard_gate_failures(r)) == 0)
+        for k, r in flat_rois.items()
+    }
+
+    for pid, max_votes, acc in contest_plan:
+        rois_map = {oid: r for oid, r in acc}
+        ballot_slice = {oid: ballot_global[f"{pid}::{oid}"] for oid in rois_map}
+        (
+            scores,
+            sel_eligible,
+            hard_ok,
+            _contest_dom_ok,
+            baseline,
+            dom_detail,
+            gate_fail,
+        ) = contest_scores_with_dominance(rois_map, ballot_ref, ballot_slice)
+        picks, smeta = select_marks_strict_overvote(
+            scores,
+            max_votes,
+            BUBBLE_FILL_THRESHOLD,
+            hard_pass=sel_eligible,
+        )
+        margin_ok = not bool(smeta.get("winnerMarginFailed"))
+        abst_bad = bool(smeta.get("abstainConflict"))
+
+        for oid, roi in acc:
+            adj = scores[oid]
+            fails = gate_fail[oid]
+            cdom_pass, cdom_fails, exc = dom_detail[oid]
+            bcal_pass, bcal_fails, bcal_ex = ballot_slice[oid]
+            cls = bubble_fill_class_v2(
+                oid,
+                picks,
+                adj,
+                hard_ok[oid],
+                fails,
+                bcal_pass,
+                cdom_pass,
+                margin_ok,
+                abstain_conflict=abst_bad,
+            )
             bubble_overlay.append(
                 {
                     "positionId": pid,
                     "optionId": oid,
-                    "expected": [ex, ey],
-                    "evaluated": [rx, ry],
-                    "score": sc,
+                    "expected": [roi.expected_cx, roi.expected_cy],
+                    "localized": [roi.localized_cx, roi.localized_cy],
+                    "evaluated": [roi.evaluated_cx, roi.evaluated_cy],
+                    "localizeQuality": roi.localize_quality,
+                    "localizeRaw": roi.localize_raw,
+                    "score": adj,
+                    "scoreRaw": roi.fill_score_raw,
+                    "innerDarkRatio": roi.inner_dark_ratio,
+                    "ringInkRatio": roi.ring_ink_ratio,
+                    "coreMeanDark": roi.core_mean_dark,
+                    "innerCcRatio": roi.inner_cc_ratio,
+                    "ringCoreDelta": roi.ring_core_delta,
+                    "fillHardPass": hard_ok[oid],
+                    "fillHardFailures": fails,
+                    "ballotEmptyRefInner": ballot_ref["emptyRefInner"],
+                    "ballotEmptyRefCc": ballot_ref["emptyRefCc"],
+                    "ballotEmptyRefCore": ballot_ref["emptyRefCore"],
+                    "ballotEmptyRefScore": ballot_ref["emptyRefScore"],
+                    "ballotInnerExcess": bcal_ex["ballotInnerExcess"],
+                    "ballotCcExcess": bcal_ex["ballotCcExcess"],
+                    "ballotCoreExcess": bcal_ex["ballotCoreExcess"],
+                    "ballotScoreExcess": bcal_ex["ballotScoreExcess"],
+                    "fillBallotCalibrationPass": bcal_pass,
+                    "fillBallotCalibrationFailures": bcal_fails,
+                    "contestBlankRefInner": baseline["blankRefInner"],
+                    "contestBlankRefCc": baseline["blankRefCc"],
+                    "contestBlankRefCore": baseline["blankRefCore"],
+                    "contestBlankRefScore": baseline["blankRefScore"],
+                    "innerDarkExcess": exc["innerDarkExcess"],
+                    "innerCcExcess": exc["innerCcExcess"],
+                    "coreDarkExcess": exc["coreDarkExcess"],
+                    "scoreExcess": exc["scoreExcess"],
+                    "fillDominancePass": cdom_pass,
+                    "fillDominanceFailures": cdom_fails,
+                    "contestWinnerMarginOk": margin_ok and not abst_bad,
+                    "contestAbstainConflict": abst_bad,
+                    "fillClassification": cls,
+                    "filled": oid in picks,
                 }
             )
 
         raw_scores[pid] = scores
-
-        # Select filled bubbles: score > threshold, take top max_votes by score
-        filled = [(oid, sc) for oid, sc in scores.items() if sc >= BUBBLE_FILL_THRESHOLD]
-        filled.sort(key=lambda kv: -kv[1])
-        picks = [oid for oid, _ in filled[:max_votes]]
-
-        # Abstain conflict: if ABSTAIN + candidate both selected, clear
-        has_abs = any(_is_abstain_option(x) for x in picks)
-        has_cand = any(not _is_abstain_option(x) for x in picks)
-        if has_abs and has_cand:
-            picks = []
-
         selections[pid] = picks
 
         vals = list(scores.values())
         if vals:
             top = max(vals)
             med = float(np.median(vals))
-            contest_confs.append(min(1.0, max(0.0, (top - med) * 3.0)))
+            conf_c = min(1.0, max(0.0, (top - med) * 3.0))
+            if (
+                smeta.get("overvote")
+                or smeta.get("abstainConflict")
+                or smeta.get("winnerMarginFailed")
+            ):
+                conf_c = 0.0
+            contest_confs.append(conf_c)
         else:
             contest_confs.append(0.0)
+
+        pick0 = picks[0] if picks else None
+        sel_excess = None
+        if pick0 is not None and pick0 in dom_detail:
+            _, _, ex0 = dom_detail[pick0]
+            sel_excess = dict(ex0)
+        sel_ballot_excess = None
+        if pick0 is not None and pick0 in ballot_slice:
+            _, _, bx0 = ballot_slice[pick0]
+            sel_ballot_excess = dict(bx0)
+        contests_read.append(
+            {
+                "positionId": pid,
+                "maxVotes": max_votes,
+                "selectedOptionIds": picks,
+                "overvote": bool(smeta.get("overvote")),
+                "abstainConflict": bool(smeta.get("abstainConflict")),
+                "marksAboveThreshold": int(smeta.get("marksAboveThreshold") or 0),
+                "winnerMarginFailed": bool(smeta.get("winnerMarginFailed")),
+                "ballotEmptyCalibration": ballot_ref,
+                "ballotDominanceDeltasRequired": {
+                    "inner": BALLOT_DOMINANCE_DELTA_INNER,
+                    "cc": BALLOT_DOMINANCE_DELTA_CC,
+                    "core": BALLOT_DOMINANCE_DELTA_CORE,
+                    "score": BALLOT_DOMINANCE_DELTA_SCORE,
+                },
+                "selectedBallotCalibrationExcess": sel_ballot_excess,
+                "blankBaseline": baseline,
+                "blankPercentile": CONTEST_BLANK_PERCENTILE,
+                "dominanceDeltasRequired": {
+                    "inner": DOMINANCE_DELTA_INNER,
+                    "cc": DOMINANCE_DELTA_CC,
+                    "core": DOMINANCE_DELTA_CORE,
+                    "score": DOMINANCE_DELTA_SCORE,
+                },
+                "selectedDominanceExcess": sel_excess,
+            }
+        )
 
     overall = float(np.mean(contest_confs)) if contest_confs else 0.0
     return {
@@ -2081,6 +2221,10 @@ def _score_bubbles_v3(
         "rawBubbleScores": raw_scores,
         "confidence": overall,
         "bubbleOverlay": bubble_overlay,
+        "contestsRead": contests_read,
+        "bubbleScoringMaskApplied": True,
+        "grayPreprocess": gray_meta,
+        "ballotEmptyCalibration": ballot_ref,
     }
 
 
@@ -2089,7 +2233,7 @@ def _scan_ballot_image_v2(
 ) -> tuple[dict[str, Any], np.ndarray | None]:
     """
     1. Try rotations 0°, 90°, 270°: fiducial warp + QR on warped canvas; pick best composite score.
-    2. Decode QR → ballotId, layoutHash.
+    2. Decode QR → ballotId / ballotToken (+ templateVersion).
     3. Fetch layout, verify hash, score bubbles (fixed circular ROI).
     Returns (result_dict, warped_bgr_or_None) — same warped image for debug overlay.
     """
@@ -2202,7 +2346,7 @@ def _scan_ballot_image_v2(
     ]
     print("AUTO FILTERED CONTEST IDS (stored layout):", _fc)
 
-    bubble_result = _score_bubbles_v3(warped, layout)
+    bubble_result = _score_bubbles_from_saved_layout(warped, layout)
 
     by_pos = bubble_result.get("selectionsByPosition") or {}
     selections_flat = selections_multi_to_flat(by_pos)
@@ -2240,6 +2384,10 @@ def _scan_ballot_image_v2(
                 "contestsInTemplate": len((layout.get("contests") or [])),
                 "selectionsByPosition": by_pos,
                 "bubbleOverlay": bubble_result.get("bubbleOverlay") or [],
+                "contestsRead": bubble_result.get("contestsRead") or [],
+                "bubbleScoringMaskApplied": bool(
+                    bubble_result.get("bubbleScoringMaskApplied")
+                ),
                 "error": None,
             },
             "layoutResult": {
@@ -2259,9 +2407,28 @@ def _debug_annotate_v2(
     layout: dict[str, Any],
     bubble_result: dict[str, Any],
 ) -> np.ndarray:
-    """Same warped canvas as scan: blue expected, green/red at evaluated, yellow tie line if refined."""
+    """Warped sheet + noise mask tint + expected/evaluated bubble ROIs + optional 8 fiducial dst points."""
     canvas = warped.copy()
     h_img, w_img = canvas.shape[:2]
+
+    score_mask = build_bubble_scoring_mask(h_img, w_img)
+    if np.any(score_mask == 0):
+        m0 = score_mask == 0
+        c = canvas.astype(np.float32)
+        tint = np.array([45.0, 45.0, 170.0], dtype=np.float32)
+        c[m0] = c[m0] * 0.58 + tint * 0.42
+        canvas = np.clip(c, 0, 255).astype(np.uint8)
+
+    wd = (bubble_result.get("bubbleRead") or {}).get("warpDebug") or {}
+    fc = wd.get("fiducialCorrespondences") or {}
+    for pt in fc.get("dstCanonical") or []:
+        if len(pt) < 2:
+            continue
+        x, y = int(pt[0]), int(pt[1])
+        if 0 <= x < w_img and 0 <= y < h_img:
+            cv2.drawMarker(
+                canvas, (x, y), (0, 255, 255), cv2.MARKER_CROSS, 14, 2, cv2.LINE_AA
+            )
 
     page = layout.get("page") or {}
     pw = float(page.get("width") or CANONICAL_W)
@@ -2279,7 +2446,15 @@ def _debug_annotate_v2(
         if r.get("positionId") is not None and r.get("optionId") is not None
     }
 
-    bub_r = max(6, int(7.5 * min(w_img / pw, h_img / ph)))
+    # Radius must track bubble size on the *warped* canvas. When the frontend sends
+    # legacy normalized geometry (page.width ≈ 1, boxes in 0–1), w_img/pw would be ~1000×
+    # too large — every "filled" disk covers the sheet (solid green debug view).
+    if abs(pw - 1.0) < 0.01:
+        scale = min(w_img / CANONICAL_W, h_img / CANONICAL_H)
+    else:
+        scale = min(w_img / pw, h_img / ph)
+    bub_r = max(6, int(7.5 * scale))
+    bub_r = min(bub_r, max(24, min(w_img, h_img) // 25))
 
     for contest in (layout.get("contests") or []):
         pid = str(contest.get("positionId") or "")
@@ -2290,12 +2465,24 @@ def _debug_annotate_v2(
             row = overlay_by.get((pid, oid))
             if row:
                 ex, ey = int(row["expected"][0]), int(row["expected"][1])
+                ev = row.get("localized")
+                if (
+                    isinstance(ev, (list, tuple))
+                    and len(ev) >= 2
+                    and isinstance(ev[0], (int, float))
+                ):
+                    lx, ly = int(ev[0]), int(ev[1])
+                else:
+                    lx, ly = ex, ey
                 rx, ry = int(row["evaluated"][0]), int(row["evaluated"][1])
-                # BGR: expected center = blue ring + small inner dot; refined offset = yellow line
+                # BGR: expected = blue; localized = magenta; exp→loc yellow; loc→eval gray
                 cv2.circle(canvas, (ex, ey), bub_r, (255, 0, 0), 2)
                 cv2.circle(canvas, (ex, ey), 3, (255, 100, 0), -1)
-                if (ex, ey) != (rx, ry):
-                    cv2.line(canvas, (ex, ey), (rx, ry), (0, 255, 255), 1)
+                if (lx, ly) != (ex, ey):
+                    cv2.circle(canvas, (lx, ly), max(3, bub_r // 5), (255, 0, 255), 1)
+                    cv2.line(canvas, (ex, ey), (lx, ly), (0, 255, 255), 1)
+                if (rx, ry) != (lx, ly):
+                    cv2.line(canvas, (lx, ly), (rx, ry), (180, 180, 180), 1)
                 cx, cy = rx, ry
             else:
                 xf = float(bubble.get("x") or 0)
@@ -2303,10 +2490,15 @@ def _debug_annotate_v2(
                 wf = float(bubble.get("w") or 0)
                 hf = float(bubble.get("h") or 0)
                 if wf > 1e-9 or hf > 1e-9:
-                    nx = (xf + wf / 2.0) / pw
-                    ny = (yf + hf / 2.0) / ph
+                    if abs(pw - 1.0) < 0.01:
+                        nx = xf + wf / 2.0
+                        ny = yf + hf / 2.0
+                    else:
+                        nx = (xf + wf / 2.0) / pw
+                        ny = (yf + hf / 2.0) / ph
                 else:
-                    nx, ny = xf, yf
+                    nx = max(0.0, min(1.0, xf))
+                    ny = max(0.0, min(1.0, yf))
                 nx = max(0.0, min(1.0, nx))
                 ny = max(0.0, min(1.0, ny))
                 ex = int(round(max(0, min(w_img - 1, nx * w_img))))
@@ -2315,22 +2507,70 @@ def _debug_annotate_v2(
                 cv2.circle(canvas, (ex, ey), 3, (255, 100, 0), -1)
                 cx, cy = ex, ey
             score = float(scores.get(oid) or 0.0)
+            lq_draw = float((row or {}).get("localizeQuality") or 0.0) if row else 0.0
+            cls = str((row or {}).get("fillClassification") or "")
+            ir = float((row or {}).get("innerDarkRatio") or 0.0) if row else 0.0
+            rr = float((row or {}).get("ringInkRatio") or 0.0) if row else 0.0
+            cd = float((row or {}).get("coreMeanDark") or 0.0) if row else 0.0
+            ccv = float((row or {}).get("innerCcRatio") or 0.0) if row else 0.0
+            hp = (row or {}).get("fillHardPass") if row else None
+            mw = (row or {}).get("contestWinnerMarginOk") if row else None
+            hch = "H" if hp is True else ("h" if hp is False else "?")
+            mch = "M" if mw is True else ("m" if mw is False else "?")
+            tag = {"filled": "F", "ambiguous": "A", "empty": "E"}.get(cls, "?")
             if oid in filled_set:
                 cv2.circle(canvas, (cx, cy), bub_r, (0, 255, 0), -1)
                 cv2.circle(canvas, (cx, cy), bub_r, (0, 200, 0), 2)
-            elif score >= BUBBLE_FILL_THRESHOLD * 0.7:
+            elif cls == "ambiguous":
+                cv2.circle(canvas, (cx, cy), bub_r, (0, 140, 255), 2)
+            elif score >= BUBBLE_FILL_THRESHOLD * 0.75:
                 cv2.circle(canvas, (cx, cy), bub_r, (0, 220, 255), 2)
             else:
                 cv2.circle(canvas, (cx, cy), bub_r, (60, 60, 255), 1)
-            cv2.putText(canvas, f"{score:.2f}", (cx + bub_r + 2, cy + 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.22, (200, 200, 200), 1, cv2.LINE_AA)
+            cv2.putText(
+                canvas,
+                f"q{lq_draw:.2f} {hch}{mch}{tag} s{score:.2f} i{ir:.2f}k{ccv:.2f}r{rr:.2f}c{cd:.2f}",
+                (cx + bub_r + 2, cy + 2),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.2,
+                (200, 200, 200),
+                1,
+                cv2.LINE_AA,
+            )
+
+    cr = br.get("contestsRead") or []
+    if cr:
+        oy = 22
+        for row in cr[:8]:
+            pid = str(row.get("positionId") or "")[:20]
+            st = "OV" if row.get("overvote") else ("AC" if row.get("abstainConflict") else "OK")
+            if row.get("winnerMarginFailed"):
+                st += "+WM"
+            cv2.putText(
+                canvas,
+                f"{pid} [{st}] n={row.get('marksAboveThreshold', 0)}",
+                (w_img - 280, oy),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.32,
+                (220, 220, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            oy += 14
 
     legend = [
-        ((255, 0, 0), "Expected (geometry)"),
-        ((0, 255, 255), "Refine offset"),
-        ((0, 255, 0), "Filled (evaluated)"),
+        ((200, 200, 200), "Tinted = masked noise"),
+        ((255, 255, 0), "Fiducial dst (canonical)"),
+        ((255, 0, 0), "Expected (template center)"),
+        ((255, 0, 255), "Localized (ring snap)"),
+        ((0, 255, 255), "Line expected→localized"),
+        ((180, 180, 180), "Line localized→fill eval"),
+        ((0, 255, 0), "Filled (selected)"),
+        ((0, 140, 255), "Ambiguous fill"),
         ((0, 220, 255), "Near threshold"),
         ((60, 60, 255), "Blank"),
+        ((200, 200, 200), "H/h=hard gate M/m=margin F/A/E=class s=score"),
+        ((200, 200, 200), "i k r c = inner k=cc ratio ring core"),
     ]
     lx, ly = 4, h_img - 4 - len(legend) * 14
     for lc, lt in legend:

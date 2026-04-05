@@ -907,12 +907,13 @@ export interface HourlyParticipationResponse {
 export interface SaveOmrLayoutParams {
   ballotId: string;
   electionId: string;
-  templateId: string;
   templateVersion: string;
   /** OmGeometryTemplate — serialised to JSON by the gateway. */
   layout: object;
-  /** SHA-256 hash of the layout JSON string (e.g. "sha256:abcdef…"). */
-  layoutHash: string;
+  /** Optional; gateway defaults to `layout.templateId`. */
+  templateId?: string;
+  /** Optional; gateway computes sha256 of canonical layout JSON if omitted. */
+  layoutHash?: string;
 }
 
 /** POST /api/omr-layout — store measured bubble geometry for a ballot. */

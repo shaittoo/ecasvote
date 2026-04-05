@@ -27,7 +27,7 @@ export type ScannerSheetLayout = {
   };
   qr: {
     role: "ballot-identity-only";
-    payloadShape: "{ electionId, ballotToken, templateVersion, templateId? }";
+    payloadShape: "{ e, b, v } (electionId, ballotToken, templateVersion); long keys still accepted";
     /** Optional: human note for export / worker docs */
     placementNote?: string;
     quietZoneModules?: number;
@@ -157,9 +157,9 @@ const DEFAULT_SHEET: ScannerSheetLayout = {
   },
   qr: {
     role: "ballot-identity-only",
-    payloadShape: "{ electionId, ballotToken, templateVersion, templateId? }",
+    payloadShape: "{ e, b, v } (same three fields as long-key JSON)",
     placementNote: "Bottom-right metadata zone inside the registration frame",
-    quietZoneModules: 4,
+    quietZoneModules: 2,
   },
   bubbles: {
     shape: "round",

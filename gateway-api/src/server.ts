@@ -1348,27 +1348,42 @@ app.post('/scanner/confirm-vote', async (req, res) => {
  * Store measured bubble geometry for a ballot.  Called by the print page when
  * onGeometryTemplateReady fires (after DOM layout).  Uses UPSERT so re-prints
  * of the same ballotId always have the latest measured positions.
- * Body: { ballotId, electionId, templateId, templateVersion, layout, layoutHash }
+ * Body: { ballotId, electionId, templateVersion, layout, templateId?, layoutHash? }
+ * — templateId defaults to layout.templateId; layoutHash defaults to sha256(layout JSON).
  */
 app.post('/api/omr-layout', async (req, res) => {
   const ballotId = String(req.body?.ballotId ?? '').trim();
   const electionId = String(req.body?.electionId ?? '').trim();
-  const templateId = String(req.body?.templateId ?? '').trim();
+  let templateId = String(req.body?.templateId ?? '').trim();
   const templateVersion = String(req.body?.templateVersion ?? '').trim();
   const layout = req.body?.layout;
-  const layoutHash = String(req.body?.layoutHash ?? '').trim();
+  let layoutHash = String(req.body?.layoutHash ?? '').trim();
 
-  if (!ballotId || !electionId || !templateId || !templateVersion || !layout || !layoutHash) {
+  if (!ballotId || !electionId || !templateVersion || !layout) {
     return res.status(400).json({
-      error: 'ballotId, electionId, templateId, templateVersion, layout, and layoutHash are required',
+      error: 'ballotId, electionId, templateVersion, and layout are required',
     });
   }
   if (typeof layout !== 'object' || Array.isArray(layout)) {
     return res.status(400).json({ error: 'layout must be an object (OmGeometryTemplate)' });
   }
 
+  if (!templateId) {
+    const tid = (layout as { templateId?: unknown }).templateId;
+    if (typeof tid === 'string' && tid.trim()) templateId = tid.trim();
+  }
+  if (!templateId) {
+    return res.status(400).json({
+      error: 'templateId must be sent in the body or present on layout.templateId',
+    });
+  }
+
   try {
     const layoutJson = JSON.stringify(layout);
+    if (!layoutHash) {
+      const hex = crypto.createHash('sha256').update(layoutJson, 'utf8').digest('hex');
+      layoutHash = `sha256:${hex}`;
+    }
     await prisma.ballotLayout.upsert({
       where: { ballotId },
       update: { electionId, templateId, templateVersion, layoutJson, layoutHash },

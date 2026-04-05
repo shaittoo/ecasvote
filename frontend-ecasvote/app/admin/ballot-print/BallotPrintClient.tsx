@@ -21,10 +21,6 @@ import { mapPositionsToPrintableBallot } from "@/lib/ballot/mapPositionsToPrinta
 import { filterPositionsByVoterDepartment } from "@/lib/ballot/filterPositionsByDepartment";
 import type { PrintableBallotPosition } from "@/lib/ballot/printableBallotTypes";
 import { BALLOT_TEMPLATE_VERSION } from "@/lib/ballot/ballotTemplate";
-import {
-  buildScannerTemplateFromPrintableBallot,
-  mergeGeometryIntoScannerTemplate,
-} from "@/lib/ballot/scannerTemplateSpec";
 import { Button } from "@/components/ui/button";
 import { buildPreviewBallotToken } from "@/lib/ballot/previewBallotId";
 import { buildVoterPreviewBallotToken } from "@/lib/ballot/buildVoterPaperBallotId";
@@ -65,7 +61,6 @@ export function BallotPrintClient() {
     undefined
   );
   const [scannerTemplateJson, setScannerTemplateJson] = useState<string | null>(null);
-  const [layoutHash, setLayoutHash] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,7 +71,6 @@ export function BallotPrintClient() {
       setIssuedBallotToken(null);
       setVoterIssuanceRow(undefined);
       setScannerTemplateJson(null);
-      setLayoutHash(null);
       try {
         const [election, posRows] = await Promise.all([
           fetchElection(electionId),
@@ -298,31 +292,16 @@ export function BallotPrintClient() {
               ballotSeries={ballotSeries || undefined}
               ballotZone={ballotZone || undefined}
               jurisdictionLine={jurisdictionLine || undefined}
-              layoutHash={layoutHash ?? undefined}
               onGeometryTemplateReady={(geom) => {
                 setScannerTemplateJson(JSON.stringify(geom, null, 2));
-              
-                const layoutJson = JSON.stringify(geom);
-                crypto.subtle
-                  .digest("SHA-256", new TextEncoder().encode(layoutJson))
-                  .then((buf) => {
-                    const hex = Array.from(new Uint8Array(buf))
-                      .map((b) => b.toString(16).padStart(2, "0"))
-                      .join("");
-                    const hash = `sha256:${hex}`;
-                    setLayoutHash(hash);
-                    return saveOmrLayout({
-                      ballotId: ballotToken,
-                      electionId,
-                      templateId: geom.templateId,
-                      templateVersion: BALLOT_TEMPLATE_VERSION,
-                      layout: geom,
-                      layoutHash: hash,
-                    });
-                  })
-                  .catch((err) => {
-                    console.error("Failed to save OMR layout:", err);
-                  });
+                void saveOmrLayout({
+                  ballotId: ballotToken,
+                  electionId,
+                  templateVersion: BALLOT_TEMPLATE_VERSION,
+                  layout: geom,
+                }).catch((err) => {
+                  console.error("Failed to save OMR layout:", err);
+                });
               }}
             />
           </>

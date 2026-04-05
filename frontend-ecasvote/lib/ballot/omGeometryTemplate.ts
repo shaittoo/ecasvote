@@ -1,6 +1,8 @@
 /**
  * Machine-readable bubble geometry for template-driven OMR (no layout inference).
- * Coordinates are CSS pixels relative to `#printable-ballot-root` after layout.
+ * Coordinates are CSS pixels relative to `#printable-ballot-scan-frame` (fiducial/timing
+ * border), matching the quad the OMR worker rectifies to canonical pixels — not the outer
+ * `#printable-ballot-root` (which includes page padding and skews scale).
  */
 
 /** Minimal shape for hashing — avoids importing printableBallotTypes (cycle). */
@@ -10,6 +12,7 @@ export type TemplateIdPositionInput = {
   candidates: { candidateId: string }[];
 };
 
+/** Top-left and size in CSS px relative to `#printable-ballot-scan-frame` (same units as `page`). */
 export type OmGeometryBubble = {
   optionId: string;
   label: string;

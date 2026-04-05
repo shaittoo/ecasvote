@@ -5,8 +5,12 @@ Environment variables:
   GATEWAY_URL          URL of the eCASVote gateway (e.g. http://127.0.0.1:3000).
                        When set, the worker fetches bubble layout from /api/omr-layout/:ballotId
                        instead of reading it from the QR payload or the template object.
-  OMR_FIDUCIAL_WARP    Set to 1/true/yes to enable perspective warp from edge fiducials.
-                       Default is off (images are only resized to the canonical 1000×1400 canvas).
+  OMR_FIDUCIAL_WARP    Default ``1`` (on): perspective warp from up to 8 edge/corner fiducials
+                       to canonical 1000×1400. Set to ``0``/``false``/``off`` for resize-only (debug).
+  OMR_POST_WARP_DESKEW Default ``0``. Set to ``1`` to run an extra Hough deskew after fiducial
+                       warp (can shift bubble geometry; keep off when fiducials succeed).
+  OMR_BUBBLE_CLAHE    Default ``1``: apply CLAHE on BT.601 luminance before bubble ROI stats.
+                       Set to ``0``/``false``/``off`` to disable (compare stability on tinted scans).
 """
 
 import base64

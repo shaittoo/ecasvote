@@ -28,7 +28,6 @@ import {
   BALLOT_V2_INSTRUCTIONS,
   BALLOT_V2_INSTITUTION_LINES,
 } from "@/lib/ballot/ballotTemplateV2";
-import { BALLOT_TEMPLATE_V3, BALLOT_TEMPLATE_V4 } from "@/lib/ballot/ballotTemplate";
 import { sortCandidatesByLastName } from "@/lib/ballot/mapPositionsToPrintable";
 import {
   buildDeterministicTemplateId,
@@ -36,9 +35,6 @@ import {
   type OmGeometryBubble,
   type OmGeometryTemplate,
 } from "@/lib/ballot/omGeometryTemplate";
-
-/** Contest headers: print-safe black & white only (no tinted section colors). */
-const SECTION_HEADER_BW = "bg-white";
 
 const SCAN_GEOMETRY = {
   /**
@@ -80,8 +76,7 @@ const SCAN_GEOMETRY = {
   v2TableRowHeightClass: "h-[40px] min-h-[40px] max-h-[40px]",
   contestHeaderHeight: "min-h-[24px] print:min-h-[20px]",
   /**
-   * Rendered QR bitmap (screen px before print zoom). Larger modules decode more reliably
-   * on paper scans; EC level H adds margin for damaged print/photo.
+   * Rendered QR bitmap (screen px before print zoom). Payload is short `{e,b,v}`; ECC M keeps the symbol simple.
    */
   qrWidth: 200,
   /** White padding around the QR image inside the footer (quiet zone; no border). */
@@ -95,23 +90,6 @@ const SCAN_GEOMETRY = {
   contentInsetX: "px-8",
   /** Tighter print insets so contests + QR share one A4; zoom-fit further compresses if needed. */
   contentInsetPrint: "print:pt-7 print:pb-3 print:px-6",
-} as const;
-
-const SCAN_GEOMETRY_V3 = {
-  /** Contest-local anchors drive local OpenCV alignment in v3. */
-  contestAnchorSize: "h-[9px] w-[9px] print:h-[8px] print:w-[8px]",
-  /** Row markers provide row-level baseline checks and drift correction. */
-  rowMarkerSize: "h-[6px] w-[6px] print:h-[5px] print:w-[5px]",
-  rowHeight: "min-h-[27px] print:min-h-[23px]",
-  bubbleSize: "h-[22px] w-[22px] print:h-[20px] print:w-[20px]",
-} as const;
-
-const SCAN_GEOMETRY_V4 = {
-  /** v4 local alignment rails: left required, right optional mirror. */
-  railMarkerSize: "h-[6px] w-[6px] print:h-[5px] print:w-[5px]",
-  useRightRail: true,
-  rowHeight: "min-h-[29px] print:min-h-[24px]",
-  bubbleSize: "h-[21px] w-[21px] print:h-[19px] print:w-[19px]",
 } as const;
 
 /** Shown in contest header — CAS-style wording (display only; logic unchanged). */
@@ -420,49 +398,6 @@ function V2FixedAbstainCell({ bubbleRef }: { bubbleRef?: Ref<HTMLSpanElement> })
   );
 }
 
-/** v3: row rail squares (aligned with bubble column). */
-function RowMarkerV3() {
-  return (
-    <span
-      className={`inline-block shrink-0 rounded-sm bg-black ${SCAN_GEOMETRY_V3.rowMarkerSize}`}
-      aria-hidden
-    />
-  );
-}
-
-/** v3: single-column OMR bubble per row. */
-function BallotBubbleV3() {
-  return (
-    <span
-      className={`inline-block shrink-0 rounded-full border-[2px] border-black bg-white ${SCAN_GEOMETRY_V3.bubbleSize}`}
-      aria-hidden
-    />
-  );
-}
-
-/** v3: four contest-local corner anchors for local homography. */
-function ContestAnchorCornersV3() {
-  const s = SCAN_GEOMETRY_V3.contestAnchorSize;
-  return (
-    <>
-      <span className={`pointer-events-none absolute left-0 top-0 z-0 ${s} rounded-sm bg-black`} aria-hidden />
-      <span className={`pointer-events-none absolute right-0 top-0 z-0 ${s} rounded-sm bg-black`} aria-hidden />
-      <span className={`pointer-events-none absolute bottom-0 left-0 z-0 ${s} rounded-sm bg-black`} aria-hidden />
-      <span className={`pointer-events-none absolute bottom-0 right-0 z-0 ${s} rounded-sm bg-black`} aria-hidden />
-    </>
-  );
-}
-
-/** v4: per-row alignment rail marker. */
-function RowMarkerV4() {
-  return (
-    <span
-      className={`inline-block shrink-0 rounded-sm bg-black ${SCAN_GEOMETRY_V4.railMarkerSize}`}
-      aria-hidden
-    />
-  );
-}
-
 export function PrintableBallotSheet({
   electionId,
   ballotToken,
@@ -475,14 +410,10 @@ export function PrintableBallotSheet({
   showAbstain = true,
   ballotRecipientLine,
   jurisdictionLine,
-  layoutHash,
   onGeometryTemplateReady,
 }: PrintableBallotSheetProps) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrError, setQrError] = useState<string | null>(null);
-
-  const isV3 = templateVersion === BALLOT_TEMPLATE_V3 || templateVersion.startsWith("ballot-template-v3");
-  const isV4 = templateVersion === BALLOT_TEMPLATE_V4 || templateVersion.startsWith("ballot-template-v4");
 
   const positionsSorted = useMemo(
     () =>
@@ -513,13 +444,7 @@ export function PrintableBallotSheet({
     const json =
       ballotToken != null && ballotToken.length > 0
         ? stringifyBallotQrPayload(
-            buildBallotQrPayload(
-              electionId,
-              ballotToken,
-              templateVersion,
-              templateId,
-              layoutHash ?? undefined
-            )
+            buildBallotQrPayload(electionId, ballotToken, templateVersion)
           )
         : "";
 
@@ -534,8 +459,8 @@ export function PrintableBallotSheet({
 
     QRCode.toDataURL(json, {
       width: qrWidth,
-      margin: 3,
-      errorCorrectionLevel: "H",
+      margin: 2,
+      errorCorrectionLevel: "M",
       color: { dark: "#000000", light: "#ffffff" },
     })
       .then((url) => {
@@ -554,7 +479,7 @@ export function PrintableBallotSheet({
     return () => {
       cancelled = true;
     };
-  }, [electionId, ballotToken, templateVersion, templateId, layoutHash, qrWidth]);
+  }, [electionId, ballotToken, templateVersion, qrWidth]);
 
   /** Shrink the whole ballot to one A4 sheet when content is tall (Chromium print + zoom).
    *  Must register before the geometry `beforeprint` handler so bubble rects match the scaled print.
@@ -595,14 +520,17 @@ export function PrintableBallotSheet({
   }, []);
 
   useLayoutEffect(() => {
-    if (isV3 || isV4 || !onGeometryReadyRef.current) return;
+    if (!onGeometryReadyRef.current) return;
 
     const emit = () => {
       const cb = onGeometryReadyRef.current;
       if (!cb) return;
       const root = document.getElementById("printable-ballot-root");
       if (!root) return;
-      const rr = root.getBoundingClientRect();
+      /** Same box whose corners carry timing/fiducial marks — OMR warp maps this quad to canonical px. */
+      const frame = document.getElementById("printable-ballot-scan-frame");
+      const ref = frame ?? root;
+      const rr = ref.getBoundingClientRect();
 
       let expected = 0;
       for (const p of positionsSorted) {
@@ -677,7 +605,7 @@ export function PrintableBallotSheet({
       if (ro && root) ro.disconnect();
       window.removeEventListener("beforeprint", run);
     };
-  }, [positionsSorted, showAbstain, templateId, isV3, isV4]);
+  }, [positionsSorted, showAbstain, templateId]);
 
   return (
     <div
@@ -687,6 +615,7 @@ export function PrintableBallotSheet({
     >
       <div className={`${SCAN_GEOMETRY.pagePadding}`}>
         <div
+          id="printable-ballot-scan-frame"
           className={`relative box-border overflow-visible bg-white px-5 pb-2.5 pt-2 print:px-4 print:pb-2 print:pt-2 ${SCAN_GEOMETRY.frameBorder}`}
           aria-label="Ballot scanning area"
         >
@@ -733,8 +662,7 @@ export function PrintableBallotSheet({
 
             {/* Contest geometry intentionally uniform for repeatable bubble cropping/scoring. */}
             <section className="flex-1 space-y-2 print:space-y-1" aria-label="Ballot contests">
-              {positionsSorted.map((pos, posIdx) => {
-                const barBg = SECTION_HEADER_BW;
+              {positionsSorted.map((pos) => {
                 let running = 0;
                 const rows = chunkRows(pos.candidates, 3);
                 const rowH = SCAN_GEOMETRY.v2TableRowHeightClass;
@@ -745,126 +673,7 @@ export function PrintableBallotSheet({
                   borderSpacing: 0,
                 };
                 return (
-                  <article
-                    key={pos.positionId}
-                    className={
-                      isV3 || isV4
-                        ? "break-inside-avoid border-2 border-black bg-white"
-                        : "break-inside-avoid"
-                    }
-                  >
-                    {(isV3 || isV4) && (
-                      <div
-                        className={`flex flex-row flex-nowrap items-center justify-center gap-x-2 border-b-2 border-black px-2 py-1.5 text-center ${barBg} ${SCAN_GEOMETRY.contestHeaderHeight} print:px-2 print:py-1`}
-                      >
-                        <h2 className="min-w-0 truncate text-[12px] font-bold uppercase leading-none text-black print:text-[11px]">
-                          {pos.positionName}
-                        </h2>
-                        <p className="shrink-0 whitespace-nowrap text-[10px] font-bold uppercase leading-none text-black print:text-[9px]">
-                          {contestRuleParen(pos.maxVotes)}
-                        </p>
-                      </div>
-                    )}
-                    {isV4 ? (
-                      <div className="px-1 pb-1 pt-0.5 print:px-0.5 print:pb-0.5 print:pt-0.5">
-                        {/* v4: compact contest core with local alignment rails, no large inner anchor box. */}
-                        <div className="space-y-0.5">
-                          {pos.candidates.map((candidate) => {
-                            const label = String(++running).padStart(2, "0");
-                            return (
-                              <div
-                                key={candidate.candidateId}
-                                className={`grid items-center gap-x-2 border-b border-black ${
-                                  SCAN_GEOMETRY_V4.useRightRail
-                                    ? "grid-cols-[0.75rem_1.8rem_1fr_1.8rem_0.75rem]"
-                                    : "grid-cols-[0.75rem_1.8rem_1fr_1.8rem]"
-                                } ${SCAN_GEOMETRY_V4.rowHeight}`}
-                              >
-                                {/* Left alignment rail marker: one per row, aligned with bubble center. */}
-                                <RowMarkerV4 />
-                                <span className="text-right text-[9px] font-bold tabular-nums text-black print:text-[8px]">
-                                  {label}
-                                </span>
-                                <span className="min-w-0 text-[9px] font-semibold uppercase leading-snug text-black print:text-[8px]">
-                                  {formatBallotCandidateDisplay(candidate)}
-                                </span>
-                                <span
-                                  className={`inline-block shrink-0 rounded-full border-[2.7px] border-black bg-black ${SCAN_GEOMETRY_V4.bubbleSize}`}
-                                  aria-hidden
-                                />
-                                {SCAN_GEOMETRY_V4.useRightRail ? <RowMarkerV4 /> : null}
-                              </div>
-                            );
-                          })}
-                          {showAbstain ? (
-                            <div
-                              className={`grid items-center gap-x-2 border-t-2 border-black pt-1 ${
-                                SCAN_GEOMETRY_V4.useRightRail
-                                  ? "grid-cols-[0.75rem_1.8rem_1fr_1.8rem_0.75rem]"
-                                  : "grid-cols-[0.75rem_1.8rem_1fr_1.8rem]"
-                              } ${SCAN_GEOMETRY_V4.rowHeight}`}
-                            >
-                              <RowMarkerV4 />
-                              <span className="text-right text-[9px] font-bold tabular-nums text-black print:text-[8px]">
-                                —
-                              </span>
-                              <span className="text-[9px] font-bold uppercase text-black print:text-[8px]">
-                                Abstain
-                              </span>
-                              <span
-                                className={`inline-block shrink-0 rounded-full border-[2.7px] border-black bg-black ${SCAN_GEOMETRY_V4.bubbleSize}`}
-                                aria-hidden
-                              />
-                              {SCAN_GEOMETRY_V4.useRightRail ? <RowMarkerV4 /> : null}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : isV3 ? (
-                      <div className="px-1 pb-1.5 pt-1 print:px-0.5 print:pb-1 print:pt-0.5">
-                        {/* Contest-local anchor box enables local homography per contest. */}
-                        <div className="relative border-2 border-black px-2 py-1.5 print:px-1.5 print:py-1">
-                          <ContestAnchorCornersV3 />
-                          <div className="space-y-0.5">
-                            {pos.candidates.map((candidate) => {
-                              const label = String(++running).padStart(2, "0");
-                              return (
-                                <div
-                                  key={candidate.candidateId}
-                                  className={`grid grid-cols-[0.75rem_1.8rem_1fr_1.8rem_0.75rem] items-center gap-x-2 border-b border-black ${SCAN_GEOMETRY_V3.rowHeight}`}
-                                >
-                                  {/* Row markers align with bubble center for row-level correction. */}
-                                  <RowMarkerV3 />
-                                  <span className="text-right text-[9px] font-bold tabular-nums text-black print:text-[8px]">
-                                    {label}
-                                  </span>
-                                  <span className="min-w-0 text-[9px] font-semibold uppercase leading-snug text-black print:text-[8px]">
-                                    {formatBallotCandidateDisplay(candidate)}
-                                  </span>
-                                  <BallotBubbleV3 />
-                                  <RowMarkerV3 />
-                                </div>
-                              );
-                            })}
-                            {showAbstain ? (
-                              <div
-                                className={`grid grid-cols-[0.75rem_1.8rem_1fr_1.8rem_0.75rem] items-center gap-x-2 border-t-2 border-black pt-1 ${SCAN_GEOMETRY_V3.rowHeight}`}
-                              >
-                                <RowMarkerV3 />
-                                <span className="text-right text-[9px] font-bold tabular-nums text-black print:text-[8px]">
-                                  —
-                                </span>
-                                <span className="text-[9px] font-bold uppercase text-black print:text-[8px]">
-                                  Abstain
-                                </span>
-                                <BallotBubbleV3 />
-                                <RowMarkerV3 />
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
+                  <article key={pos.positionId} className="break-inside-avoid">
                       <table
                         className="ballot-v2-table w-full bg-white"
                         style={outerTableStyle}
@@ -949,7 +758,6 @@ export function PrintableBallotSheet({
                           ) : null}
                         </tbody>
                       </table>
-                    )}
                   </article>
                 );
               })}

@@ -7,19 +7,36 @@ export function parseBallotQrPayload(text: string): BallotQrPayload | null {
   const t = text.trim();
   if (!t) return null;
   try {
-    const o = JSON.parse(t) as Partial<BallotQrPayload>;
-    if (
-      typeof o.electionId === "string" &&
-      o.electionId.length > 0 &&
-      typeof o.ballotToken === "string" &&
-      o.ballotToken.length > 0 &&
-      typeof o.templateVersion === "string" &&
-      o.templateVersion.length > 0
-    ) {
+    const o = JSON.parse(t) as Partial<BallotQrPayload> & {
+      e?: string;
+      b?: string;
+      v?: string;
+    };
+    const electionId =
+      typeof o.electionId === "string" && o.electionId.length > 0
+        ? o.electionId
+        : typeof o.e === "string" && o.e.length > 0
+          ? o.e
+          : "";
+    const ballotToken =
+      typeof o.ballotToken === "string" && o.ballotToken.length > 0
+        ? o.ballotToken
+        : typeof o.b === "string" && o.b.length > 0
+          ? o.b
+          : typeof o.ballotId === "string" && o.ballotId.length > 0
+            ? o.ballotId
+            : "";
+    const templateVersion =
+      typeof o.templateVersion === "string" && o.templateVersion.length > 0
+        ? o.templateVersion
+        : typeof o.v === "string" && o.v.length > 0
+          ? o.v
+          : "";
+    if (electionId && ballotToken && templateVersion) {
       return {
-        electionId: o.electionId,
-        ballotToken: o.ballotToken,
-        templateVersion: o.templateVersion,
+        electionId,
+        ballotToken,
+        templateVersion,
         ...(typeof o.templateId === "string" && o.templateId.length > 0
           ? { templateId: o.templateId }
           : {}),
