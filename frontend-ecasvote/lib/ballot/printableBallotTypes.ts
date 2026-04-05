@@ -3,6 +3,8 @@
  * Replace mock data with API responses when backend is ready.
  */
 
+import type { OmGeometryTemplate } from "./omGeometryTemplate";
+
 /** Candidate row on the printed ballot */
 export type PrintableBallotCandidate = {
   candidateId: string;
@@ -20,13 +22,20 @@ export type PrintableBallotPosition = {
 };
 
 /**
- * JSON encoded in the paper ballot QR (identification only — no vote selections).
- * Field order: electionId → ballotToken → templateVersion (stable for docs / scanners).
+ * JSON encoded in the paper ballot QR (identification only — no vote data, no bubble layout).
+ * Printed QR uses only electionId, ballotToken, templateVersion.
+ * Optional fields are accepted when parsing legacy QRs or alternate scanner outputs.
  */
 export type BallotQrPayload = {
   electionId: string;
   ballotToken: string;
+  /** Same as `ballotToken` — some tools emit `ballotId` instead. */
+  ballotId?: string;
   templateVersion: string;
+  /** @deprecated Legacy QR; layout is loaded from the gateway by ballot token. */
+  templateId?: string;
+  /** @deprecated Legacy QR; hash is stored server-side with the layout. */
+  layoutHash?: string;
 };
 
 /** Alias — same shape as {@link BallotQrPayload} */
@@ -63,4 +72,9 @@ export type PrintableBallotSheetProps = {
   ballotZone?: string;
   /** Extra subtitle under title (e.g. locality) */
   jurisdictionLine?: string;
+  /**
+   * After layout, emits measured bubble boxes (v2 sheet) for scanner JSON.
+   * Coordinates are relative to the scan frame (`#printable-ballot-scan-frame`).
+   */
+  onGeometryTemplateReady?: (template: OmGeometryTemplate) => void;
 };

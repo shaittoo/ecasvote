@@ -1,8 +1,11 @@
 import type { BallotQrPayload } from "./printableBallotTypes";
 
 /**
- * Builds the JSON object encoded in the paper ballot QR code.
- * Field order: electionId → ballotToken → templateVersion (stable for docs / tests).
+ * Builds the logical QR payload for a paper ballot.
+ * Layout is NOT in the QR — the OMR worker fetches it from GET /api/omr-layout/:ballotId
+ * using ballotToken after decode.
+ *
+ * Encoded on paper as compact JSON `{ e, b, v }` (see {@link stringifyBallotQrPayload}).
  */
 export function buildBallotQrPayload(
   electionId: string,
@@ -18,7 +21,6 @@ export function buildBallotQrPayload(
     );
   }
   return {
-    // Keep key order stable for deterministic QR JSON.
     electionId: eid,
     ballotToken: tok,
     templateVersion: tv,
@@ -28,7 +30,11 @@ export function buildBallotQrPayload(
 /** Same as {@link buildBallotQrPayload} — paper hybrid uses only this shape. */
 export const buildPaperBallotQrPayload = buildBallotQrPayload;
 
-/** Compact JSON string for QR (smaller, fewer modules than pretty-printed). */
+/** Encodes as `{ e, b, v }` — shorter keys + fewer QR modules than long property names. */
 export function stringifyBallotQrPayload(payload: BallotQrPayload): string {
-  return JSON.stringify(payload);
+  return JSON.stringify({
+    e: payload.electionId,
+    b: payload.ballotToken,
+    v: payload.templateVersion,
+  });
 }
