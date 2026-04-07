@@ -106,9 +106,6 @@ def decode_image_b64(image_b64: str) -> np.ndarray:
     arr = np.frombuffer(raw, dtype=np.uint8)
 
     im = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    print("DEBUG image_b64 length:", len(image_b64))
-    print("Starts with data URL:", image_b64.startswith("data:image"))
-    print("Decoded bytes length:", len(raw))
 
     if im is None:
         raise ValueError("Could not decode image bytes (cv2.imdecode returned None)")
@@ -1490,15 +1487,9 @@ def debug_annotate_ballot(
     template: dict[str, Any],
     bubble_result: dict[str, Any],
 ) -> np.ndarray:
-    print("ENTERED debug_annotate_ballot")
-    print("WARPED SHAPE:", warped_bgr.shape)
 
     contests: list[dict[str, Any]] = template.get("contests") or []
-    print("TEMPLATE FIRST CONTEST:", contests[0] if contests else None)
-    print("TEMPLATE FIRST BUBBLE:", contests[0].get("bubbles", [None])[0] if contests else None)
-
     layout_dbg = bubble_result.get("layoutDebug")
-    print("HAS layoutDebug:", isinstance(layout_dbg, list), "len=", len(layout_dbg) if isinstance(layout_dbg, list) else None)
 
     if isinstance(layout_dbg, list) and len(layout_dbg) > 0:
         sel = bubble_result.get("selectionsByPosition") or {}
