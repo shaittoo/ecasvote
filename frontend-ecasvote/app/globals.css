@@ -34,8 +34,15 @@
   --toast-info: 217 91% 60%;      
 }
 
-* {
-  border-color: hsl(var(--border));
+/**
+ * Default border color for the app UI. Must live in @layer base so Tailwind
+ * `border-black` / arbitrary border colors in @layer utilities win — otherwise
+ * this unlayered rule overrides utilities and OMR ballot lines render gray.
+ */
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
 }
 
 body {
@@ -96,6 +103,54 @@ body {
   opacity: 1;
 }
 
+/* Scan ballot: browsers must not “economize” black lines to gray when printing */
+.print-ballot-omr-root {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  color: #000000;
+}
+
+.print-ballot-omr-root * {
+  border-color: #000000;
+}
+
+/*
+ * v2 contest table: full outer border + horizontal row lines + verticals between candidate columns.
+ * Use > tbody > tr > td only — nested inner tables (num | bubble | name per cell) must not match.
+ * Abstain row: no vertical dividers. td:last-child avoids doubling the table’s right edge.
+ */
+.print-ballot-omr-root table.ballot-v2-table {
+  border: 2px solid #000;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.print-ballot-omr-root table.ballot-v2-table thead th {
+  border-style: none;
+  border-bottom: 4px solid #000;
+  border-right: 4px solid #000;
+  border-left: 4px solid #000;
+  border-top: 4px solid #000;
+}
+.print-ballot-omr-root table.ballot-v2-table > tbody > tr > td {
+  border-style: none;
+  border-right: 1px solid #000;
+  border-bottom: 1px solid #000;
+}
+.print-ballot-omr-root table.ballot-v2-table > tbody > tr > td:last-child {
+  border-right: none;
+}
+.print-ballot-omr-root table.ballot-v2-table > tbody > tr.ballot-v2-last-candidate > td {
+  border-bottom: none;
+}
+.print-ballot-omr-root table.ballot-v2-table > tbody > tr.ballot-v2-last-data-row > td {
+  border-bottom: none;
+}
+.print-ballot-omr-root table.ballot-v2-table > tbody > tr.ballot-v2-abstain > td {
+  border-top: 1px solid #000;
+  border-bottom: none;
+  border-right: none;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Printable ballot (eCASVote) — paper output                                  */
 /* -------------------------------------------------------------------------- */
@@ -106,9 +161,11 @@ body {
   }
   /* Dedicated ballot page profile: avoid extra browser page margins that
      can push timing marks into header/footer content on physical printouts. */
+  /* Non-zero margins so printer hardware margin does not clip top timing marks / corners */
   @page ballot-sheet {
     size: A4 portrait;
-    margin: 0;
+    /* Room for TL/TR -translate-y-1/4 (~6px bleed above frame padding edge) + typical printer dead zone. */
+    margin: 8mm 5mm 5mm 5mm;
   }
 
   body {
@@ -131,6 +188,41 @@ body {
     page-break-after: avoid;
     page-break-inside: avoid;
     break-inside: avoid;
+  }
+
+  /* Print engine often re-applies collapse; force the same non-overlapping model as screen. */
+  .print-ballot-omr-root table.ballot-v2-table {
+    border: 2px solid #000 !important;
+    border-collapse: separate !important;
+    border-spacing: 0 !important;
+  }
+  /* Match screen: full 4px frame on contest title row (print engines need explicit sides). */
+  .print-ballot-omr-root table.ballot-v2-table thead th {
+    border-top: 4px solid #000 !important;
+    border-right: 4px solid #000 !important;
+    border-bottom: 4px solid #000 !important;
+    border-left: 4px solid #000 !important;
+  }
+  .print-ballot-omr-root table.ballot-v2-table > tbody > tr > td {
+    border-top: 0 !important;
+    border-left: 0 !important;
+    border-right: 1px solid #000 !important;
+    border-bottom: 1px solid #000 !important;
+  }
+  .print-ballot-omr-root table.ballot-v2-table > tbody > tr > td:last-child {
+    border-right: 0 !important;
+  }
+  .print-ballot-omr-root table.ballot-v2-table > tbody > tr.ballot-v2-last-candidate > td {
+    border-bottom: none !important;
+  }
+  .print-ballot-omr-root table.ballot-v2-table > tbody > tr.ballot-v2-last-data-row > td {
+    border-bottom: none !important;
+  }
+  .print-ballot-omr-root table.ballot-v2-table > tbody > tr.ballot-v2-abstain > td {
+    border-top: 1px solid #000 !important;
+    border-bottom: 0 !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
   }
 
   /* Voter turnout report: hide admin chrome, full-width content */

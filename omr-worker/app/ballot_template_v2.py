@@ -53,8 +53,8 @@ class LayoutSpec:
     qr_zone_y0: float = 0.80
     qr_zone_y1: float = 0.985
     # Contest region below header and above metadata footer.
-    contests_y0: float = 0.255
-    contests_y1: float = 0.84
+    contests_y0: float = 0.245
+    contests_y1: float = 0.93
     contest_header_frac: float = 0.20
     contest_inner_pad_x: float = 0.01
     contest_inner_pad_y: float = 0.01
