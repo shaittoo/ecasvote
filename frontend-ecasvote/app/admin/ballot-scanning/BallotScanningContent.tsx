@@ -1179,7 +1179,6 @@ export function BallotScanningContent() {
         pos = await fetchPositions(electionId);
         setPositions(pos);
       }
-      const scannerTemplateExport = scannerTemplateFromGeometry(omGeometryTemplate);
       const scannerTemplate = scannerTemplateFromGeometry(omGeometryTemplate);
       logScannerTemplateContestIds(scannerTemplate);
 
@@ -1400,7 +1399,7 @@ export function BallotScanningContent() {
         electionId,
         electionName: label,
         ballotTemplateVersion: BALLOT_TEMPLATE_VERSION,
-        scannerTemplate: scannerTemplateExport,
+        scannerTemplate,
         ballots,
       });
       if (exportPayload.ballots.length === 0) {
