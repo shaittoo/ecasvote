@@ -207,7 +207,6 @@ def scan(req: ScanRequest) -> dict[str, Any]:
 
 @app.post("/debug-json")
 def debug_json(req: ScanRequest) -> dict[str, Any]:
-    print("ENTERED debug_json")
     """
     Returns annotated ballot image (base64 PNG) + selections for inline display.
     Uses the same rotation and warp as the final scan result.
