@@ -42,7 +42,7 @@ class LayoutSpec:
     canonical_w: int = 900
     canonical_h: int = 1272
     # Keep-out around timing marks / corner fiducials.
-    content_x0: float = 0.105
+    content_x0: float = 0.115
     content_x1: float = 0.895
     content_y0: float = 0.145
     content_y1: float = 0.975
@@ -50,11 +50,11 @@ class LayoutSpec:
     header_y1: float = 0.245
     qr_zone_x0: float = 0.72
     qr_zone_x1: float = 0.97
-    qr_zone_y0: float = 0.80
+    qr_zone_y0: float = 0.83
     qr_zone_y1: float = 0.985
     # Contest region below header and above metadata footer.
     contests_y0: float = 0.245
-    contests_y1: float = 0.93
+    contests_y1: float = 0.92
     contest_header_frac: float = 0.20
     contest_inner_pad_x: float = 0.01
     contest_inner_pad_y: float = 0.01

@@ -999,6 +999,8 @@ def _fill_evidence_at_center(
         raw = min(raw, 0.04)
     if cc_r < 0.09 and inner_r < 0.22:
         raw -= 0.08
+    if inner_r < 0.25 and cc_r < 0.20 and core_mean_dark < 0.30:
+        raw = min(raw, 0.08)  # empty bubble outline — cap score low
     raw = float(max(0.0, min(1.0, raw)))
     return raw, inner_r, ring_r, core_mean_dark, cc_r, delta
 
