@@ -230,18 +230,33 @@ export function BallotPrintClient() {
               ) : null}
             </>
           ) : (
-            <p className="mt-1 text-xs text-gray-500">
-              Change via <code className="rounded bg-gray-100 px-1">?electionId=…</code>
-              {ballotTokenFromQuery ? (
-                <> · Using <code className="rounded bg-gray-100 px-1">ballotToken</code> from URL.</>
-              ) : (
-                <>
-                  . Ballot token below is a preview label until you issue a real token; add{" "}
-                  <code className="rounded bg-gray-100 px-1">?ballotToken=TKN-…</code> to print an issued
-                  token.
-                </>
-              )}
-            </p>
+            <>
+              <p className="mt-1 text-xs text-gray-500">
+                Change via <code className="rounded bg-gray-100 px-1">?electionId=…</code>
+                {ballotTokenFromQuery ? (
+                  <> · Using <code className="rounded bg-gray-100 px-1">ballotToken</code> from URL.</>
+                ) : (
+                  <>
+                    . Ballot token below is a preview label until you issue a real token; add{" "}
+                    <code className="rounded bg-gray-100 px-1">?ballotToken=TKN-…</code> to print an issued
+                    token.
+                  </>
+                )}
+              </p>
+              <div
+                className="mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950"
+                role="status"
+              >
+                <strong className="font-semibold">Not voter-specific.</strong> This preview lists every
+                contest in the election. For real paper ballots, open print from{" "}
+                <Link href="/admin/voter-management/voter-roster" className="font-medium underline">
+                  voter roster
+                </Link>{" "}
+                (includes <code className="rounded bg-white/80 px-0.5">department</code> and{" "}
+                <code className="rounded bg-white/80 px-0.5">studentNumber</code>) so the sheet matches the
+                voter and OMR bubble geometry is not saved with the wrong contest count.
+              </div>
+            </>
           )}
         </div>
 
@@ -294,6 +309,9 @@ export function BallotPrintClient() {
               jurisdictionLine={jurisdictionLine || undefined}
               onGeometryTemplateReady={(geom) => {
                 setScannerTemplateJson(JSON.stringify(geom, null, 2));
+                if (!isVoterSpecific) {
+                  return;
+                }
                 void saveOmrLayout({
                   ballotId: ballotToken,
                   electionId,

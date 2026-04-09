@@ -5,10 +5,14 @@ Environment variables:
   GATEWAY_URL          URL of the eCASVote gateway (e.g. http://127.0.0.1:3000).
                        When set, the worker fetches bubble layout from /api/omr-layout/:ballotId
                        instead of reading it from the QR payload or the template object.
-  OMR_FIDUCIAL_WARP    Default ``1`` (on): perspective warp from up to 8 edge/corner fiducials
-                       to canonical 1000×1400. Set to ``0``/``false``/``off`` for resize-only (debug).
-  OMR_POST_WARP_DESKEW Default ``0``. Set to ``1`` to run an extra Hough deskew after fiducial
-                       warp (can shift bubble geometry; keep off when fiducials succeed).
+  OMR_FIDUCIAL_WARP    Default ``crop``: bbox from corner fiducials (or grid corners), crop,
+                       resize to canonical — no perspective distortion. Set ``homography`` for
+                       full ``warpPerspective`` from the 8-point fiducial grid. ``1``/``true``/``on``
+                       are aliases for ``crop``. Set ``0``/``false``/``off`` for resize-only (debug).
+  OMR_POST_WARP_DESKEW Default ``0``. After **homography** warp only, set ``1`` for an extra Hough
+                       deskew (can shift bubble geometry; ignored for bbox crop).
+  OMR_BBOX_SPAN_Y_BIAS_PX Default ``2``. Bbox-crop mode only: subtract from template-mapped Y
+                       (shift expected centers up). Use ``0`` to disable.
   OMR_BUBBLE_CLAHE    Default ``1``: apply CLAHE on BT.601 luminance before bubble ROI stats.
                        Set to ``0``/``false``/``off`` to disable (compare stability on tinted scans).
 """

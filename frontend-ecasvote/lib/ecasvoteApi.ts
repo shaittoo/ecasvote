@@ -939,6 +939,8 @@ export type OmrLayoutRecord = {
   layoutHash: string;
   layout: unknown;
   academicOrg?: string;
+  /** How `academicOrg` was resolved: issuance row, or preview `*-BV-{studentNumber}` token + roster. */
+  academicOrgSource?: "issuance" | "preview-bv" | "none";
   allowedContestIds?: string[];
 };
 

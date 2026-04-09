@@ -53,6 +53,143 @@ function isTemplateVersionCompatible(
   return (issued === v1 && scanned === v2) || (issued === v2 && scanned === v1);
 }
 
+/**
+ * OMR GET /api/omr-layout contest filtering — keep in sync with
+ * frontend-ecasvote/lib/ballot/filterPositionsByDepartment.ts
+ */
+function departmentSlugFromAcademicOrg(department: string): string {
+  const raw = department
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  const aliases: Record<string, string> = {
+    'red-bolts': 'redbolts',
+    redbolts: 'redbolts',
+    skimmers: 'skimmers',
+    clovers: 'clovers',
+    clo: 'clovers',
+    elektrons: 'elektrons',
+    elecktrons: 'elektrons',
+  };
+  return aliases[raw] ?? raw;
+}
+
+/** Longer prefixes first so `clo` does not match `clovers-*`. */
+const ACADEMIC_ORG_PREFIXES: ReadonlyArray<readonly [string, string]> = [
+  ['clovers', 'clovers'],
+  ['elektrons', 'elektrons'],
+  ['redbolts', 'redbolts'],
+  ['skimmers', 'skimmers'],
+  ['clo', 'clovers'],
+];
+
+function orgSlugOwningAcademicOrgPosition(positionId: string): string | null {
+  const id = positionId.trim().toLowerCase();
+  for (const [prefix, org] of ACADEMIC_ORG_PREFIXES) {
+    const gov = `${prefix}-governor`;
+    if (id === gov || id.startsWith(`${prefix}-`)) {
+      return org;
+    }
+  }
+  return null;
+}
+
+function isVoterOrgGovernorPositionId(id: string, voterSlug: string): boolean {
+  if (id === `${voterSlug}-governor`) return true;
+  if (voterSlug === 'clovers' && id === 'clo-governor') return true;
+  return false;
+}
+
+function isContestAllowedForDepartment(positionId: string, deptSlug: string): boolean {
+  if (!deptSlug) return true;
+  const id = positionId.trim().toLowerCase();
+  const head = id.split('-')[0] ?? '';
+  if (head === 'usc' || head === 'cas') return true;
+
+  const owner = orgSlugOwningAcademicOrgPosition(id);
+  if (owner == null) return true;
+  if (owner !== deptSlug) return false;
+  return isVoterOrgGovernorPositionId(id, deptSlug);
+}
+
+function positionIdFromLayoutContest(c: unknown): string {
+  if (!c || typeof c !== 'object' || Array.isArray(c)) return '';
+  const o = c as { positionId?: unknown; id?: unknown };
+  return String(o.positionId ?? o.id ?? '').trim();
+}
+
+/** Match sanitization in frontend `buildVoterPreviewBallotToken` (election segment in id). */
+function normalizeElectionKeyForPreviewToken(s: string): string {
+  return s
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase();
+}
+
+/**
+ * `academicOrg` from PaperBallotIssuance → Voter, or — when there is no issuance row yet —
+ * from a deterministic preview ballot id `{sanitizedElection}-BV-{sanitizedStudentNumber}`.
+ */
+async function resolveOmrLayoutAcademicOrg(
+  ballotId: string,
+  recordElectionId: string
+): Promise<{ academicOrg: string; academicOrgSource: 'issuance' | 'preview-bv' | 'none' }> {
+  const issuance = await prisma.paperBallotIssuance.findFirst({
+    where: { ballotToken: ballotId },
+    include: { voter: true },
+  });
+  const fromIssuance = String(issuance?.voter?.department ?? '').trim();
+  if (fromIssuance) {
+    return { academicOrg: fromIssuance, academicOrgSource: 'issuance' };
+  }
+
+  const id = ballotId.trim();
+  const marker = '-BV-';
+  const p = id.toUpperCase().indexOf(marker.toUpperCase());
+  if (p < 0) {
+    return { academicOrg: '', academicOrgSource: 'none' };
+  }
+
+  const prefix = id.slice(0, p);
+  const studentTail = id.slice(p + marker.length).trim();
+  if (!studentTail) {
+    return { academicOrg: '', academicOrgSource: 'none' };
+  }
+
+  if (
+    normalizeElectionKeyForPreviewToken(prefix) !==
+    normalizeElectionKeyForPreviewToken(recordElectionId)
+  ) {
+    return { academicOrg: '', academicOrgSource: 'none' };
+  }
+
+  const snVariants = [
+    ...new Set([studentTail, studentTail.toUpperCase(), studentTail.toLowerCase()]),
+  ];
+  const voter = await prisma.voter.findFirst({
+    where: { OR: snVariants.map((studentNumber) => ({ studentNumber })) },
+  });
+  if (!voter) {
+    return { academicOrg: '', academicOrgSource: 'none' };
+  }
+
+  const onRoster = await prisma.electionVoter.findUnique({
+    where: {
+      electionId_voterId: { electionId: recordElectionId, voterId: voter.id },
+    },
+  });
+  if (!onRoster) {
+    return { academicOrg: '', academicOrgSource: 'none' };
+  }
+
+  const d = String(voter.department ?? '').trim();
+  return {
+    academicOrg: d,
+    academicOrgSource: d ? 'preview-bv' : 'none',
+  };
+}
+
 const app = express();
 
 // Enable CORS for all routes
@@ -1415,33 +1552,53 @@ app.get('/api/omr-layout/:ballotId', async (req, res) => {
       return res.status(500).json({ error: 'LAYOUT_JSON_CORRUPT', ballotId });
     }
 
-    const issuance = await prisma.paperBallotIssuance.findFirst({
-      where: { ballotToken: ballotId },
-      include: { voter: true },
-    });
-    const academicOrg = String(issuance?.voter?.department ?? '').trim();
+    const { academicOrg, academicOrgSource } = await resolveOmrLayoutAcademicOrg(
+      ballotId,
+      record.electionId
+    );
+
+    const deptSlug = departmentSlugFromAcademicOrg(academicOrg);
+    let layoutOut: unknown = layout;
+    if (
+      layout &&
+      typeof layout === 'object' &&
+      !Array.isArray(layout) &&
+      deptSlug &&
+      'contests' in layout
+    ) {
+      const layoutObj = layout as Record<string, unknown>;
+      const rawContests = layoutObj.contests;
+      if (Array.isArray(rawContests)) {
+        const filtered = rawContests.filter((c) => {
+          const pid = positionIdFromLayoutContest(c);
+          if (!pid) return false;
+          return isContestAllowedForDepartment(pid, deptSlug);
+        });
+        layoutOut = { ...layoutObj, contests: filtered };
+      }
+    }
 
     const allowedContestIds: string[] = [];
-    if (layout && typeof layout === 'object' && !Array.isArray(layout) && 'contests' in layout) {
-      const raw = (layout as { contests?: unknown }).contests;
+    if (
+      layoutOut &&
+      typeof layoutOut === 'object' &&
+      !Array.isArray(layoutOut) &&
+      'contests' in layoutOut
+    ) {
+      const raw = (layoutOut as { contests?: unknown }).contests;
       if (Array.isArray(raw)) {
         for (const c of raw) {
-          if (c && typeof c === 'object' && !Array.isArray(c)) {
-            const pid = String(
-              (c as { positionId?: string; id?: string }).positionId ??
-                (c as { id?: string }).id ??
-                '',
-            ).trim();
-            if (pid) allowedContestIds.push(pid);
-          }
+          const pid = positionIdFromLayoutContest(c);
+          if (pid) allowedContestIds.push(pid);
         }
       }
     }
 
     console.log(
-      '[GET /api/omr-layout] ballotId=%s academicOrg=%s contests=%s',
+      '[GET /api/omr-layout] ballotId=%s academicOrg=%s source=%s contests=%s',
       ballotId,
       academicOrg || '(none)',
+      academicOrgSource,
       allowedContestIds.length ? allowedContestIds.join(',') : '(none)',
     );
 
@@ -1451,8 +1608,9 @@ app.get('/api/omr-layout/:ballotId', async (req, res) => {
       templateId: record.templateId,
       templateVersion: record.templateVersion,
       layoutHash: record.layoutHash,
-      layout,
+      layout: layoutOut,
       academicOrg,
+      academicOrgSource,
       allowedContestIds,
     });
   } catch (err: any) {

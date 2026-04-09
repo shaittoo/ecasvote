@@ -1,20 +1,25 @@
 """
 Layout-driven OMR v1 — bubble-only OMR pipeline:
-  up to 8 fiducial squares → single homography warp → canonical size → template ROIs only.
+  corner fiducials → registration to canonical size → template ROIs only.
 
 Environment:
-  OMR_FIDUCIAL_WARP   Default ``1`` (on). Set to ``0`` / ``false`` / ``off`` to use resize-only
-                        (no perspective; for debugging only).
-  OMR_POST_WARP_DESKEW  Default ``0``. Set to ``1`` to run a second Hough deskew after fiducial
-                        warp (can shift bubble geometry; prefer off when fiducials succeed).
+  OMR_FIDUCIAL_WARP   Default ``crop``: axis-aligned bbox from corner fiducials (4 zones or
+                        grid corners), crop, resize to canonical — no perspective warp.
+                        Set ``homography`` / ``warp`` / ``perspective`` for full
+                        ``warpPerspective`` from the 8-point fiducial grid (or 4 corners).
+                        Set ``0`` / ``false`` / ``off`` for resize-only (no fiducial crop).
+                        ``1`` / ``true`` / ``on`` are treated as ``crop`` (legacy on-switch).
+  OMR_POST_WARP_DESKEW  Default ``0``. Set to ``1`` to run a second Hough deskew after **homography**
+                        warp only (ignored for bbox crop; can shift bubble geometry).
+  OMR_BBOX_SPAN_Y_BIAS_PX  Default ``2``. For ``OMR_FIDUCIAL_WARP=crop``, subtract this from mapped Y
+                        (nudges expected bubble centers **up**). Set ``0`` if alignment is already exact.
   OMR_BUBBLE_CLAHE    Default ``1``: CLAHE on luminance before bubble scoring. Set ``0`` to disable.
-
-Scoring uses only small circular ROIs at expected bubble centers inside a content mask; headers,
-timing strips, QR, and table lines outside the mask are ignored for ink statistics.
-
   OMR_BUBBLE_LOCALIZE       Default ``1`` — ring-gradient search ±``OMR_BUBBLE_LOCALIZE_HALF`` px
                             to snap each bubble center before fill classification.
   OMR_BUBBLE_LOCALIZE_HALF  Default ``12`` (max ±12 px adjustment per axis).
+
+Scoring uses only small circular ROIs at expected bubble centers inside a content mask; headers,
+timing strips, QR, and table lines outside the mask are ignored for ink statistics.
 
 Fill classification (after localization) uses hard gates, then a ballot-wide empty-bubble model
 (likely-empty subset → median references), then contest-local blank dominance, then
@@ -43,16 +48,78 @@ CANONICAL_W = LAYOUT_SPEC.canonical_w   # 900
 CANONICAL_H = LAYOUT_SPEC.canonical_h   # 1272
 
 
+def _fiducial_registration_raw() -> str:
+    return os.getenv("OMR_FIDUCIAL_WARP", "crop").strip().lower()
+
+
+def _fiducial_registration_off() -> bool:
+    return _fiducial_registration_raw() in ("0", "false", "no", "off")
+
+
+def _fiducial_warp_registration_mode() -> str:
+    """
+    ``none`` — resize-only; ``crop`` — bbox from fiducials + resize; ``homography`` — warpPerspective.
+    """
+    v = _fiducial_registration_raw()
+    if v in ("0", "false", "no", "off"):
+        return "none"
+    if v in ("homography", "warp", "perspective", "h", "8pt", "grid"):
+        return "homography"
+    # "1", "true", "yes", "on", "crop", or unset default
+    return "crop"
+
+
 def _fiducial_warp_env_enabled() -> bool:
-    """Perspective warp from up to 8 fiducials is on by default; disable with ``OMR_FIDUCIAL_WARP=0``."""
-    v = os.getenv("OMR_FIDUCIAL_WARP", "1").strip().lower()
-    return v not in ("0", "false", "no", "off")
+    """True when fiducial-based registration runs (crop or homography), not resize-only."""
+    return not _fiducial_registration_off()
+
+
+def map_template_fractions_to_warped_pixels(
+    nx: float,
+    ny: float,
+    w_img: int,
+    h_img: int,
+    geometry: dict[str, Any] | None,
+) -> tuple[float, float]:
+    """
+    Map template-normalized (nx, ny) on ``#printable-ballot-scan-frame`` to pixels on the
+    warped canvas for the active registration mode.
+
+    * ``none`` — linear full bitmap.
+    * ``crop`` — bbox crop+resize aligns the **centroid-to-centroid** frame band with the
+      bitmap; remap from full-frame [0,1]² through that band (same inset as fiducial dst).
+    * ``homography`` — inset span like :func:`warped_pixel_xy_from_template_fractions` with
+      ``use_fiducial_content_inset=True``.
+    """
+    m = _fiducial_warp_registration_mode()
+    if m == "homography":
+        return warped_pixel_xy_from_template_fractions(
+            nx, ny, w_img, h_img, geometry, use_fiducial_content_inset=True
+        )
+    if m == "crop":
+        return warped_pixel_xy_from_template_fractions(
+            nx, ny, w_img, h_img, geometry, bbox_fiducial_span=True
+        )
+    return warped_pixel_xy_from_template_fractions(nx, ny, w_img, h_img, geometry)
 
 
 def _post_warp_deskew_env_enabled() -> bool:
     """Optional second deskew after fiducial warp (default off — avoids coordinate drift)."""
     v = os.getenv("OMR_POST_WARP_DESKEW", "0").strip().lower()
     return v in ("1", "true", "yes", "on")
+
+
+def _bbox_span_y_bias_px() -> float:
+    """
+    After bbox crop + fiducial-span remap, subtract this many pixels from Y (positive = shift
+    expected centers **up**). Tunes residual printer/scan vs DOM; default ``2``.
+    Set ``OMR_BBOX_SPAN_Y_BIAS_PX=0`` to disable.
+    """
+    raw = os.getenv("OMR_BBOX_SPAN_Y_BIAS_PX", "12").strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return 2.0
 
 
 def _resize_to_canonical_no_warp(bgr: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
@@ -624,8 +691,8 @@ def merge_layout_geometry_for_mapping(
     template: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """
-    Bubble placement must use the **same** scan-frame pixel size as
-    :func:`apply_corner_fiducial_warp_only` (inset dx/dy scale with 1/fw, 1/fh).
+    Bubble placement must use the **same** measured scan-frame size (``pageMeasuredPx`` / ``page``)
+    as registration uses for fiducial inset scaling in **homography** mode (dx/dy ∝ 1/fw, 1/fh).
 
     The gateway layout may omit ``pageMeasuredPx`` or hold an older / nominal size
     (e.g. 756×1070) while the client scan payload has the real DOM measure (e.g. 756×1707).
@@ -667,18 +734,36 @@ def warped_pixel_xy_from_template_fractions(
     h_img: int,
     geometry: dict[str, Any] | None,
     *,
-    use_fiducial_content_inset: bool,
+    use_fiducial_content_inset: bool = False,
+    bbox_fiducial_span: bool = False,
 ) -> tuple[float, float]:
     """
     Map template-normalized coordinates (0–1 over ``#printable-ballot-scan-frame``) to pixels
     on the warped canonical canvas.
 
-    When fiducial warp is on, corner fiducials land at inset (dx,dy) from the bitmap edges — not
-    (0,0). Mapping nx,ny across the full image (nx * W) therefore skews every bubble; use the
-    same inset span as :func:`build_fiducial_dst_grid_eight`.
+    * **Homography** — ``use_fiducial_content_inset=True``: dst fiducials sit inset from edges.
+    * **Bbox crop+resize** — ``bbox_fiducial_span=True``: bitmap height/width span the region
+      between corner **centroids**; undo full-frame normalization with the same inset ratio
+      as :data:`FIDUCIAL_CENTROID_INSET_PX` over measured ``pageMeasuredPx``.
+    * Otherwise — linear ``nx * W``, ``ny * H``.
     """
     dw = float(max(1, w_img - 1))
     dh = float(max(1, h_img - 1))
+    if bbox_fiducial_span:
+        fw, fh = scan_frame_pixel_size_from_template_geometry(geometry or {})
+        if fw and fh and fw > 8.0 and fh > 8.0:
+            ix = float(FIDUCIAL_CENTROID_INSET_PX) / fw
+            iy = float(FIDUCIAL_CENTROID_INSET_PX) / fh
+            x0n, x1n = ix, 1.0 - ix
+            y0n, y1n = iy, 1.0 - iy
+            sx = max(1e-6, x1n - x0n)
+            sy = max(1e-6, y1n - y0n)
+            nx_adj = max(0.0, min(1.0, (nx - x0n) / sx))
+            ny_adj = max(0.0, min(1.0, (ny - y0n) / sy))
+            py = ny_adj * dh - _bbox_span_y_bias_px()
+            py = max(0.0, min(dh, py))
+            return nx_adj * dw, py
+        return nx * dw, ny * dh
     if not use_fiducial_content_inset:
         return nx * dw, ny * dh
     fw, fh = scan_frame_pixel_size_from_template_geometry(geometry or {})
@@ -688,29 +773,108 @@ def warped_pixel_xy_from_template_fractions(
     return dx + nx * span_x, dy + ny * span_y
 
 
-def apply_corner_fiducial_warp_only(
+def _apply_fiducial_bbox_crop_resize(
     bgr: np.ndarray,
     detect_corner_fiducials: Any,
-    compute_homography: Any,
-    template: dict[str, Any] | None = None,
+    template: dict[str, Any] | None,
 ) -> tuple[np.ndarray | None, dict[str, Any]]:
     """
-    Prefer 4–8 point fiducial grid + RANSAC (tight top corners, edge mid anchors).
-    Fallback: four unique corner-pattern centroids via detect_corner_fiducials.
-
-    Default: 8-point (or 4–7) fiducial homography to canonical size. Disable with ``OMR_FIDUCIAL_WARP=0``.
-
-    Optional ``template.geometry.pageMeasuredPx`` or ``template.geometry.page`` (when > 8 px)
-    supplies scan-frame width/height so destination fiducial inset matches measured bubbles;
-    otherwise nominal A4-like DOM size is used.
+    Prefer four L-pattern corner centroids; else first four points from the 8-point grid
+    (corner zones only). Axis-aligned bbox + pad → crop → resize to canonical.
     """
-    if not _fiducial_warp_env_enabled():
-        warped, meta = _resize_to_canonical_no_warp(bgr)
-        return warped, meta
-
+    h, w = bgr.shape[:2]
     geom = (template or {}).get("geometry")
     frame_w, frame_h = scan_frame_pixel_size_from_template_geometry(geom)
 
+    fid = detect_corner_fiducials(bgr)
+    found = fid.get("found") or {}
+    corner_pts: list[tuple[float, float]] = []
+    for zone in ("img_tl", "img_tr", "img_br", "img_bl"):
+        if zone in found:
+            c = found[zone].get("centroid")
+            if c and len(c) >= 2:
+                corner_pts.append((float(c[0]), float(c[1])))
+
+    grid_meta: dict[str, Any] = {}
+    src_pts: list[tuple[float, float]] = []
+    base_conf = 0.45
+
+    if len(corner_pts) >= 4:
+        src_pts = corner_pts[:4]
+        base_conf = min(1.0, float(fid.get("confidence") or 0.0) + 0.05)
+    else:
+        H_grid, grid_meta = build_robust_fiducial_homography(bgr, frame_w, frame_h)
+        grid_corners: list[tuple[float, float]] = []
+        if H_grid is not None:
+            corr = grid_meta.get("fiducialCorrespondences") or {}
+            raw = corr.get("srcImage") or []
+            for pt in raw[:4]:
+                if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                    grid_corners.append((float(pt[0]), float(pt[1])))
+        if len(grid_corners) >= 4:
+            src_pts = grid_corners[:4]
+            base_conf = float(grid_meta.get("corner_confidence") or 0.55)
+        elif len(corner_pts) >= 2:
+            src_pts = corner_pts
+            base_conf = min(1.0, float(fid.get("confidence") or 0.0) * 0.85)
+
+    if len(src_pts) < 2:
+        warped, meta = _resize_to_canonical_no_warp(bgr)
+        meta["warp_source"] = "resize-no-fiducials"
+        return warped, meta
+
+    xs = [p[0] for p in src_pts]
+    ys = [p[1] for p in src_pts]
+    pad = max(14.0, min(float(w), float(h)) * 0.018)
+    x0 = max(0, int(min(xs) - pad))
+    y0 = max(0, int(min(ys) - pad))
+    x1 = min(w, int(max(xs) + pad))
+    y1 = min(h, int(max(ys) + pad))
+
+    if x1 - x0 < w * 0.22 or y1 - y0 < h * 0.22:
+        warped, meta = _resize_to_canonical_no_warp(bgr)
+        meta["warp_source"] = "resize-bbox-too-small"
+        return warped, meta
+
+    cropped = bgr[y0:y1, x0:x1]
+    ch, cw = cropped.shape[:2]
+    interp = cv2.INTER_AREA if (cw > CANONICAL_W or ch > CANONICAL_H) else cv2.INTER_CUBIC
+    warped = cv2.resize(cropped, (CANONICAL_W, CANONICAL_H), interpolation=interp)
+
+    dw, dh = float(CANONICAL_W - 1), float(CANONICAL_H - 1)
+    meta: dict[str, Any] = {
+        "warp_source": "bbox-crop-resize",
+        "fiducial_warp": False,
+        "canonical": [CANONICAL_W, CANONICAL_H],
+        "corner_confidence": min(1.0, base_conf),
+        "bbox_src": [x0, y0, x1, y1],
+        "fiducial_points_used": len(src_pts),
+        "fiducialCorrespondences": {
+            "srcImage": [[float(p[0]), float(p[1])] for p in src_pts[:4]],
+            "dstCanonical": [
+                [0.0, 0.0],
+                [dw, 0.0],
+                [dw, dh],
+                [0.0, dh],
+            ],
+            "pointCount": min(4, len(src_pts)),
+            "bboxCrop": True,
+        },
+    }
+    if grid_meta:
+        meta["grid_points"] = grid_meta.get("grid_points")
+    return warped, meta
+
+
+def _apply_fiducial_homography_warp(
+    bgr: np.ndarray,
+    detect_corner_fiducials: Any,
+    compute_homography: Any,
+    template: dict[str, Any] | None,
+) -> tuple[np.ndarray | None, dict[str, Any]]:
+    """8-point grid homography when possible; else 4 corner fiducials → warpPerspective."""
+    geom = (template or {}).get("geometry")
+    frame_w, frame_h = scan_frame_pixel_size_from_template_geometry(geom)
     H_grid, grid_meta = build_robust_fiducial_homography(bgr, frame_w, frame_h)
     if H_grid is not None:
         warped = cv2.warpPerspective(
@@ -724,32 +888,24 @@ def apply_corner_fiducial_warp_only(
             warped, desk_meta = _post_warp_fine_deskew(warped)
         else:
             desk_meta = {"post_deskew_deg": 0.0, "post_deskew_skipped": True}
-        meta = {
-            **grid_meta,
-            **desk_meta,
-            "canonical": [CANONICAL_W, CANONICAL_H],
-            "corner_confidence": float(grid_meta.get("corner_confidence") or 0.0),
-        }
+        meta = {**grid_meta, **desk_meta, "canonical": [CANONICAL_W, CANONICAL_H]}
         return warped, meta
 
     fid = detect_corner_fiducials(bgr)
-    found: dict[str, Any] = fid.get("found") or {}
+    found = fid.get("found") or {}
     corners: dict[str, tuple[float, float]] = {}
     for zone in ("img_tl", "img_tr", "img_br", "img_bl"):
         if zone in found:
-            corners[zone] = tuple(found[zone]["centroid"])  # type: ignore[index]
-    if len(corners) < 4:
-        return None, {
-            "error": "insufficient_corner_fiducials",
-            "found_zones": list(found.keys()),
-            "canonical": [CANONICAL_W, CANONICAL_H],
-            "warp_source": "none",
-        }
+            c = found[zone]["centroid"]
+            corners[zone] = (float(c[0]), float(c[1]))
     H = compute_homography(
         corners, CANONICAL_W, CANONICAL_H, frame_w=frame_w, frame_h=frame_h
     )
     if H is None:
-        return None, {"error": "homography_failed", "canonical": [CANONICAL_W, CANONICAL_H]}
+        warped, meta = _resize_to_canonical_no_warp(bgr)
+        meta["warp_source"] = "homography-fallback-resize"
+        return warped, meta
+
     warped = cv2.warpPerspective(
         bgr,
         H,
@@ -761,18 +917,50 @@ def apply_corner_fiducial_warp_only(
         warped, desk_meta = _post_warp_fine_deskew(warped)
     else:
         desk_meta = {"post_deskew_deg": 0.0, "post_deskew_skipped": True}
-    dx4, dy4 = _fiducial_centroid_delta_canonical(frame_w, frame_h)
+    dx_meta, dy_meta = _fiducial_centroid_delta_canonical(frame_w, frame_h)
+    dst_arr = fiducial_dst_four_corners(frame_w, frame_h)
     meta = {
         **desk_meta,
-        "canonical": [CANONICAL_W, CANONICAL_H],
-        "warp_source": "corner-fiducials-4",
-        "corner_confidence": float(fid.get("confidence") or 0.0),
+        "warp_source": "corner-fiducials-homography",
         "fiducial_warp": True,
-        "grid_points": 4,
-        "fiducial_centroids_src": {k: [float(corners[k][0]), float(corners[k][1])] for k in corners},
-        "fiducialCentroidInsetCanonical": {"dx": dx4, "dy": dy4},
+        "canonical": [CANONICAL_W, CANONICAL_H],
+        "corner_confidence": float(fid.get("confidence") or 0.0),
+        "fiducialCorrespondences": {
+            "srcImage": [
+                [corners[k][0], corners[k][1]]
+                for k in ("img_tl", "img_tr", "img_br", "img_bl")
+            ],
+            "dstCanonical": [
+                [float(dst_arr[i, 0]), float(dst_arr[i, 1])] for i in range(4)
+            ],
+            "pointCount": 4,
+        },
+        "fiducialCentroidInsetCanonical": {"dx": dx_meta, "dy": dy_meta},
     }
     return warped, meta
+
+
+def apply_corner_fiducial_warp_only(
+    bgr: np.ndarray,
+    detect_corner_fiducials: Any,
+    compute_homography: Any,
+    template: dict[str, Any] | None = None,
+) -> tuple[np.ndarray | None, dict[str, Any]]:
+    """
+    Registration to canonical size: default bbox crop + resize; optional full homography
+    when ``OMR_FIDUCIAL_WARP=homography``; resize-only when ``OMR_FIDUCIAL_WARP=0``.
+    """
+    mode = _fiducial_warp_registration_mode()
+    if mode == "none":
+        warped, meta = _resize_to_canonical_no_warp(bgr)
+        return warped, meta
+    if mode == "homography":
+        return _apply_fiducial_homography_warp(
+            bgr, detect_corner_fiducials, compute_homography, template
+        )
+    return _apply_fiducial_bbox_crop_resize(
+        bgr, detect_corner_fiducials, template
+    )
 
 
 def _qr_decode_bgr(det: cv2.QRCodeDetector, bgr: np.ndarray) -> str | None:
@@ -1115,7 +1303,7 @@ def build_bubble_scoring_mask_from_layout(
     layout is unusable or the union would be nearly empty.
     """
     if use_fiducial_norm_inset is None:
-        use_fiducial_norm_inset = _fiducial_warp_env_enabled()
+        use_fiducial_norm_inset = _fiducial_warp_registration_mode() != "none"
     if layout is None or h < 8 or w < 8:
         return build_bubble_scoring_mask(h, w)
     page = layout.get("page") or {}
@@ -1155,12 +1343,8 @@ def build_bubble_scoring_mask_from_layout(
                 nx1 = max(0.0, min(1.0, nx1))
                 ny1 = max(0.0, min(1.0, ny1))
                 if use_fiducial_norm_inset:
-                    px0, py0 = warped_pixel_xy_from_template_fractions(
-                        nx0, ny0, w, h, layout, use_fiducial_content_inset=True
-                    )
-                    px1, py1 = warped_pixel_xy_from_template_fractions(
-                        nx1, ny1, w, h, layout, use_fiducial_content_inset=True
-                    )
+                    px0, py0 = map_template_fractions_to_warped_pixels(nx0, ny0, w, h, layout)
+                    px1, py1 = map_template_fractions_to_warped_pixels(nx1, ny1, w, h, layout)
                     x0 = int(min(px0, px1))
                     y0 = int(min(py0, py1))
                     x1 = int(max(px0, px1)) + 1
@@ -1176,9 +1360,7 @@ def build_bubble_scoring_mask_from_layout(
                 nx = max(0.0, min(1.0, xf))
                 ny = max(0.0, min(1.0, yf))
                 if use_fiducial_norm_inset:
-                    cx_f, cy_f = warped_pixel_xy_from_template_fractions(
-                        nx, ny, w, h, layout, use_fiducial_content_inset=True
-                    )
+                    cx_f, cy_f = map_template_fractions_to_warped_pixels(nx, ny, w, h, layout)
                     cx = int(round(max(0, min(w - 1, cx_f))))
                     cy = int(round(max(0, min(h - 1, cy_f))))
                 else:
@@ -1519,12 +1701,10 @@ def refine_bubble_fill(
     """Normalized center (nx,ny) on scan-frame → full localize + fill on warped canvas."""
     _ = tol
     if use_fiducial_norm_inset is None:
-        use_fiducial_norm_inset = bool(geometry) and _fiducial_warp_env_enabled()
+        use_fiducial_norm_inset = bool(geometry) and _fiducial_warp_registration_mode() != "none"
     Hh, Ww = gray.shape[:2]
     if use_fiducial_norm_inset and geometry is not None:
-        cx_f, cy_f = warped_pixel_xy_from_template_fractions(
-            nx, ny, Ww, Hh, geometry, use_fiducial_content_inset=True
-        )
+        cx_f, cy_f = map_template_fractions_to_warped_pixels(nx, ny, Ww, Hh, geometry)
         cx0 = int(round(max(0, min(Ww - 1, cx_f))))
         cy0 = int(round(max(0, min(Hh - 1, cy_f))))
     else:
@@ -1846,8 +2026,10 @@ def select_marks_strict_overvote(
 ) -> tuple[list[str], dict[str, Any]]:
     """
     Among options with ``hard_pass`` and score >= ``threshold``, take up to ``max_votes`` highest.
-    Requires the weakest selected score to exceed the best non-selected score by
-    ``WINNER_SEPARATION_MARGIN`` (skipped for single-option contests). Abstain conflict clears picks.
+    For **single-seat** contests, the weakest kept mark must beat the best non-selected score by
+    ``WINNER_SEPARATION_MARGIN``. For **multi-seat**, that check is skipped when *more* options
+    exceed the threshold than seats (e.g. six filled bubbles for “up to 5”): the 5th vs 6th scores
+    are often tied, and enforcing margin would blank the whole contest. Abstain conflict clears picks.
     """
     if not scores or max_votes < 1:
         return [], {
@@ -1884,7 +2066,8 @@ def select_marks_strict_overvote(
             if o not in picks:
                 best_rest = float(s)
                 break
-        if min_sel - best_rest < WINNER_SEPARATION_MARGIN:
+        multi_trimmed = max_votes > 1 and marks_above > max_votes
+        if not multi_trimmed and min_sel - best_rest < WINNER_SEPARATION_MARGIN:
             picks = []
             meta["winnerMarginFailed"] = True
             meta["confidence"] = 0.0

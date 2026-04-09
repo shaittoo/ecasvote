@@ -508,7 +508,7 @@ export function PrintableBallotSheet({
       if (!cb) return;
       const root = document.getElementById("printable-ballot-root");
       if (!root) return;
-      /** Same box whose corners carry timing/fiducial marks — OMR warp maps this quad to canonical px. */
+      /** Same box whose corners carry timing/fiducial marks — OMR worker aligns scans via bbox crop+resize (or optional homography) to canonical px. */
       const frame = document.getElementById("printable-ballot-scan-frame");
       const ref = frame ?? root;
       const rr = ref.getBoundingClientRect();

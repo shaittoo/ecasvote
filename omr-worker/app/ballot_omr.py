@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import base64
 import json
-from pickle import TRUE
 from typing import Any
 
 import cv2
@@ -57,11 +56,11 @@ from app.omr_layout_v1 import (
     reproduce_warped_after_rotation,
     rotate_input,
     merge_layout_geometry_for_mapping,
-    _fiducial_warp_env_enabled,
+    map_template_fractions_to_warped_pixels,
+    _fiducial_warp_registration_mode,
     run_layout_scan_on_bgr,
     scan_frame_pixel_size_from_template_geometry,
     score_bubble_fixed_roi,
-    warped_pixel_xy_from_template_fractions,
     select_marks_strict_overvote,
     _zone_fiducial_anchor_inv,
 )
@@ -1138,7 +1137,7 @@ def score_bubbles_from_geometry(
         sx = w / pw
         sy = h / ph
 
-    _geom_inset = _fiducial_warp_env_enabled()
+    _remap_fracs = _fiducial_warp_registration_mode() != "none"
 
     contests_geo = geometry.get("contests") or []
     raw_scores: dict[str, dict[str, float]] = {}
@@ -1168,7 +1167,7 @@ def score_bubbles_from_geometry(
             yf = float(b.get("y") or 0)
             wf = float(b.get("w") or 0)
             hf = float(b.get("h") or 0)
-            if _geom_inset and (wf > 1e-9 or hf > 1e-9):
+            if _remap_fracs and (wf > 1e-9 or hf > 1e-9):
                 if abs(pw - 1.0) < 0.01:
                     nx0, ny0 = xf, yf
                     nx1, ny1 = xf + wf, yf + hf
@@ -1179,12 +1178,8 @@ def score_bubbles_from_geometry(
                 ny0 = max(0.0, min(1.0, ny0))
                 nx1 = max(0.0, min(1.0, nx1))
                 ny1 = max(0.0, min(1.0, ny1))
-                px0, py0 = warped_pixel_xy_from_template_fractions(
-                    nx0, ny0, w, h, geometry, use_fiducial_content_inset=True
-                )
-                px1, py1 = warped_pixel_xy_from_template_fractions(
-                    nx1, ny1, w, h, geometry, use_fiducial_content_inset=True
-                )
+                px0, py0 = map_template_fractions_to_warped_pixels(nx0, ny0, w, h, geometry)
+                px1, py1 = map_template_fractions_to_warped_pixels(nx1, ny1, w, h, geometry)
                 x0 = int(min(px0, px1))
                 y0 = int(min(py0, py1))
                 x1 = int(max(px0, px1)) + 1
@@ -1794,7 +1789,8 @@ def _finalize_layout_scan_result(res: dict[str, Any], rotation_deg: int) -> dict
     election_id = res.get("electionId")
     conf = bubble.get("confidence")
     conf_f = float(conf) if isinstance(conf, (int, float)) else 0.0
-    warp_applied = bool(wmeta.get("fiducial_warp", True))
+    _ws = str(wmeta.get("warp_source") or "")
+    warp_applied = bool(wmeta.get("fiducial_warp")) or _ws == "bbox-crop-resize"
     return {
         "qr": res.get("qr"),
         "qrRaw": res.get("qrRaw"),
@@ -2042,6 +2038,75 @@ def _fetch_ballot_layout(ballot_id: str, gateway_url: str) -> dict[str, Any] | N
         return None
 
 
+# Match gateway + frontend-ecasvote/lib/ballot/filterPositionsByDepartment.ts
+_ACADEMIC_ORG_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("clovers", "clovers"),
+    ("elektrons", "elektrons"),
+    ("redbolts", "redbolts"),
+    ("skimmers", "skimmers"),
+    ("clo", "clovers"),
+)
+
+
+def _department_slug_from_academic_org(dept: str) -> str:
+    raw = re.sub(r"[^a-z0-9]+", "-", dept.strip().lower()).strip("-")
+    aliases = {
+        "red-bolts": "redbolts",
+        "redbolts": "redbolts",
+        "skimmers": "skimmers",
+        "clovers": "clovers",
+        "clo": "clovers",
+        "elektrons": "elektrons",
+        "elecktrons": "elektrons",
+    }
+    return aliases.get(raw, raw)
+
+
+def _org_slug_owning_academic_org_position(position_id: str) -> str | None:
+    id_l = position_id.strip().lower()
+    for prefix, org in _ACADEMIC_ORG_PREFIXES:
+        gov = f"{prefix}-governor"
+        if id_l == gov or id_l.startswith(f"{prefix}-"):
+            return org
+    return None
+
+
+def _contest_allowed_for_department_slug(position_id: str, dept_slug: str) -> bool:
+    if not dept_slug:
+        return True
+    id_l = position_id.strip().lower()
+    head = id_l.split("-", 1)[0] if id_l else ""
+    if head in ("usc", "cas"):
+        return True
+    owner = _org_slug_owning_academic_org_position(id_l)
+    if owner is None:
+        return True
+    if owner != dept_slug:
+        return False
+    if id_l == f"{dept_slug}-governor":
+        return True
+    if dept_slug == "clovers" and id_l == "clo-governor":
+        return True
+    return False
+
+
+def _filter_layout_contests_for_academic_org(layout: dict[str, Any], academic_org: str) -> None:
+    slug = _department_slug_from_academic_org(academic_org) if academic_org.strip() else ""
+    if not slug:
+        return
+    contests = layout.get("contests")
+    if not isinstance(contests, list):
+        return
+    layout["contests"] = [
+        c
+        for c in contests
+        if isinstance(c, dict)
+        and _contest_allowed_for_department_slug(
+            str(c.get("positionId") or c.get("id") or ""), slug
+        )
+    ]
+
+
 def _verify_layout_hash(stored_hash: str, qr_hash: str) -> bool:
     """
     Compare the hash stored in the gateway against the hash from the QR payload.
@@ -2088,7 +2153,7 @@ def _score_bubbles_from_saved_layout(
     flat_rois: dict[str, BubbleRoiScore] = {}
     contest_plan: list[tuple[str, int, list[tuple[str, BubbleRoiScore]]]] = []
 
-    _use_inset = _fiducial_warp_env_enabled()
+    _remap_fracs = _fiducial_warp_registration_mode() != "none"
 
     for contest in (layout_map.get("contests") or []):
         pid = str(contest.get("positionId") or "")
@@ -2117,9 +2182,9 @@ def _score_bubbles_from_saved_layout(
                 ny = max(0.0, min(1.0, yf))
             nx = max(0.0, min(1.0, nx))
             ny = max(0.0, min(1.0, ny))
-            if _use_inset:
-                ex_f, ey_f = warped_pixel_xy_from_template_fractions(
-                    nx, ny, w_img, h_img, layout_map, use_fiducial_content_inset=True
+            if _remap_fracs:
+                ex_f, ey_f = map_template_fractions_to_warped_pixels(
+                    nx, ny, w_img, h_img, layout_map
                 )
                 ex = int(round(max(0, min(w_img - 1, ex_f))))
                 ey = int(round(max(0, min(h_img - 1, ey_f))))
@@ -2313,7 +2378,7 @@ def _scan_ballot_image_v2(
         return str(q.get("ballotId") or q.get("ballotToken") or "").strip()
 
     best: tuple[float, int, np.ndarray, dict[str, Any], Any, str | None, float, dict] | None = None
-    for deg in (0, 90, 270):
+    for deg in (0,):
         rotated = rotate_input(img, deg)
         warped_try, wmeta_try = apply_corner_fiducial_warp_only(
             rotated, detect_corner_fiducials, compute_homography, template
@@ -2399,8 +2464,23 @@ def _scan_ballot_image_v2(
             warped,
         )
 
-    _lc = layout.get("contests") or []
     _acct = str(layout_record.get("academicOrg") or "").strip()
+    if _acct:
+        _filter_layout_contests_for_academic_org(layout, _acct)
+
+    allowed_raw = layout_record.get("allowedContestIds") or []
+    allowed = {str(x).strip() for x in allowed_raw if str(x).strip()}
+    if allowed:
+        contests = layout.get("contests")
+        if isinstance(contests, list):
+            layout["contests"] = [
+                c
+                for c in contests
+                if isinstance(c, dict)
+                and str(c.get("positionId") or c.get("id") or "").strip() in allowed
+            ]
+
+    _lc = layout.get("contests") or []
     if _acct:
         print("AUTO ORG (from issuance / GET omr-layout):", _acct)
     _fc = [
@@ -2422,7 +2502,8 @@ def _scan_ballot_image_v2(
 
     warp_debug = dict(wmeta)
     warp_debug["inputRotationDeg"] = best_deg
-    warp_applied = bool(wmeta.get("fiducial_warp", True))
+    _ws = str(wmeta.get("warp_source") or "")
+    warp_applied = bool(wmeta.get("fiducial_warp")) or _ws == "bbox-crop-resize"
 
     return (
         {
@@ -2529,8 +2610,25 @@ def _debug_annotate_v2(
             scale = min(w_img / CANONICAL_W, h_img / CANONICAL_H)
     else:
         scale = min(w_img / pw, h_img / ph)
-    bub_r = max(6, int(7.5 * scale))
-    bub_r = min(bub_r, max(24, min(w_img, h_img) // 25))
+    # Fallback radius when a contest bubble has no w/h in layout (legacy).
+    bub_r_fallback = max(6, int(7.5 * scale))
+    bub_r_fallback = min(bub_r_fallback, max(24, min(w_img, h_img) // 25))
+
+    def _overlay_radius_for_bubble(b: dict[str, Any]) -> int:
+        """Match printed bubble size on warped canvas (layout w/h are scan-frame units)."""
+        wf = float(b.get("w") or 0.0)
+        hf = float(b.get("h") or 0.0)
+        if wf <= 1e-9 or hf <= 1e-9:
+            return bub_r_fallback
+        if abs(pw - 1.0) < 0.01:
+            rw = wf * float(w_img) * 0.5
+            rh = hf * float(h_img) * 0.5
+        else:
+            rw = wf * float(w_img) / (2.0 * pw)
+            rh = hf * float(h_img) / (2.0 * ph)
+        r = int(max(5, round(min(rw, rh))))
+        cap = min(48, max(10, min(w_img, h_img) // 8))
+        return min(r, cap)
 
     for contest in (layout.get("contests") or []):
         pid = str(contest.get("positionId") or "")
@@ -2538,6 +2636,7 @@ def _debug_annotate_v2(
         scores = raw_scores.get(pid) or {}
         for bubble in (contest.get("bubbles") or []):
             oid = str(bubble.get("optionId") or "")
+            bub_r = _overlay_radius_for_bubble(bubble)
             row = overlay_by.get((pid, oid))
             if row:
                 ex, ey = int(row["expected"][0]), int(row["expected"][1])
@@ -2577,9 +2676,9 @@ def _debug_annotate_v2(
                     ny = max(0.0, min(1.0, yf))
                 nx = max(0.0, min(1.0, nx))
                 ny = max(0.0, min(1.0, ny))
-                if _fiducial_warp_env_enabled():
-                    ex_f, ey_f = warped_pixel_xy_from_template_fractions(
-                        nx, ny, w_img, h_img, layout, use_fiducial_content_inset=True
+                if _fiducial_warp_registration_mode() != "none":
+                    ex_f, ey_f = map_template_fractions_to_warped_pixels(
+                        nx, ny, w_img, h_img, layout
                     )
                     ex = int(round(max(0, min(w_img - 1, ex_f))))
                     ey = int(round(max(0, min(h_img - 1, ey_f))))
