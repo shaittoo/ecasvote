@@ -714,6 +714,27 @@ def _rotate_to_template_orientation(warped: np.ndarray) -> tuple[np.ndarray, dic
     return best_img, best
 
 
+def _warped_fiducial_corner_label_bonus(warped_bgr: np.ndarray) -> float:
+    """
+    After fiducial crop/warp to canonical, L-pattern corner IDs should match zone names.
+    Used to break ties when QR decodes at multiple input rotations (wrong rot often still reads).
+    """
+    det = detect_corner_fiducials(warped_bgr)
+    found = det.get("found") or {}
+    expected = {"img_tl": "tl", "img_tr": "tr", "img_br": "br", "img_bl": "bl"}
+    bonus = 0.0
+    for z, exp in expected.items():
+        hit = found.get(z)
+        if not hit:
+            continue
+        lab = str(hit.get("best_label") or "")
+        if lab == exp:
+            bonus += 18.0 + 0.25 * float(hit.get("best_score") or 0.0)
+        elif lab:
+            bonus -= 6.0
+    return bonus
+
+
 def warp_for_template(img: np.ndarray, template: dict[str, Any]) -> tuple[np.ndarray, dict[str, Any]]:
     mode = _template_layout_mode(template)
 
@@ -2380,7 +2401,7 @@ def _scan_ballot_image_v2(
         return str(q.get("ballotId") or q.get("ballotToken") or "").strip()
 
     best: tuple[float, int, np.ndarray, dict[str, Any], Any, str | None, float, dict] | None = None
-    for deg in (0,):
+    for deg in (0, 90, 270):
         rotated = rotate_input(img, deg)
         warped_try, wmeta_try = apply_corner_fiducial_warp_only(
             rotated, detect_corner_fiducials, compute_homography, template
@@ -2394,7 +2415,8 @@ def _scan_ballot_image_v2(
         bid = _ballot_id_from_qr(qr_obj)
         has_bid = 1.0 if bid else 0.0
         qconf = float(qr_conf or 0.0)
-        composite = has_bid * 500.0 + qconf * 80.0 + fid_c
+        corner_bonus = _warped_fiducial_corner_label_bonus(warped_try)
+        composite = has_bid * 500.0 + qconf * 80.0 + fid_c + corner_bonus
         if best is None or composite > best[0]:
             best = (
                 composite,

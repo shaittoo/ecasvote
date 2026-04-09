@@ -730,22 +730,37 @@ def scan_frame_pixel_size_from_template_geometry(
     return None, None
 
 
+def _geometry_has_physical_scan_frame_size(geom: Any) -> bool:
+    """True if ``geom`` has a real scan-frame size (not normalized ``page: {1,1}`` only)."""
+    fw, fh = scan_frame_pixel_size_from_template_geometry(geom)
+    return fw is not None and fh is not None and fw > 8.0 and fh > 8.0
+
+
 def merge_layout_geometry_for_mapping(
     layout: dict[str, Any] | None,
     template: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """
     Bubble placement must use the **same** measured scan-frame size (``pageMeasuredPx`` / ``page``)
-    as registration uses for fiducial inset scaling in **homography** mode (dx/dy ∝ 1/fw, 1/fh).
+    as used when bubble fractions were computed — for bbox-span inset mapping (``ix``, ``iy`` ∝ 1/fw, 1/fh).
 
-    The gateway layout may omit ``pageMeasuredPx`` or hold an older / nominal size
-    (e.g. 756×1070) while the client scan payload has the real DOM measure (e.g. 756×1707).
-    Mismatch yields vertical error ~ (Δdy)×(2×ny−1) — worst at the bottom and QR zone.
+    **Gateway-saved layout** (per ballot, measured at print) almost always carries that size on
+    ``page`` or ``pageMeasuredPx``. The scanning UI sends a **different** ``pageMeasuredPx`` when
+    the browser viewport or election-wide template build does not match the printed sheet; blindly
+    overwriting the stored layout with the client template causes systematic drift (often worst on
+    the QR side) and “wrong orientation” when switching ballots.
 
-    Policy: when the scan ``template.geometry`` carries valid ``pageMeasuredPx`` (or pixel
-    ``page``), **prefer it** over whatever was stored with the layout.
+    Policy:
+
+    * If the layout already has a physical scan-frame size, **leave it unchanged** (do not merge
+      template frame dimensions).
+    * Otherwise, copy ``pageMeasuredPx`` from ``template.geometry`` when present (legacy normalized
+      payloads that omit print-time pixels).
     """
     out: dict[str, Any] = dict(layout or {})
+    if _geometry_has_physical_scan_frame_size(out):
+        return out
+
     tg = (template or {}).get("geometry")
     if not isinstance(tg, dict):
         return out
