@@ -210,12 +210,22 @@ def _zone_fiducial_anchor_inv(
     yb: int,
     aim_x: float | None,
     aim_y: float | None,
+    *,
+    prefer_centroid_near: tuple[float, float] | None = None,
+    min_fiducial_area: float = 0.0,
+    max_fiducial_area: float = 1e12,
+    edge_pick: str | None = None,
 ) -> tuple[float, float] | None:
     """
-    Pick the strongest compact dark blob in the zone.
-    For corner fiducials, use the contour point **closest to the sheet corner** (aim)
-    instead of the centroid — centroids sit inset and bias homography (~up/left vs DOM).
-    Mid-edge zones pass aim_x/aim_y None → centroid.
+    Pick a compact dark blob (4–6-vertex approx) in the zone.
+
+    - ``aim_x``/``aim_y`` set: take the **largest** qualifying contour, return the vertex
+      nearest ``(aim_x, aim_y)`` (used by 4-corner fiducial fallback in ``ballot_omr``).
+    - ``prefer_centroid_near`` (8-point grid corners): centroid nearest that anchor inside the
+      area band. Shrinking bottom ROIs + extremal ``x+y`` heuristics regressed skewed/rotated
+      phone captures (missed BR); keep full ``m`` corners with nearest-centroid selection.
+    - ``edge_pick`` one of ``min_y``/``max_x``/``max_y``/``min_x`` for mid-edge zones.
+    - Otherwise: largest contour, return **centroid**.
     """
     h, w = gray_bin_inv.shape
     x0, y0 = max(0, xa), max(0, ya)
@@ -224,8 +234,7 @@ def _zone_fiducial_anchor_inv(
         return None
     roi = gray_bin_inv[y0:y1, x0:x1]
     contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    best_c = None
-    best_score = 0.0
+    candidates: list[tuple[Any, float, float, float]] = []
     for c in contours:
         area = cv2.contourArea(c)
         if area < 30 or area > (roi.shape[0] * roi.shape[1] * 0.25):
@@ -236,22 +245,59 @@ def _zone_fiducial_anchor_inv(
         approx = cv2.approxPolyDP(c, 0.035 * peri, True)
         if len(approx) < 4 or len(approx) > 6:
             continue
-        if area > best_score:
-            best_score = area
-            best_c = c
-    if best_c is None:
-        return None
-    if aim_x is None or aim_y is None:
-        M = cv2.moments(best_c)
+        M = cv2.moments(c)
         if M["m00"] < 1e-6:
-            return None
-        return float(M["m10"] / M["m00"] + x0), float(M["m01"] / M["m00"] + y0)
-    pts = best_c.reshape(-1, 2).astype(np.float64)
-    pts[:, 0] += x0
-    pts[:, 1] += y0
-    d2 = (pts[:, 0] - aim_x) ** 2 + (pts[:, 1] - aim_y) ** 2
-    j = int(np.argmin(d2))
-    return float(pts[j, 0]), float(pts[j, 1])
+            continue
+        cx = float(M["m10"] / M["m00"] + x0)
+        cy = float(M["m01"] / M["m00"] + y0)
+        candidates.append((c, cx, cy, area))
+
+    if not candidates:
+        return None
+
+    def _area_pool() -> list[tuple[Any, float, float, float]]:
+        lo = float(min_fiducial_area)
+        hi = float(max_fiducial_area)
+        if lo <= 0 and hi >= 1e11:
+            return list(candidates)
+        filt = [t for t in candidates if lo <= t[3] <= hi]
+        return filt if filt else list(candidates)
+
+    if aim_x is not None and aim_y is not None:
+        best_c = max(candidates, key=lambda t: t[3])[0]
+        pts = best_c.reshape(-1, 2).astype(np.float64)
+        pts[:, 0] += x0
+        pts[:, 1] += y0
+        d2 = (pts[:, 0] - aim_x) ** 2 + (pts[:, 1] - aim_y) ** 2
+        j = int(np.argmin(d2))
+        return float(pts[j, 0]), float(pts[j, 1])
+
+    pool = _area_pool()
+
+    if edge_pick in ("min_y", "max_x", "max_y", "min_x"):
+        if edge_pick == "min_y":
+            _, cx, cy, _ = min(pool, key=lambda t: (t[2], -t[3]))
+        elif edge_pick == "max_x":
+            _, cx, cy, _ = max(pool, key=lambda t: (t[1], t[3]))
+        elif edge_pick == "max_y":
+            _, cx, cy, _ = max(pool, key=lambda t: (t[2], t[3]))
+        else:
+            _, cx, cy, _ = min(pool, key=lambda t: (t[1], -t[3]))
+        return cx, cy
+
+    if prefer_centroid_near is not None:
+        px, py = prefer_centroid_near
+
+        def _corner_key(t: tuple[Any, float, float, float]) -> tuple[float, float]:
+            _, cx, cy, area = t
+            d2 = (cx - px) ** 2 + (cy - py) ** 2
+            return (d2, -area)
+
+        _, cx, cy, _ = min(pool, key=_corner_key)
+        return cx, cy
+
+    _, cx, cy, _ = max(pool, key=lambda t: t[3])
+    return cx, cy
 
 
 def _post_warp_fine_deskew(bgr: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
@@ -332,7 +378,6 @@ def build_fiducial_dst_grid_eight(
         (dx, dh / 2.0),
     ]
 
-
 def fiducial_dst_four_corners(
     frame_w: float | None = None,
     frame_h: float | None = None,
@@ -358,9 +403,14 @@ def build_robust_fiducial_homography(
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
     _, inv = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     h, w = gray.shape[:2]
+    # Corner zones use m×m near each image corner. Uncapped, m can be 350+ px on tall
+    # phone photos and the BR/BL windows overlap the QR or dense timing strip — wrong
+    # contour wins and the homography skews (classic bottom-right / horizontal drift).
     m = int(min(w, h) * 0.18)
-    top_band = max(18, int(min(w, h) * 0.11))
-    edge_inset = max(2, int(min(w, h) * 0.01))
+    m = max(24, min(m, 220))
+    mn = float(min(w, h))
+    top_band = max(18, int(mn * 0.11))
+    edge_inset = max(2, int(mn * 0.01))
     hm = m // 2
     dst_pts = build_fiducial_dst_grid_eight(frame_w, frame_h)
 
@@ -384,23 +434,76 @@ def build_robust_fiducial_homography(
         ((0, h // 2 - hm, m, h // 2 + hm), dst_pts[7]),
     ]
 
-    # Corner rows: aim at image corners so anchors match physical sheet, not blob centers.
+    # Corner zones must use blob **centroid** as src: canonical dst_pts are fiducial *centroid*
+    # positions (inset via dx/dy). Pairing outer corner vertices with those dst insets skews H
+    # and compresses the right side (upper/lower right drift). Mid-edge zones also use centroid.
     aims: list[tuple[float | None, float | None]] = [
-        (0.0, 0.0),
-        (float(w - 1), 0.0),
-        (float(w - 1), float(h - 1)),
-        (0.0, float(h - 1)),
+        (None, None),
+        (None, None),
+        (None, None),
+        (None, None),
         (None, None),
         (None, None),
         (None, None),
         (None, None),
     ]
 
+    corner_amin = max(160.0, (mn * 0.017) ** 2)
+    corner_amax = min(10_000.0, max(900.0, (mn * 0.062) ** 2))
+    mid_amin = max(90.0, (mn * 0.010) ** 2)
+    mid_amax = min(35_000.0, max(1_800.0, (mn * 0.095) ** 2))
+
     src_list: list[tuple[float, float]] = []
     dst_list: list[tuple[float, float]] = []
     for idx, ((xa, ya, xb, yb), dst) in enumerate(zone_defs):
         aims_x, aims_y = aims[idx]
-        c = _zone_fiducial_anchor_inv(inv, xa, ya, xb, yb, aims_x, aims_y)
+        pref = None
+        if idx == 0:
+            pref = (float(xa) + 3.0, float(ya) + 3.0)
+        elif idx == 1:
+            pref = (float(xb) - 4.0, float(ya) + 3.0)
+        elif idx == 2:
+            pref = (float(xb) - 4.0, float(yb) - 4.0)
+        elif idx == 3:
+            pref = (float(xa) + 3.0, float(yb) - 4.0)
+
+        kw: dict[str, Any] = {}
+        if idx < 4:
+            kw["prefer_centroid_near"] = pref
+            kw["min_fiducial_area"] = corner_amin
+            kw["max_fiducial_area"] = corner_amax
+        elif idx == 4:
+            kw["edge_pick"] = "min_y"
+            kw["min_fiducial_area"] = mid_amin
+            kw["max_fiducial_area"] = mid_amax
+        elif idx == 5:
+            kw["edge_pick"] = "max_x"
+            kw["min_fiducial_area"] = mid_amin
+            kw["max_fiducial_area"] = mid_amax
+        elif idx == 6:
+            kw["edge_pick"] = "max_y"
+            kw["min_fiducial_area"] = mid_amin
+            kw["max_fiducial_area"] = mid_amax
+        else:
+            kw["edge_pick"] = "min_x"
+            kw["min_fiducial_area"] = mid_amin
+            kw["max_fiducial_area"] = mid_amax
+
+        c = _zone_fiducial_anchor_inv(inv, xa, ya, xb, yb, aims_x, aims_y, **kw)
+        if c is None and idx in (2, 3) and pref is not None:
+            # Skewed photos can leave no blob in [corner_amin, corner_amax]; retry without band.
+            c = _zone_fiducial_anchor_inv(
+                inv,
+                xa,
+                ya,
+                xb,
+                yb,
+                aims_x,
+                aims_y,
+                prefer_centroid_near=pref,
+                min_fiducial_area=0.0,
+                max_fiducial_area=1e12,
+            )
         if c is not None:
             src_list.append(c)
             dst_list.append(dst)
@@ -428,6 +531,22 @@ def build_robust_fiducial_homography(
     ransac_th = float(max(2.2, min(w, h) * 0.0028))
 
     if n >= 8:
+        # RANSAC first: one bad mid-edge or corner point otherwise poisons LMEDS (all-inlier fit).
+        Hr, msk_r = cv2.findHomography(
+            src, dst, cv2.RANSAC, ransac_th, None, 6000, 0.999
+        )
+        if Hr is not None and msk_r is not None:
+            inl8 = int(msk_r.ravel().sum())
+            if inl8 >= 5:
+                meta_r: dict[str, Any] = {
+                    "warp_source": "fiducial-grid-ransac-8",
+                    "grid_points": n,
+                    "grid_inliers": inl8,
+                    "corner_confidence": min(1.0, 0.55 + 0.05 * inl8),
+                    "fiducial_warp": True,
+                    **fid_meta,
+                }
+                return Hr, meta_r
         Hl, _msk = cv2.findHomography(src, dst, cv2.LMEDS)
         if Hl is not None:
             meta_l: dict[str, Any] = {

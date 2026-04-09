@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import json
+from pickle import TRUE
 from typing import Any
 
 import cv2
@@ -519,8 +520,10 @@ def detect_corner_fiducials(img: np.ndarray) -> dict[str, Any]:
     _, inv = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     h, w = gray.shape[:2]
     m = int(min(w, h) * 0.18)
-    top_band = max(18, int(min(w, h) * 0.11))
-    edge_inset = max(2, int(min(w, h) * 0.01))
+    m = max(24, min(m, 220))
+    mn = float(min(w, h))
+    top_band = max(18, int(mn * 0.11))
+    edge_inset = max(2, int(mn * 0.01))
     zones = {
         "img_tl": ((0, 0, m, top_band), (0.0, 0.0)),
         "img_tr": ((w - m - edge_inset, 0, w - edge_inset, top_band), (float(w - 1), 0.0)),
@@ -1177,10 +1180,10 @@ def score_bubbles_from_geometry(
                 nx1 = max(0.0, min(1.0, nx1))
                 ny1 = max(0.0, min(1.0, ny1))
                 px0, py0 = warped_pixel_xy_from_template_fractions(
-                    nx0, ny0, w, h, geometry, use_fiducial_content_inset=True
+                    nx0, ny0, w, h, geometry, use_fiducial_content_inset=TRUE
                 )
                 px1, py1 = warped_pixel_xy_from_template_fractions(
-                    nx1, ny1, w, h, geometry, use_fiducial_content_inset=True
+                    nx1, ny1, w, h, geometry, use_fiducial_content_inset=TRUE
                 )
                 x0 = int(min(px0, px1))
                 y0 = int(min(py0, py1))
