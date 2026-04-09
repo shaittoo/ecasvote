@@ -1180,10 +1180,10 @@ def score_bubbles_from_geometry(
                 nx1 = max(0.0, min(1.0, nx1))
                 ny1 = max(0.0, min(1.0, ny1))
                 px0, py0 = warped_pixel_xy_from_template_fractions(
-                    nx0, ny0, w, h, geometry, use_fiducial_content_inset=TRUE
+                    nx0, ny0, w, h, geometry, use_fiducial_content_inset=True
                 )
                 px1, py1 = warped_pixel_xy_from_template_fractions(
-                    nx1, ny1, w, h, geometry, use_fiducial_content_inset=TRUE
+                    nx1, ny1, w, h, geometry, use_fiducial_content_inset=True
                 )
                 x0 = int(min(px0, px1))
                 y0 = int(min(py0, py1))
