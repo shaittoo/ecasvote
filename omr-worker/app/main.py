@@ -36,6 +36,7 @@ from app.omr_layout_v1 import (
     CANONICAL_H,
     CANONICAL_W,
     annotate_warped_layout,
+    merge_layout_geometry_for_mapping,
     reproduce_warped_after_rotation,
     rotate_input,
 )
@@ -73,6 +74,7 @@ def _warped_for_debug_overlay(
     img: Any,
     scan_result: dict[str, Any],
     warped_v2: Any | None,
+    template: dict[str, Any] | None = None,
 ) -> Any | None:
     if warped_v2 is not None:
         return warped_v2
@@ -80,7 +82,7 @@ def _warped_for_debug_overlay(
     wd = br.get("warpDebug") or {}
     rot_deg = int(wd.get("inputRotationDeg", 0))
     warped_fb, _ = reproduce_warped_after_rotation(
-        img, rot_deg, detect_corner_fiducials, compute_homography
+        img, rot_deg, detect_corner_fiducials, compute_homography, template
     )
     return warped_fb
 
@@ -109,7 +111,7 @@ def _try_geometry_debug_overlay(
     scan_result: dict[str, Any],
     warped_v2: Any | None,
 ) -> Any | None:
-    """Gateway-stored layout first; then layoutDebug; client template.geometry only without gateway ballot."""
+    """Gateway-stored layout first; then client template.geometry; then layoutDebug rows."""
     tpl = template or {}
     geom = tpl.get("geometry") if isinstance(tpl.get("geometry"), dict) else None
     br = scan_result.get("bubbleRead") or {}
@@ -117,7 +119,7 @@ def _try_geometry_debug_overlay(
     ballot_id = _extract_ballot_id(scan_result)
     gw = _gateway_url()
 
-    warped = _warped_for_debug_overlay(img, scan_result, warped_v2)
+    warped = _warped_for_debug_overlay(img, scan_result, warped_v2, tpl)
     if warped is None:
         warped = _synthesize_canonical_warp_for_debug(img, scan_result)
 
@@ -144,7 +146,8 @@ def _try_geometry_debug_overlay(
             warped = _synthesize_canonical_warp_for_debug(img, scan_result)
         if warped is not None:
             print("OVERLAY: geometry-based (gateway layout)")
-            return _debug_annotate_v2(warped, gateway_layout, scan_result)
+            layout_draw = merge_layout_geometry_for_mapping(gateway_layout, tpl)
+            return _debug_annotate_v2(warped, layout_draw, scan_result)
         print("OVERLAY: gateway layout present but no warped canvas")
 
     print(
@@ -154,18 +157,13 @@ def _try_geometry_debug_overlay(
         len(layout_dbg) if isinstance(layout_dbg, list) else None,
     )
 
+    if isinstance(geom, dict) and geom.get("contests") and warped is not None:
+        print("OVERLAY: geometry-based (client template)")
+        return _debug_annotate_v2(warped, geom, scan_result)
+
     if isinstance(layout_dbg, list) and len(layout_dbg) > 0 and warped is not None:
         print("OVERLAY: geometry-based (layoutDebug rows)")
         return annotate_warped_layout(warped, layout_dbg, sel)
-
-    if isinstance(geom, dict) and geom.get("contests") and warped is not None:
-        if not (gw and ballot_id):
-            print("OVERLAY: geometry-based (client template, no gateway ballot id)")
-            return _debug_annotate_v2(warped, geom, scan_result)
-        print(
-            "OVERLAY: skipping client template geometry — use GET /api/omr-layout for ballot",
-            ballot_id,
-        )
 
     return None
 
@@ -250,7 +248,11 @@ def debug_json(req: ScanRequest) -> dict[str, Any]:
                 warp_dbg = bubble_result.get("warpDebug") or {}
                 rot_deg = int(warp_dbg.get("inputRotationDeg", 0))
                 warped_fb, _ = reproduce_warped_after_rotation(
-                    img, rot_deg, detect_corner_fiducials, compute_homography
+                    img,
+                    rot_deg,
+                    detect_corner_fiducials,
+                    compute_homography,
+                    req.template,
                 )
                 src = warped_fb if warped_fb is not None else img
                 annotated = debug_annotate_ballot(src, req.template or {}, bubble_result)
@@ -317,7 +319,11 @@ def debug(req: ScanRequest) -> HTMLResponse:
                 bubble_result = scan_result.get("bubbleRead") or {}
                 rot_deg = int((bubble_result.get("warpDebug") or {}).get("inputRotationDeg", 0))
                 warped_fb, _ = reproduce_warped_after_rotation(
-                    img, rot_deg, detect_corner_fiducials, compute_homography
+                    img,
+                    rot_deg,
+                    detect_corner_fiducials,
+                    compute_homography,
+                    req.template,
                 )
                 src = warped_fb if warped_fb is not None else img
                 annotated = debug_annotate_ballot(src, req.template or {}, bubble_result)

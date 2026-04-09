@@ -13,6 +13,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../components/header";
+import { buildScannerTemplateFromPositions } from "@/lib/ballot/scannerTemplateSpec";
 import {
   fetchElection,
   fetchElections,
@@ -43,8 +44,50 @@ import {
 import type { OmGeometryTemplate } from "@/lib/ballot/omGeometryTemplate";
 
 /** Gateway/worker expect `scannerTemplate` object with a `geometry` field (DOM-measured layout). */
-function scannerTemplateFromGeometry(geom: OmGeometryTemplate): { geometry: OmGeometryTemplate } {
-  return { geometry: geom };
+function normalizeGeometry(geom: OmGeometryTemplate): OmGeometryTemplate {
+  const { width: pw, height: ph } = geom.page;
+  if (pw <= 0 || ph <= 0) return geom;
+  return {
+    ...geom,
+    page: { width: 1, height: 1 },
+    contests: geom.contests.map((c) => ({
+      ...c,
+      bubbles: c.bubbles.map((b) => ({
+        ...b,
+        x: b.x / pw,
+        y: b.y / ph,
+        w: b.w / pw,
+        h: b.h / ph,
+      })),
+    })),
+  };
+}
+
+function buildFullScannerTemplate(
+  geom: OmGeometryTemplate,
+  positions: Position[],
+  electionId: string,
+  electionName: string,
+  includeAbstain: boolean
+) {
+  const base = buildScannerTemplateFromPositions(
+    electionId,
+    electionName,
+    BALLOT_TEMPLATE_VERSION,
+    positions,
+    { includeAbstain }
+  );
+  const normalized = normalizeGeometry(geom);
+  const pw = geom.page.width;
+  const ph = geom.page.height;
+  const geometry: OmGeometryTemplate =
+    pw > 1 && ph > 1
+      ? {
+          ...normalized,
+          pageMeasuredPx: { width: pw, height: ph },
+        }
+      : normalized;
+  return { ...base, geometry };
 }
 
 /** Scan/debug payload: measured `geometry` must match the printed ballot contest set (use voter-filtered preview). */
@@ -178,6 +221,8 @@ export function BallotScanningContent() {
   >("idle");
   const [debugOverlayBusy, setDebugOverlayBusy] = useState(false);
   const [debugOverlayImage, setDebugOverlayImage] = useState<string | null>(null);
+  /** Pretty-printed `omr.bubbleRead.warpDebug` from the latest OMR scan (DevTools path helper). */
+  const [lastOmrWarpDebugJson, setLastOmrWarpDebugJson] = useState<string | null>(null);
   const [debugOverlayMeta, setDebugOverlayMeta] = useState<{
     contestsDetected?: number;
     contestsInTemplate?: number;
@@ -368,7 +413,13 @@ export function BallotScanningContent() {
       );
       return;
     }
-    const scannerTemplate = scannerTemplateFromGeometry(omGeometryTemplate);
+    const scannerTemplate = buildFullScannerTemplate(
+      omGeometryTemplate,
+      positions,
+      electionId,
+      electionName || electionId,
+      includeAbstain
+    );
     logScannerTemplateContestIds(scannerTemplate);
     console.log({
       hasImageBase64: !!imageBase64,
@@ -400,7 +451,14 @@ export function BallotScanningContent() {
     } finally {
       setDebugOverlayBusy(false);
     }
-  }, [batchFiles, electionId, omGeometryTemplate]);
+  }, [
+    batchFiles,
+    electionId,
+    electionName,
+    includeAbstain,
+    omGeometryTemplate,
+    positions,
+  ]);
 
   const stopCamera = useCallback(() => {
     if (autoRunRef.current !== null) {
@@ -1029,9 +1087,20 @@ export function BallotScanningContent() {
     }
     setExporting(true);
     try {
+      let pos = positions;
+      if (!pos.length) {
+        pos = await fetchPositions(electionId);
+        setPositions(pos);
+      }
       downloadJson(
         `scanner-template-${electionId}.json`,
-        scannerTemplateFromGeometry(omGeometryTemplate)
+        buildFullScannerTemplate(
+          omGeometryTemplate,
+          pos,
+          electionId,
+          electionName || electionId,
+          includeAbstain
+        )
       );
       notify.success({ title: "Template downloaded" });
     } catch (e) {
@@ -1179,11 +1248,19 @@ export function BallotScanningContent() {
         pos = await fetchPositions(electionId);
         setPositions(pos);
       }
-      const scannerTemplate = scannerTemplateFromGeometry(omGeometryTemplate);
+      const scannerTemplate = buildFullScannerTemplate(
+        omGeometryTemplate,
+        pos,
+        electionId,
+        electionName || electionId,
+        includeAbstain
+      );
       logScannerTemplateContestIds(scannerTemplate);
 
       let useOmr = true;
       let warnedWorkerOff = false;
+      let latestWarpDebug: unknown = undefined;
+      let omrHitsInBatch = 0;
 
       for (const file of filesToScan) {
         if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
@@ -1220,8 +1297,16 @@ export function BallotScanningContent() {
               continue;
             }
 
+            omrHitsInBatch += 1;
             const tv = r.tokenValidation;
             const omr = r.omr;
+            const brDbg = omr["bubbleRead"];
+            if (brDbg && typeof brDbg === "object" && brDbg !== null) {
+              const wd = (brDbg as Record<string, unknown>)["warpDebug"];
+              if (wd !== undefined) {
+                latestWarpDebug = wd;
+              }
+            }
             const sbp = parseSelectionsByPosition(omr);
             const rawScores = omr["rawBubbleScores"] as
               | Record<string, Record<string, number | boolean>>
@@ -1395,6 +1480,21 @@ export function BallotScanningContent() {
         await scanClientQrOnly(file);
       }
 
+      setLastOmrWarpDebugJson(
+        latestWarpDebug !== undefined
+          ? JSON.stringify(latestWarpDebug, null, 2)
+          : omrHitsInBatch > 0
+            ? JSON.stringify(
+                {
+                  _note:
+                    "Gateway returned OMR for this batch but bubbleRead.warpDebug was missing. In Network → scanner/scan-image → open omr → bubbleRead.",
+                },
+                null,
+                2
+              )
+            : null
+      );
+
       const exportPayload = buildScanExportBatch({
         electionId,
         electionName: label,
@@ -1451,6 +1551,7 @@ export function BallotScanningContent() {
         });
       }
     } catch (e) {
+      setLastOmrWarpDebugJson(null);
       const msg = String(e);
       // Preserve operator visibility: even when scan pipeline throws, create a batch row
       // so "Results & raw export" is not empty and raw diagnostics remain downloadable.
@@ -1607,23 +1708,36 @@ export function BallotScanningContent() {
                           )}{" "}
                           — voter-specific grid (v2), not election-wide.
                         </p>
-                        <div className="pointer-events-none fixed left-[-10000px] top-0 z-0 w-[210mm] bg-white">
-                          <PrintableBallotSheet
-                            key={`${electionId}-${includeAbstain}-${effectiveGovernorFilter}`}
-                            electionId={electionId}
-                            ballotToken={buildPreviewBallotToken(electionId)}
-                            templateVersion={BALLOT_TEMPLATE_VERSION}
-                            electionName={electionName || electionId}
-                            positions={printablePositions}
-                            showAbstain={includeAbstain}
-                            onGeometryTemplateReady={(geom) => {
-                              console.log(
-                                "SCANNER PREVIEW GEOMETRY CONTEST IDS:",
-                                geom.contests.map((c) => c.positionId),
-                              );
-                              setOmGeometryTemplate(geom);
+                        <div style={{ position: "relative", width: 0, height: 0, overflow: "visible" }}>
+                          <div
+                            style={{
+                              position: "absolute",
+                              left: "-10000px",
+                              top: 0,
+                              width: "794px",
+                              minWidth: "794px",
+                              background: "white",
+                              pointerEvents: "none",
+                              zIndex: 0,
                             }}
-                          />
+                          >
+                            <PrintableBallotSheet
+                              key={`${electionId}-${includeAbstain}-${effectiveGovernorFilter}`}
+                              electionId={electionId}
+                              ballotToken={buildPreviewBallotToken(electionId)}
+                              templateVersion={BALLOT_TEMPLATE_VERSION}
+                              electionName={electionName || electionId}
+                              positions={printablePositions}
+                              showAbstain={includeAbstain}
+                              onGeometryTemplateReady={(geom) => {
+                                console.log(
+                                  "SCANNER PREVIEW GEOMETRY CONTEST IDS:",
+                                  geom.contests.map((c) => c.positionId),
+                                );
+                                setOmGeometryTemplate(geom);
+                              }}
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2040,6 +2154,37 @@ export function BallotScanningContent() {
                     />
                     Include ABSTAIN in template export
                   </label>
+                  <div className="space-y-2 rounded-md border border-dashed border-border bg-muted/25 p-3">
+                    <p className="text-xs font-semibold text-foreground">
+                      Last OMR{" "}
+                      <code className="rounded bg-muted px-1 font-normal">
+                        bubbleRead.warpDebug
+                      </code>
+                    </p>
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      Fills after you run <strong>Scan ballot(s)</strong> with image files and a
+                      working OMR worker. In DevTools → Network →{" "}
+                      <code className="rounded bg-muted px-0.5">scanner/scan-image</code> →
+                      Response: <code className="rounded bg-muted px-0.5">omr</code> →{" "}
+                      <code className="rounded bg-muted px-0.5">bubbleRead</code> →{" "}
+                      <code className="rounded bg-muted px-0.5">warpDebug</code>.{" "}
+                      <code className="rounded bg-muted px-0.5">
+                        fiducialCentroidInsetCanonical
+                      </code>{" "}
+                      is <code className="rounded bg-muted px-0.5">dx</code> /{" "}
+                      <code className="rounded bg-muted px-0.5">dy</code> when present.
+                    </p>
+                    {lastOmrWarpDebugJson ? (
+                      <pre className="max-h-56 overflow-auto rounded-md border bg-background p-2 font-mono text-[10px] leading-relaxed text-foreground">
+                        {lastOmrWarpDebugJson}
+                      </pre>
+                    ) : (
+                      <p className="text-[11px] italic leading-snug text-muted-foreground">
+                        No OMR capture yet for this browser session. PDFs skip OpenCV; if the
+                        worker is off, scans fall back to QR-only and this stays empty.
+                      </p>
+                    )}
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     <Button
                       type="button"

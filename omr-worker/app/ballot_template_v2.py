@@ -64,6 +64,13 @@ TIMING_SPEC = TimingSpec()
 BUBBLE_SPEC = BubbleSpec()
 LAYOUT_SPEC = LayoutSpec()
 
+# Corner fiducials: keep in sync with frontend `PrintableBallotSheet` SCAN_GEOMETRY.cornerSize.
+FIDUCIAL_SQUARE_OUTER_PX = 24.0
+FIDUCIAL_CENTROID_INSET_PX = FIDUCIAL_SQUARE_OUTER_PX / 2.0
+# Typical `#printable-ballot-scan-frame` DOM size when geometry is measured (fallback only).
+NOMINAL_SCAN_FRAME_W_PX = 756.0
+NOMINAL_SCAN_FRAME_H_PX = 1070.0
+
 
 def expected_edge_mark_positions(width: int, height: int) -> dict[str, list[tuple[float, float]]]:
     """

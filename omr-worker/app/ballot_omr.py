@@ -46,16 +46,21 @@ from app.omr_layout_v1 import (
     annotate_warped_layout,
     bubble_fill_class_v2,
     build_ballot_empty_reference,
-    build_bubble_scoring_mask,
+    build_bubble_scoring_mask_from_layout,
     contest_scores_with_dominance,
     evaluate_ballot_level_calibration,
+    fiducial_dst_four_corners,
     fill_hard_gate_failures,
     layout_scan_quality,
     prepare_bubble_scoring_gray,
     reproduce_warped_after_rotation,
     rotate_input,
+    merge_layout_geometry_for_mapping,
+    _fiducial_warp_env_enabled,
     run_layout_scan_on_bgr,
+    scan_frame_pixel_size_from_template_geometry,
     score_bubble_fixed_roi,
+    warped_pixel_xy_from_template_fractions,
     select_marks_strict_overvote,
     _zone_fiducial_anchor_inv,
 )
@@ -547,15 +552,18 @@ def detect_corner_fiducials(img: np.ndarray) -> dict[str, Any]:
     return {"zones": zones, "found": found, "confidence": conf}
 
 
-def compute_homography(corners: dict[str, tuple[float, float]], width: int, height: int) -> np.ndarray | None:
+def compute_homography(
+    corners: dict[str, tuple[float, float]],
+    width: int,
+    height: int,
+    frame_w: float | None = None,
+    frame_h: float | None = None,
+) -> np.ndarray | None:
     need = ("img_tl", "img_tr", "img_br", "img_bl")
     if not all(k in corners for k in need):
         return None
     src = np.array([corners[k] for k in need], dtype=np.float32)
-    dst = np.array(
-        [(0, 0), (width - 1, 0), (width - 1, height - 1), (0, height - 1)],
-        dtype=np.float32,
-    )
+    dst = fiducial_dst_four_corners(frame_w, frame_h)
     return cv2.getPerspectiveTransform(src, dst)
 
 
@@ -710,7 +718,13 @@ def warp_for_template(img: np.ndarray, template: dict[str, Any]) -> tuple[np.nda
     if mode == "legacy":
         H = _detect_page_outline_homography(img, LAYOUT_SPEC.canonical_w, LAYOUT_SPEC.canonical_h)
         if H is not None:
-            warped = cv2.warpPerspective(img, H, (LAYOUT_SPEC.canonical_w, LAYOUT_SPEC.canonical_h))
+            warped = cv2.warpPerspective(
+                img,
+                H,
+                (LAYOUT_SPEC.canonical_w, LAYOUT_SPEC.canonical_h),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REPLICATE,
+            )
             return warped, {
                 "mode": "legacy",
                 "warp_source": "legacy-page-outline",
@@ -732,7 +746,18 @@ def warp_for_template(img: np.ndarray, template: dict[str, Any]) -> tuple[np.nda
         if zone in found:
             corners[zone] = tuple(found[zone]["centroid"])
 
-    H = compute_homography(corners, LAYOUT_SPEC.canonical_w, LAYOUT_SPEC.canonical_h)
+    g = template.get("geometry") or {}
+    fw, fh = scan_frame_pixel_size_from_template_geometry(
+        g if isinstance(g, dict) else {}
+    )
+
+    H = compute_homography(
+        corners,
+        LAYOUT_SPEC.canonical_w,
+        LAYOUT_SPEC.canonical_h,
+        frame_w=fw,
+        frame_h=fh,
+    )
     warp_source = "corner-fiducials"
 
     if H is None:
@@ -740,7 +765,13 @@ def warp_for_template(img: np.ndarray, template: dict[str, Any]) -> tuple[np.nda
         warp_source = "page-outline" if H is not None else "legacy-fallback"
 
     if H is not None:
-        warped = cv2.warpPerspective(img, H, (LAYOUT_SPEC.canonical_w, LAYOUT_SPEC.canonical_h))
+        warped = cv2.warpPerspective(
+            img,
+            H,
+            (LAYOUT_SPEC.canonical_w, LAYOUT_SPEC.canonical_h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
     else:
         warped = warp_if_possible(img)
 
@@ -1104,6 +1135,8 @@ def score_bubbles_from_geometry(
         sx = w / pw
         sy = h / ph
 
+    _geom_inset = _fiducial_warp_env_enabled()
+
     contests_geo = geometry.get("contests") or []
     raw_scores: dict[str, dict[str, float]] = {}
     selections_by_position: dict[str, list[str]] = {}
@@ -1132,10 +1165,32 @@ def score_bubbles_from_geometry(
             yf = float(b.get("y") or 0)
             wf = float(b.get("w") or 0)
             hf = float(b.get("h") or 0)
-            x0 = int(xf * sx)
-            y0 = int(yf * sy)
-            x1 = int((xf + wf) * sx)
-            y1 = int((yf + hf) * sy)
+            if _geom_inset and (wf > 1e-9 or hf > 1e-9):
+                if abs(pw - 1.0) < 0.01:
+                    nx0, ny0 = xf, yf
+                    nx1, ny1 = xf + wf, yf + hf
+                else:
+                    nx0, ny0 = xf / pw, yf / ph
+                    nx1, ny1 = (xf + wf) / pw, (yf + hf) / ph
+                nx0 = max(0.0, min(1.0, nx0))
+                ny0 = max(0.0, min(1.0, ny0))
+                nx1 = max(0.0, min(1.0, nx1))
+                ny1 = max(0.0, min(1.0, ny1))
+                px0, py0 = warped_pixel_xy_from_template_fractions(
+                    nx0, ny0, w, h, geometry, use_fiducial_content_inset=True
+                )
+                px1, py1 = warped_pixel_xy_from_template_fractions(
+                    nx1, ny1, w, h, geometry, use_fiducial_content_inset=True
+                )
+                x0 = int(min(px0, px1))
+                y0 = int(min(py0, py1))
+                x1 = int(max(px0, px1)) + 1
+                y1 = int(max(py0, py1)) + 1
+            else:
+                x0 = int(xf * sx)
+                y0 = int(yf * sy)
+                x1 = int((xf + wf) * sx)
+                y1 = int((yf + hf) * sy)
             x0 = max(0, min(w - 1, x0))
             x1 = max(x0 + 1, min(w, x1))
             y0 = max(0, min(h - 1, y0))
@@ -1925,7 +1980,7 @@ def scan_ballot_image_with_warp(
         )
     _log_template_contest_ids(template, "WORKER TEMPLATE CONTEST IDS (client payload advisory)")
     if gateway_url:
-        result, warped = _scan_ballot_image_v2(img, gateway_url)
+        result, warped = _scan_ballot_image_v2(img, gateway_url, template or {})
         if result.get("ok"):
             return result, warped
         allow_fb = os.getenv("OMR_ALLOW_TEMPLATE_FALLBACK", "").strip().lower() in (
@@ -2000,6 +2055,7 @@ def _verify_layout_hash(stored_hash: str, qr_hash: str) -> bool:
 def _score_bubbles_from_saved_layout(
     warped: np.ndarray,
     layout: dict[str, Any],
+    template: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Template-driven bubble-only OMR: only expected bubble ROIs from the saved layout
@@ -2008,9 +2064,12 @@ def _score_bubbles_from_saved_layout(
     """
     gray, gray_meta = prepare_bubble_scoring_gray(warped)
     h_img, w_img = warped.shape[:2]
-    score_mask = build_bubble_scoring_mask(h_img, w_img)
+    layout_map = merge_layout_geometry_for_mapping(layout, template)
+    score_mask = build_bubble_scoring_mask_from_layout(
+        h_img, w_img, layout_map
+    )
 
-    page = layout.get("page") or {}
+    page = layout_map.get("page") or {}
     pw = float(page.get("width") or CANONICAL_W)
     ph = float(page.get("height") or CANONICAL_H)
     if pw <= 0 or ph <= 0:
@@ -2026,7 +2085,9 @@ def _score_bubbles_from_saved_layout(
     flat_rois: dict[str, BubbleRoiScore] = {}
     contest_plan: list[tuple[str, int, list[tuple[str, BubbleRoiScore]]]] = []
 
-    for contest in (layout.get("contests") or []):
+    _use_inset = _fiducial_warp_env_enabled()
+
+    for contest in (layout_map.get("contests") or []):
         pid = str(contest.get("positionId") or "")
         if not pid:
             continue
@@ -2053,8 +2114,15 @@ def _score_bubbles_from_saved_layout(
                 ny = max(0.0, min(1.0, yf))
             nx = max(0.0, min(1.0, nx))
             ny = max(0.0, min(1.0, ny))
-            ex = int(round(max(0, min(w_img - 1, nx * w_img))))
-            ey = int(round(max(0, min(h_img - 1, ny * h_img))))
+            if _use_inset:
+                ex_f, ey_f = warped_pixel_xy_from_template_fractions(
+                    nx, ny, w_img, h_img, layout_map, use_fiducial_content_inset=True
+                )
+                ex = int(round(max(0, min(w_img - 1, ex_f))))
+                ey = int(round(max(0, min(h_img - 1, ey_f))))
+            else:
+                ex = int(round(max(0, min(w_img - 1, nx * w_img))))
+                ey = int(round(max(0, min(h_img - 1, ny * h_img))))
             roi = score_bubble_fixed_roi(gray, ex, ey, mask=score_mask)
             acc.append((oid, roi))
             flat_rois[f"{pid}::{oid}"] = roi
@@ -2220,7 +2288,9 @@ def _score_bubbles_from_saved_layout(
 
 
 def _scan_ballot_image_v2(
-    img: np.ndarray, gateway_url: str
+    img: np.ndarray,
+    gateway_url: str,
+    template: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], np.ndarray | None]:
     """
     1. Try rotations 0°, 90°, 270°: fiducial warp + QR on warped canvas; pick best composite score.
@@ -2243,7 +2313,7 @@ def _scan_ballot_image_v2(
     for deg in (0, 90, 270):
         rotated = rotate_input(img, deg)
         warped_try, wmeta_try = apply_corner_fiducial_warp_only(
-            rotated, detect_corner_fiducials, compute_homography
+            rotated, detect_corner_fiducials, compute_homography, template
         )
         if warped_try is None:
             continue
@@ -2337,7 +2407,7 @@ def _scan_ballot_image_v2(
     ]
     print("AUTO FILTERED CONTEST IDS (stored layout):", _fc)
 
-    bubble_result = _score_bubbles_from_saved_layout(warped, layout)
+    bubble_result = _score_bubbles_from_saved_layout(warped, layout, template)
 
     by_pos = bubble_result.get("selectionsByPosition") or {}
     selections_flat = selections_multi_to_flat(by_pos)
@@ -2402,7 +2472,7 @@ def _debug_annotate_v2(
     canvas = warped.copy()
     h_img, w_img = canvas.shape[:2]
 
-    score_mask = build_bubble_scoring_mask(h_img, w_img)
+    score_mask = build_bubble_scoring_mask_from_layout(h_img, w_img, layout)
     if np.any(score_mask == 0):
         m0 = score_mask == 0
         c = canvas.astype(np.float32)
@@ -2441,7 +2511,19 @@ def _debug_annotate_v2(
     # legacy normalized geometry (page.width ≈ 1, boxes in 0–1), w_img/pw would be ~1000×
     # too large — every "filled" disk covers the sheet (solid green debug view).
     if abs(pw - 1.0) < 0.01:
-        scale = min(w_img / CANONICAL_W, h_img / CANONICAL_H)
+        mp = layout.get("pageMeasuredPx")
+        if isinstance(mp, dict):
+            try:
+                mw = float(mp.get("width") or 0)
+                mh = float(mp.get("height") or 0)
+            except (TypeError, ValueError):
+                mw, mh = 0.0, 0.0
+            if mw > 8 and mh > 8:
+                scale = min(w_img / mw, h_img / mh)
+            else:
+                scale = min(w_img / CANONICAL_W, h_img / CANONICAL_H)
+        else:
+            scale = min(w_img / CANONICAL_W, h_img / CANONICAL_H)
     else:
         scale = min(w_img / pw, h_img / ph)
     bub_r = max(6, int(7.5 * scale))
@@ -2492,8 +2574,15 @@ def _debug_annotate_v2(
                     ny = max(0.0, min(1.0, yf))
                 nx = max(0.0, min(1.0, nx))
                 ny = max(0.0, min(1.0, ny))
-                ex = int(round(max(0, min(w_img - 1, nx * w_img))))
-                ey = int(round(max(0, min(h_img - 1, ny * h_img))))
+                if _fiducial_warp_env_enabled():
+                    ex_f, ey_f = warped_pixel_xy_from_template_fractions(
+                        nx, ny, w_img, h_img, layout, use_fiducial_content_inset=True
+                    )
+                    ex = int(round(max(0, min(w_img - 1, ex_f))))
+                    ey = int(round(max(0, min(h_img - 1, ey_f))))
+                else:
+                    ex = int(round(max(0, min(w_img - 1, nx * w_img))))
+                    ey = int(round(max(0, min(h_img - 1, ny * h_img))))
                 cv2.circle(canvas, (ex, ey), bub_r, (255, 0, 0), 2)
                 cv2.circle(canvas, (ex, ey), 3, (255, 100, 0), -1)
                 cx, cy = ex, ey
