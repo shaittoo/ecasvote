@@ -13,6 +13,11 @@ Environment:
                         warp only (ignored for bbox crop; can shift bubble geometry).
   OMR_BBOX_SPAN_Y_BIAS_PX  Default ``2``. For ``OMR_FIDUCIAL_WARP=crop``, subtract this from mapped Y
                         (nudges expected bubble centers **up**). Set ``0`` if alignment is already exact.
+  OMR_BBOX_RIGHT_COL_X_NUDGE_PX  Default ``0``. For bubbles whose template ``nx`` is at or past
+                        ``OMR_BBOX_RIGHT_COL_NX_MIN``, subtract this many pixels from mapped X
+                        (nudges **left** — e.g. third column when cols 1–2 already line up).
+  OMR_BBOX_RIGHT_COL_NX_MIN  Default ``0.62``. Template-normalized X threshold (0–1 on scan frame)
+                        for applying ``OMR_BBOX_RIGHT_COL_X_NUDGE_PX``.
   OMR_BUBBLE_CLAHE    Default ``1``: CLAHE on luminance before bubble scoring. Set ``0`` to disable.
   OMR_BUBBLE_LOCALIZE       Default ``1`` — ring-gradient search ±``OMR_BUBBLE_LOCALIZE_HALF`` px
                             to snap each bubble center before fill classification.
@@ -69,10 +74,6 @@ def _fiducial_warp_registration_mode() -> str:
     return "crop"
 
 
-def _fiducial_warp_env_enabled() -> bool:
-    """True when fiducial-based registration runs (crop or homography), not resize-only."""
-    return not _fiducial_registration_off()
-
 
 def map_template_fractions_to_warped_pixels(
     nx: float,
@@ -120,6 +121,49 @@ def _bbox_span_y_bias_px() -> float:
         return float(raw)
     except ValueError:
         return 2.0
+
+
+def _bbox_right_column_x_nudge_px() -> float:
+    """
+    When template ``nx`` is at/ past :func:`_bbox_right_column_nx_min`, subtract this from mapped X
+    (positive = shift expected centers **left**). Use for systematic rightward drift on the last
+    grid column while leaving left/center columns unchanged.
+    """
+    raw = os.getenv("OMR_BBOX_RIGHT_COL_X_NUDGE_PX", "0").strip()
+    try:
+        return max(0.0, min(80.0, float(raw)))
+    except ValueError:
+        return 0.0
+
+
+def _bbox_right_column_nx_min() -> float:
+    raw = os.getenv("OMR_BBOX_RIGHT_COL_NX_MIN", "0.62").strip()
+    try:
+        return max(0.35, min(0.92, float(raw)))
+    except ValueError:
+        return 0.62
+
+
+def _apply_template_x_right_column_nudge(nx: float, px: float, w_img: int) -> float:
+    nudge = _bbox_right_column_x_nudge_px()
+    if nudge <= 0.0 or nx < _bbox_right_column_nx_min():
+        return px
+    dw = float(max(1, w_img - 1))
+    return max(0.0, min(dw, px - nudge))
+
+
+def _bubble_mask_pad_scale() -> float:
+    """
+    Scales the extra margin around each bubble box in :func:`build_bubble_scoring_mask_from_layout`.
+    The debug overlay tints masked pixels pink; unscored (mask 255) areas stay bright — smaller
+    scale ⇒ smaller bright patches. Affects real scoring the same way (only use <1 if probes still
+    land inside mask). Default ``1``; clamped to ``[0.5, 1.25]``.
+    """
+    raw = os.getenv("OMR_BUBBLE_MASK_PAD_SCALE", "0.5").strip()
+    try:
+        return max(0.5, min(1.25, float(raw)))
+    except ValueError:
+        return 1.0
 
 
 def _resize_to_canonical_no_warp(bgr: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
@@ -762,15 +806,19 @@ def warped_pixel_xy_from_template_fractions(
             ny_adj = max(0.0, min(1.0, (ny - y0n) / sy))
             py = ny_adj * dh - _bbox_span_y_bias_px()
             py = max(0.0, min(dh, py))
-            return nx_adj * dw, py
-        return nx * dw, ny * dh
+            px = _apply_template_x_right_column_nudge(nx, nx_adj * dw, w_img)
+            return px, py
+        px = _apply_template_x_right_column_nudge(nx, nx * dw, w_img)
+        return px, ny * dh
     if not use_fiducial_content_inset:
-        return nx * dw, ny * dh
+        px = _apply_template_x_right_column_nudge(nx, nx * dw, w_img)
+        return px, ny * dh
     fw, fh = scan_frame_pixel_size_from_template_geometry(geometry or {})
     dx, dy = _fiducial_centroid_delta_canonical(fw, fh)
     span_x = max(1e-6, dw - 2.0 * dx)
     span_y = max(1e-6, dh - 2.0 * dy)
-    return dx + nx * span_x, dy + ny * span_y
+    px = _apply_template_x_right_column_nudge(nx, dx + nx * span_x, w_img)
+    return px, dy + ny * span_y
 
 
 def _apply_fiducial_bbox_crop_resize(
@@ -1318,6 +1366,7 @@ def build_bubble_scoring_mask_from_layout(
         24,
         int(min(h, w) * 0.032),
     )
+    pad = int(round(pad * _bubble_mask_pad_scale()))
     half_center = max(20, int(min(h, w) * 0.028))
 
     m = np.zeros((h, w), dtype=np.uint8)
@@ -1887,7 +1936,11 @@ def contest_fill_scores_after_hard_gates(rois: dict[str, BubbleRoiScore]) -> dic
     return out
 
 
-def compute_contest_blank_baseline(rois: dict[str, BubbleRoiScore]) -> dict[str, float]:
+def compute_contest_blank_baseline(
+    rois: dict[str, BubbleRoiScore],
+    *,
+    percentile: float | None = None,
+) -> dict[str, float]:
     """
     Local empty-bubble profile: lower-ish percentile of each metric across **all** options
     in the contest (empties cluster low; lighting shifts the whole cluster together).
@@ -1903,7 +1956,8 @@ def compute_contest_blank_baseline(rois: dict[str, BubbleRoiScore]) -> dict[str,
     ccs = np.array([r.inner_cc_ratio for r in rois.values()], dtype=np.float64)
     cores = np.array([r.core_mean_dark for r in rois.values()], dtype=np.float64)
     raw_scores = np.array([r.fill_score_raw for r in rois.values()], dtype=np.float64)
-    p = float(CONTEST_BLANK_PERCENTILE)
+    p = float(CONTEST_BLANK_PERCENTILE) if percentile is None else float(percentile)
+    p = max(5.0, min(45.0, p))
     return {
         "blankRefInner": float(np.percentile(inners, p)),
         "blankRefCc": float(np.percentile(ccs, p)),
@@ -1952,6 +2006,8 @@ def contest_scores_with_dominance(
     rois: dict[str, BubbleRoiScore],
     ballot_ref: dict[str, Any],
     ballot_dom_detail: dict[str, tuple[bool, list[str], dict[str, float]]],
+    *,
+    max_votes: int = 1,
 ) -> tuple[
     dict[str, float],
     dict[str, bool],
@@ -1965,11 +2021,18 @@ def contest_scores_with_dominance(
     Hard gates → ballot-level calibration (``ballot_dom_detail`` precomputed) → contest blank
     baseline → contest dominance → scores (0 if any stage fails).
     ``selection_eligible`` = hard ∧ ballot_cal ∧ contest_dom (used for threshold / winner margin).
+
+    For ``max_votes > 1`` with many options (e.g. CAS Councilor), the default 33rd-percentile
+    blank profile sits inside the filled cluster when most rows are marked; a lower percentile
+    anchors the reference to the emptiest rows so dominance can still separate marks.
     """
     gate_fail = {oid: fill_hard_gate_failures(r) for oid, r in rois.items()}
     hard_ok = {oid: len(gate_fail[oid]) == 0 for oid in rois}
-    baseline = compute_contest_blank_baseline(rois)
     n = len(rois)
+    blank_p = float(CONTEST_BLANK_PERCENTILE)
+    if max_votes > 1 and n >= 5:
+        blank_p = 10.0 if n >= 7 else 15.0
+    baseline = compute_contest_blank_baseline(rois, percentile=blank_p)
     dom_detail: dict[str, tuple[bool, list[str], dict[str, float]]] = {}
     contest_dom_ok: dict[str, bool] = {}
     scores: dict[str, float] = {}
@@ -2246,7 +2309,9 @@ def run_layout_scan_on_bgr(
             baseline,
             dom_detail,
             gate_fail,
-        ) = contest_scores_with_dominance(rois_map, ballot_ref, ballot_dom_slice)
+        ) = contest_scores_with_dominance(
+            rois_map, ballot_ref, ballot_dom_slice, max_votes=max_v
+        )
         picks, meta = select_marks_strict_overvote(
             scores,
             max_v,

@@ -13,8 +13,14 @@ Environment variables:
                        deskew (can shift bubble geometry; ignored for bbox crop).
   OMR_BBOX_SPAN_Y_BIAS_PX Default ``2``. Bbox-crop mode only: subtract from template-mapped Y
                        (shift expected centers up). Use ``0`` to disable.
+  OMR_BBOX_RIGHT_COL_X_NUDGE_PX Default ``0``. When template nx ≥ OMR_BBOX_RIGHT_COL_NX_MIN,
+                       subtract this from mapped X (shift expected blue dot **left**, e.g. column 3).
+  OMR_BBOX_RIGHT_COL_NX_MIN Default ``0.62``. Template-normalized X (0–1) threshold for that nudge.
   OMR_BUBBLE_CLAHE    Default ``1``: apply CLAHE on BT.601 luminance before bubble ROI stats.
                        Set to ``0``/``false``/``off`` to disable (compare stability on tinted scans).
+  OMR_BUBBLE_MASK_PAD_SCALE Default ``1``. Multiplier for the per-bubble margin when building the
+                       scoring mask (smaller ⇒ smaller bright “unmasked” patches in the debug tint).
+                       Clamped to ``0.5``–``1.25``; values below ``1`` also tighten real scoring mask.
 """
 
 import base64

@@ -2215,7 +2215,9 @@ def _score_bubbles_from_saved_layout(
             baseline,
             dom_detail,
             gate_fail,
-        ) = contest_scores_with_dominance(rois_map, ballot_ref, ballot_slice)
+        ) = contest_scores_with_dominance(
+            rois_map, ballot_ref, ballot_slice, max_votes=max_votes
+        )
         picks, smeta = select_marks_strict_overvote(
             scores,
             max_votes,
