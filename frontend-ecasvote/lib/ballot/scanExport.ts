@@ -3,6 +3,8 @@
  * Includes multi-mark selections as string arrays per position.
  */
 
+import type { BallotQrPayload } from "./printableBallotTypes";
+
 export const SCAN_EXPORT_SCHEMA = "ecasvote-scan-export/1" as const;
 
 /** One scanned image — full raw fields for downstream tools */
@@ -13,8 +15,8 @@ export type ScanExportBallotRow = {
   message?: string;
   ballotToken?: string;
   tokenValidation?: unknown;
-  /** QR payload from worker or client */
-  qr?: Record<string, string> | null;
+  /** QR payload from worker or client (may include nested `layout`) */
+  qr?: BallotQrPayload | null;
   /**
    * Canonical marks: positionId → list of optionIds (candidate id or abstain:…).
    * Empty array = no mark / overvote / unread. Multiple ids = multi-seat contest.

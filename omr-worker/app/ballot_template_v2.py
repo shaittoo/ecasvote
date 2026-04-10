@@ -11,13 +11,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TimingSpec:
-    top_count: int = 12
-    bottom_count: int = 12
-    left_count: int = 18
-    right_count: int = 18
+    top_count: int = 33
+    bottom_count: int = 33
+    left_count: int = 49
+    right_count: int = 49
     band_thickness: float = 0.07
     min_square_px: int = 8
-    max_square_px: int = 34
+    max_square_px: int = 42
 
 
 @dataclass(frozen=True)
@@ -53,8 +53,8 @@ class LayoutSpec:
     qr_zone_y0: float = 0.80
     qr_zone_y1: float = 0.985
     # Contest region below header and above metadata footer.
-    contests_y0: float = 0.255
-    contests_y1: float = 0.84
+    contests_y0: float = 0.245
+    contests_y1: float = 0.93
     contest_header_frac: float = 0.20
     contest_inner_pad_x: float = 0.01
     contest_inner_pad_y: float = 0.01
@@ -63,6 +63,13 @@ class LayoutSpec:
 TIMING_SPEC = TimingSpec()
 BUBBLE_SPEC = BubbleSpec()
 LAYOUT_SPEC = LayoutSpec()
+
+# Corner fiducials: keep in sync with frontend `PrintableBallotSheet` SCAN_GEOMETRY.cornerSize.
+FIDUCIAL_SQUARE_OUTER_PX = 32.0
+FIDUCIAL_CENTROID_INSET_PX = FIDUCIAL_SQUARE_OUTER_PX / 2.0
+# Typical `#printable-ballot-scan-frame` DOM size when geometry is measured (fallback only).
+NOMINAL_SCAN_FRAME_W_PX = 756.0
+NOMINAL_SCAN_FRAME_H_PX = 1070.0
 
 
 def expected_edge_mark_positions(width: int, height: int) -> dict[str, list[tuple[float, float]]]:
@@ -90,4 +97,3 @@ def expected_edge_mark_positions(width: int, height: int) -> dict[str, list[tupl
         "left": [(left_x, y) for y in ys],
         "right": [(right_x, y) for y in ys],
     }
-

@@ -21,8 +21,10 @@ import { mapPositionsToPrintableBallot } from "@/lib/ballot/mapPositionsToPrinta
 import { filterPositionsByVoterDepartment } from "@/lib/ballot/filterPositionsByDepartment";
 import type { PrintableBallotPosition } from "@/lib/ballot/printableBallotTypes";
 import { BALLOT_TEMPLATE_VERSION } from "@/lib/ballot/ballotTemplate";
+import { Button } from "@/components/ui/button";
 import { buildPreviewBallotToken } from "@/lib/ballot/previewBallotId";
 import { buildVoterPreviewBallotToken } from "@/lib/ballot/buildVoterPaperBallotId";
+import { saveOmrLayout } from "@/lib/ecasvoteApi";
 
 /** Matches other admin pages until a global config exists */
 export const DEFAULT_BALLOT_PRINT_ELECTION_ID = "election-2025";
@@ -58,6 +60,7 @@ export function BallotPrintClient() {
   const [voterIssuanceRow, setVoterIssuanceRow] = useState<PaperCheckInVoter | null | undefined>(
     undefined
   );
+  const [scannerTemplateJson, setScannerTemplateJson] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +70,7 @@ export function BallotPrintClient() {
       setError(null);
       setIssuedBallotToken(null);
       setVoterIssuanceRow(undefined);
+      setScannerTemplateJson(null);
       try {
         const [election, posRows] = await Promise.all([
           fetchElection(electionId),
@@ -179,7 +183,7 @@ export function BallotPrintClient() {
       : undefined;
 
   return (
-    <div className="min-h-screen bg-gray-100 py-8 print:bg-white print:py-0">
+    <div className="min-h-screen bg-gray-100 pb-8 pt-2 print:bg-white print:py-0">
       <div className="mx-auto max-w-4xl px-4 print:max-w-none print:px-0">
         <div className="mb-4 flex flex-wrap gap-4 print:hidden">
           <Link href="/admin/election-management" className="text-sm text-[#7A0019] underline">
@@ -226,18 +230,33 @@ export function BallotPrintClient() {
               ) : null}
             </>
           ) : (
-            <p className="mt-1 text-xs text-gray-500">
-              Change via <code className="rounded bg-gray-100 px-1">?electionId=…</code>
-              {ballotTokenFromQuery ? (
-                <> · Using <code className="rounded bg-gray-100 px-1">ballotToken</code> from URL.</>
-              ) : (
-                <>
-                  . Ballot token below is a preview label until you issue a real token; add{" "}
-                  <code className="rounded bg-gray-100 px-1">?ballotToken=TKN-…</code> to print an issued
-                  token.
-                </>
-              )}
-            </p>
+            <>
+              <p className="mt-1 text-xs text-gray-500">
+                Change via <code className="rounded bg-gray-100 px-1">?electionId=…</code>
+                {ballotTokenFromQuery ? (
+                  <> · Using <code className="rounded bg-gray-100 px-1">ballotToken</code> from URL.</>
+                ) : (
+                  <>
+                    . Ballot token below is a preview label until you issue a real token; add{" "}
+                    <code className="rounded bg-gray-100 px-1">?ballotToken=TKN-…</code> to print an issued
+                    token.
+                  </>
+                )}
+              </p>
+              <div
+                className="mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950"
+                role="status"
+              >
+                <strong className="font-semibold">Not voter-specific.</strong> This preview lists every
+                contest in the election. For real paper ballots, open print from{" "}
+                <Link href="/admin/voter-management/voter-roster" className="font-medium underline">
+                  voter roster
+                </Link>{" "}
+                (includes <code className="rounded bg-white/80 px-0.5">department</code> and{" "}
+                <code className="rounded bg-white/80 px-0.5">studentNumber</code>) so the sheet matches the
+                voter and OMR bubble geometry is not saved with the wrong contest count.
+              </div>
+            </>
           )}
         </div>
 
@@ -255,7 +274,27 @@ export function BallotPrintClient() {
 
         {!loading && !error && electionName && (
           <>
-            <PrintBallotActions />
+            <div className="mb-4 flex flex-wrap items-center gap-3 print:hidden">
+              <PrintBallotActions />
+              {scannerTemplateJson ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-[#7A0019] text-[#7A0019] hover:bg-[#7A0019]/10"
+                  onClick={() => {
+                    const blob = new Blob([scannerTemplateJson], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `scanner-template-${electionId}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                >
+                  Download scanner template JSON
+                </Button>
+              ) : null}
+            </div>
             <PrintableBallotSheet
               electionId={electionId}
               ballotToken={ballotToken}
@@ -268,6 +307,20 @@ export function BallotPrintClient() {
               ballotSeries={ballotSeries || undefined}
               ballotZone={ballotZone || undefined}
               jurisdictionLine={jurisdictionLine || undefined}
+              onGeometryTemplateReady={(geom) => {
+                setScannerTemplateJson(JSON.stringify(geom, null, 2));
+                if (!isVoterSpecific) {
+                  return;
+                }
+                void saveOmrLayout({
+                  ballotId: ballotToken,
+                  electionId,
+                  templateVersion: BALLOT_TEMPLATE_VERSION,
+                  layout: geom,
+                }).catch((err) => {
+                  console.error("Failed to save OMR layout:", err);
+                });
+              }}
             />
           </>
         )}

@@ -4,7 +4,7 @@
 
 | File | Purpose |
 |------|---------|
-| `PrintableBallotSheet.tsx` | Reusable ballot UI with scan-friendly full-page frame: unique corner fiducials, edge timing squares, in-frame QR metadata block, strict contest geometry. `ballot-template-v4` uses compact row-alignment rails + single-column bubbles (no large inner contest box). |
+| `PrintableBallotSheet.tsx` | Reusable ballot UI with scan-friendly full-page frame: unique corner fiducials, edge timing squares, in-frame QR metadata block, v2 three-column contest tables + DOM-measured OMR geometry. |
 | `PrintBallotActions.tsx` | “Print ballot” button + helper text (hidden when printing). |
 
 ## Types & mock data
@@ -25,7 +25,7 @@
 ## Mapping
 
 - `lib/ballot/mapPositionsToPrintable.ts` — maps gateway `Position[]` → `PrintableBallotPosition[]`.
-- `lib/ballot/ballotTemplate.ts` — `BALLOT_TEMPLATE_VERSION` for QR (`ballot-template-v4` default; v1/v2/v3 kept as legacy).
+- `lib/ballot/ballotTemplate.ts` — `BALLOT_TEMPLATE_VERSION` for QR (`ballot-template-v2`; v1 legacy string still exists for old stock).
 
 ## Mock data (tests / Storybook only)
 
