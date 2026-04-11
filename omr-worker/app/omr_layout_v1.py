@@ -888,11 +888,46 @@ def _apply_fiducial_bbox_crop_resize(
 
     xs = [p[0] for p in src_pts]
     ys = [p[1] for p in src_pts]
-    pad = max(14.0, min(float(w), float(h)) * 0.018)
-    x0 = max(0, int(min(xs) - pad))
-    y0 = max(0, int(min(ys) - pad))
-    x1 = min(w, int(max(xs) + pad))
-    y1 = min(h, int(max(ys) + pad))
+
+    # Scan-frame aspect ratio from stored geometry (page dimensions)
+    geom = (template or {}).get("geometry")
+    _fw, _fh = scan_frame_pixel_size_from_template_geometry(geom)
+    if _fw and _fh and _fw > 8 and _fh > 8:
+        aspect = _fh / _fw
+    else:
+        aspect = float(CANONICAL_H) / float(CANONICAL_W)
+
+    detected_width = max(xs) - min(xs)
+    detected_height = max(ys) - min(ys)
+    fid_half = FIDUCIAL_CENTROID_INSET_PX  # 16px — centroid to frame edge
+
+    # Estimate frame edge-to-edge width from centroid-to-centroid + 2*fid_half
+    frame_width_px = detected_width + 2 * fid_half
+
+    # If bottom fiducials are missing, estimate bottom from aspect ratio
+    if detected_height < frame_width_px * aspect * 0.7:
+        frame_height_px = frame_width_px * aspect
+        frame_top = min(ys) - fid_half
+        estimated_bottom = frame_top + frame_height_px
+        ys.append(estimated_bottom - fid_half)  # as centroid position
+
+    # If right fiducials are missing, estimate from aspect ratio
+    if detected_width < detected_height / aspect * 0.5:
+        frame_height_px = detected_height + 2 * fid_half
+        frame_width_px = frame_height_px / aspect
+        frame_left = min(xs) - fid_half
+        estimated_right = frame_left + frame_width_px
+        xs.append(estimated_right - fid_half)
+
+    # Adjust crop to align bubble coordinates with physical positions.
+    # top_offset: positive = crop starts lower = bubbles shift up
+    # bottom_trim: positive = crop ends earlier = bubbles shift up (more at bottom)
+    top_offset = (max(ys) - min(ys) + 2 * fid_half) * 0.00005
+    crop_trim_bottom = (max(ys) - min(ys) + 2 * fid_half) * 0.09
+    x0 = max(0, int(min(xs) - fid_half))
+    y0 = max(0, int(min(ys) - fid_half + top_offset))
+    x1 = min(w, int(max(xs) + fid_half))
+    y1 = min(h, int(max(ys) + fid_half - crop_trim_bottom))
 
     if x1 - x0 < w * 0.22 or y1 - y0 < h * 0.22:
         warped, meta = _resize_to_canonical_no_warp(bgr)

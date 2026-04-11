@@ -2154,9 +2154,9 @@ def _score_bubbles_from_saved_layout(
     gray, gray_meta = prepare_bubble_scoring_gray(warped)
     h_img, w_img = warped.shape[:2]
     layout_map = merge_layout_geometry_for_mapping(layout, template)
-    score_mask = build_bubble_scoring_mask_from_layout(
-        h_img, w_img, layout_map
-    )
+    # With bbox crop, the image is already cropped to the scan frame — no need to mask
+    # out timing marks/headers. Use a full-white mask so all regions are scoreable.
+    score_mask = np.full((h_img, w_img), 255, dtype=np.uint8)
 
     page = layout_map.get("page") or {}
     pw = float(page.get("width") or CANONICAL_W)
