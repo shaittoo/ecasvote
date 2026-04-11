@@ -45,6 +45,7 @@ from app.omr_layout_v1 import (
     BubbleRoiScore,
     annotate_warped_layout,
     bubble_fill_class_v2,
+    classify_bubble_validity,
     build_ballot_empty_reference,
     build_bubble_scoring_mask_from_layout,
     contest_scores_with_dominance,
@@ -2003,6 +2004,7 @@ def scan_ballot_image_with_warp(
         result, warped = _scan_ballot_image_v2(img, gateway_url, template or {})
         if result.get("ok"):
             return result, warped
+        print(f"WORKER: v2 failed. error={result.get('error')} ballotId={result.get('ballotId')}")
         allow_fb = os.getenv("OMR_ALLOW_TEMPLATE_FALLBACK", "").strip().lower() in (
             "1",
             "true",
@@ -2306,11 +2308,58 @@ def _score_bubbles_from_saved_layout(
                     "contestAbstainConflict": abst_bad,
                     "fillClassification": cls,
                     "filled": oid in picks,
+                    "validityPass": classify_bubble_validity(roi)[0],
+                    "validityReason": classify_bubble_validity(roi)[1],
                 }
             )
 
         raw_scores[pid] = scores
-        selections[pid] = picks
+
+        # ── Vote validity gate ────────────────────────────────────────
+        # Classify every bubble; only "valid_fill" bubbles count as votes.
+        validity_results: dict[str, tuple[bool, str]] = {}
+        valid_picks: list[str] = []
+        all_valid_fills: list[str] = []  # ALL bubbles that pass validity (for overvote check)
+        invalid_markings: list[dict[str, Any]] = []
+
+        for oid, roi in acc:
+            is_valid, reason = classify_bubble_validity(roi)
+            validity_results[oid] = (is_valid, reason)
+
+            if is_valid:
+                all_valid_fills.append(oid)
+
+            if oid in picks:
+                if is_valid:
+                    valid_picks.append(oid)
+                else:
+                    # Selected by threshold but fails validity → invalid marking
+                    invalid_markings.append({
+                        "optionId": oid,
+                        "reason": reason,
+                        "inner_dark_ratio": roi.inner_dark_ratio,
+                        "inner_cc_ratio": roi.inner_cc_ratio,
+                        "core_mean_dark": roi.core_mean_dark,
+                        "fill_score": roi.fill_score,
+                    })
+
+        # ── Overvote detection ────────────────────────────────────────
+        # Count ALL valid fills (not just picks) — catches cases where WM cleared picks
+        # but multiple bubbles are clearly filled (e.g. both governor candidates shaded).
+        contest_overvote = len(all_valid_fills) > max_votes
+        if contest_overvote:
+            # Overvote: zero out this contest's selections
+            selections[pid] = []
+        else:
+            selections[pid] = valid_picks
+
+        # TEMPORARY DEBUG — validity decisions
+        print(f"VALIDITY {pid}: picks={picks} valid_picks={valid_picks} all_valid={all_valid_fills} overvote={contest_overvote}")
+        for oid, (v, r) in validity_results.items():
+            if not v and r != "empty":
+                print(f"  REJECTED {oid}: {r} idr={dict((o,ro) for o,ro in acc).get(oid, None) and 'see above'}")
+        for im in invalid_markings:
+            print(f"  INVALID_MARK {im['optionId']}: {im['reason']} idr={im['inner_dark_ratio']:.3f} cc={im['inner_cc_ratio']:.3f}")
 
         vals = list(scores.values())
         if vals:
@@ -2340,11 +2389,19 @@ def _score_bubbles_from_saved_layout(
             {
                 "positionId": pid,
                 "maxVotes": max_votes,
-                "selectedOptionIds": picks,
-                "overvote": bool(smeta.get("overvote")),
+                "selectedOptionIds": valid_picks if not contest_overvote else [],
+                "originalPicks": picks,
+                "overvote": bool(smeta.get("overvote")) or contest_overvote,
+                "overvoteDetected": contest_overvote,
+                "validVoteCount": len(all_valid_fills),
                 "abstainConflict": bool(smeta.get("abstainConflict")),
                 "marksAboveThreshold": int(smeta.get("marksAboveThreshold") or 0),
                 "winnerMarginFailed": bool(smeta.get("winnerMarginFailed")),
+                "invalidMarkings": invalid_markings,
+                "validityResults": {
+                    oid: {"valid": v, "reason": r}
+                    for oid, (v, r) in validity_results.items()
+                },
                 "ballotEmptyCalibration": ballot_ref,
                 "ballotDominanceDeltasRequired": {
                     "inner": BALLOT_DOMINANCE_DELTA_INNER,
@@ -2366,6 +2423,37 @@ def _score_bubbles_from_saved_layout(
         )
 
     overall = float(np.mean(contest_confs)) if contest_confs else 0.0
+
+    # ── Ballot-level validation ───────────────────────────────────────
+    ballot_status = "VALID"
+    ballot_invalid_reasons: list[dict[str, Any]] = []
+
+    for cr in contests_read:
+        pid_cr = cr.get("positionId", "")
+
+        # Overvote in any contest → contest votes invalidated
+        if cr.get("overvoteDetected"):
+            ballot_invalid_reasons.append({
+                "type": "overvote_detected",
+                "contestId": pid_cr,
+                "validVotes": cr.get("validVoteCount", 0),
+                "maxAllowed": cr.get("maxVotes", 1),
+            })
+
+        # Invalid markings detected (informational — contest votes still count
+        # for properly filled bubbles; only the invalid-marked bubbles are rejected)
+        for im in cr.get("invalidMarkings", []):
+            ballot_invalid_reasons.append({
+                "type": "invalid_marking",
+                "contestId": pid_cr,
+                "optionId": im["optionId"],
+                "reason": im["reason"],
+            })
+
+    # Ballot is INVALID only if any contest has an overvote
+    if any(cr.get("overvoteDetected") for cr in contests_read):
+        ballot_status = "INVALID"
+
     return {
         "selectionsByPosition": selections,
         "rawBubbleScores": raw_scores,
@@ -2375,6 +2463,8 @@ def _score_bubbles_from_saved_layout(
         "bubbleScoringMaskApplied": True,
         "grayPreprocess": gray_meta,
         "ballotEmptyCalibration": ballot_ref,
+        "ballotStatus": ballot_status,
+        "ballotInvalidReasons": ballot_invalid_reasons,
     }
 
 
@@ -2566,6 +2656,8 @@ def _scan_ballot_image_v2(
                 "selections": selections_flat,
                 "confidence": overall_conf,
             },
+            "ballotStatus": bubble_result.get("ballotStatus", "VALID"),
+            "ballotInvalidReasons": bubble_result.get("ballotInvalidReasons", []),
         },
         warped,
     )
