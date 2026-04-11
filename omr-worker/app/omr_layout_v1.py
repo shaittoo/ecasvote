@@ -212,6 +212,18 @@ HARD_CORE_MEAN_DARK_MIN = 0.06
 HARD_RING_INNER_MARGIN = 0.08
 # Last selected bubble must beat the best non-selected score by at least this (contest tie-break).
 WINNER_SEPARATION_MARGIN = 0.04
+
+# ── Vote validity gate ───────────────────────────────────────────────────────
+# A bubble must meet ALL of these to be a valid vote (properly shaded).
+# These are stricter than the hard gates — hard gates filter noise,
+# validity gates enforce "was this intentionally filled".
+VALID_FILL_INNER_DARK_MIN = 0.85   # inner area must be majority dark
+VALID_FILL_INNER_CC_MIN = 0.45     # large connected dark component
+VALID_FILL_CORE_MEAN_DARK_MIN = 0.35  # center region substantially dark
+VALID_FILL_SCORE_MIN = 0.25        # overall fill score
+# Stroke detection: moderate ink but low connected area → check/X/scribble
+STROKE_DETECT_DARK_MIN = 0.12      # enough ink to be "something"
+STROKE_DETECT_CC_MAX = 0.25        # but not contiguous → stroke-like
 # Contest-local “blank” profile: percentile of each metric across all options in the contest.
 CONTEST_BLANK_PERCENTILE = 33
 # After hard gates, a bubble must exceed that blank profile by these deltas (multi-metric).
@@ -2128,6 +2140,53 @@ def bubble_fill_class_v2(
     if score >= AMBIGUOUS_SCORE_HIGH:
         return "ambiguous"
     return "empty"
+
+
+def classify_bubble_validity(roi: BubbleRoiScore) -> tuple[bool, str]:
+    """
+    Strict validity check: is this bubble properly filled (solid shading)?
+
+    Returns ``(is_valid, reason)``:
+
+    * ``(True, "valid_fill")`` — properly shaded, counts as a vote.
+    * ``(False, "empty")`` — no marking attempt detected.
+    * ``(False, "stroke_like")`` — thin strokes (check ✓, X mark, scribble).
+    * ``(False, "low_fill")`` — small dot or very faint mark.
+    * ``(False, "partial_fill")`` — moderate ink but below full-fill threshold.
+    """
+    idr = roi.inner_dark_ratio
+    ccr = roi.inner_cc_ratio
+    cmd = roi.core_mean_dark
+    score = roi.fill_score
+
+    # 1. Empty — essentially no ink
+    if idr < 0.08 and ccr < 0.08 and cmd < 0.05:
+        return False, "empty"
+
+    # 2. Stroke detection: moderate ink but very low connected component ratio.
+    #    Check marks, X marks, thin lines produce scattered dark pixels that
+    #    don't form a solid connected mass.
+    if idr >= STROKE_DETECT_DARK_MIN and ccr < STROKE_DETECT_CC_MAX and idr < VALID_FILL_INNER_DARK_MIN:
+        return False, "stroke_like"
+
+    # 3. Dot / very faint mark
+    if idr < 0.20 and cmd < 0.15:
+        return False, "low_fill"
+
+    # 4. Full validity — ALL conditions must pass
+    if (
+        idr >= VALID_FILL_INNER_DARK_MIN
+        and ccr >= VALID_FILL_INNER_CC_MIN
+        and cmd >= VALID_FILL_CORE_MEAN_DARK_MIN
+        and score >= VALID_FILL_SCORE_MIN
+    ):
+        return True, "valid_fill"
+
+    # 5. Has marking attempt but doesn't meet full-fill criteria
+    if idr >= 0.10 or cmd >= 0.10:
+        return False, "partial_fill"
+
+    return False, "empty"
 
 
 def select_marks_strict_overvote(

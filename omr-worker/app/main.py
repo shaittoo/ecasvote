@@ -226,6 +226,26 @@ def debug_json(req: ScanRequest) -> dict[str, Any]:
             req.image_base64, req.template
         )
 
+        # TEMPORARY DEBUG — dump all bubble scores
+        _br_dbg = scan_result.get("bubbleRead") or {}
+        _ov_dbg = _br_dbg.get("bubbleOverlay") or _br_dbg.get("contestsRead") or []
+        if not _ov_dbg:
+            # Try deeper nesting
+            print(f"DEBUG-JSON: bubbleRead keys={list(_br_dbg.keys())[:15]}")
+            # Check contestsRead for per-bubble data
+            _cr = _br_dbg.get("contestsRead") or []
+            if _cr:
+                print(f"DEBUG-JSON: contestsRead has {len(_cr)} contests")
+            # Dump raw scores
+            _rs = scan_result.get("rawBubbleScores") or _br_dbg.get("rawBubbleScores") or {}
+            for _pid, _scores in _rs.items():
+                for _oid, _sv in _scores.items():
+                    if not str(_oid).startswith("_"):
+                        print(f"SCORE {str(_pid)[:20]:20s} {str(_oid)[:25]:25s} score={float(_sv):.3f}")
+        else:
+            for _ov in _ov_dbg:
+                print(f"BUBBLE {str(_ov.get('positionId',''))[:20]:20s} {str(_ov.get('optionId',''))[:25]:25s} idr={float(_ov.get('innerDarkRatio',0)):.3f} cc={float(_ov.get('innerCcRatio',0)):.3f} cmd={float(_ov.get('coreMeanDark',0)):.3f} sc={float(_ov.get('score',0)):.3f} cls={str(_ov.get('fillClassification',''))}")
+
         annotated = _try_geometry_debug_overlay(
             img=img,
             template=req.template,
@@ -255,6 +275,16 @@ def debug_json(req: ScanRequest) -> dict[str, Any]:
             else:
                 print("OVERLAY: legacy fallback")
                 bubble_result = scan_result.get("bubbleRead") or {}
+                # TEMPORARY DEBUG
+                for _ov in (bubble_result.get("bubbleOverlay") or []):
+                    _pid = str(_ov.get("positionId",""))[:20]
+                    _oid = str(_ov.get("optionId",""))[:25]
+                    _idr = float(_ov.get("innerDarkRatio", 0))
+                    _ccr = float(_ov.get("innerCcRatio", 0))
+                    _cmd = float(_ov.get("coreMeanDark", 0))
+                    _sc = float(_ov.get("score", 0))
+                    _cls = str(_ov.get("fillClassification", ""))
+                    print(f"BUBBLE {_pid:20s} {_oid:25s} idr={_idr:.3f} cc={_ccr:.3f} cmd={_cmd:.3f} sc={_sc:.3f} cls={_cls}")
                 warp_dbg = bubble_result.get("warpDebug") or {}
                 rot_deg = int(warp_dbg.get("inputRotationDeg", 0))
                 warped_fb, _ = reproduce_warped_after_rotation(
@@ -271,6 +301,16 @@ def debug_json(req: ScanRequest) -> dict[str, Any]:
         img_b64 = base64.b64encode(buf.tobytes()).decode()
 
         bubble_result = scan_result.get("bubbleRead") or {}
+        # TEMPORARY DEBUG — print bubble scores
+        for _ov in (bubble_result.get("bubbleOverlay") or []):
+            _pid = str(_ov.get('positionId',''))[:20]
+            _oid = str(_ov.get('optionId',''))[:25]
+            _idr = float(_ov.get('innerDarkRatio', 0))
+            _ccr = float(_ov.get('innerCcRatio', 0))
+            _cmd = float(_ov.get('coreMeanDark', 0))
+            _sc = float(_ov.get('score', 0))
+            _cls = str(_ov.get('fillClassification', ''))
+            print(f"BUBBLE {_pid:20s} {_oid:25s} idr={_idr:.3f} cc={_ccr:.3f} cmd={_cmd:.3f} sc={_sc:.3f} cls={_cls}")
         return {
             "image_base64": img_b64,
             "contestsDetected": bubble_result.get("contestsDetected"),
@@ -327,6 +367,16 @@ def debug(req: ScanRequest) -> HTMLResponse:
             else:
                 print("OVERLAY: legacy fallback")
                 bubble_result = scan_result.get("bubbleRead") or {}
+                # TEMPORARY DEBUG
+                for _ov in (bubble_result.get("bubbleOverlay") or []):
+                    _pid = str(_ov.get("positionId",""))[:20]
+                    _oid = str(_ov.get("optionId",""))[:25]
+                    _idr = float(_ov.get("innerDarkRatio", 0))
+                    _ccr = float(_ov.get("innerCcRatio", 0))
+                    _cmd = float(_ov.get("coreMeanDark", 0))
+                    _sc = float(_ov.get("score", 0))
+                    _cls = str(_ov.get("fillClassification", ""))
+                    print(f"BUBBLE {_pid:20s} {_oid:25s} idr={_idr:.3f} cc={_ccr:.3f} cmd={_cmd:.3f} sc={_sc:.3f} cls={_cls}")
                 rot_deg = int((bubble_result.get("warpDebug") or {}).get("inputRotationDeg", 0))
                 warped_fb, _ = reproduce_warped_after_rotation(
                     img,
@@ -343,6 +393,16 @@ def debug(req: ScanRequest) -> HTMLResponse:
 
         selections = scan_result.get("selectionsByPosition") or {}
         bubble_result = scan_result.get("bubbleRead") or {}
+        # TEMPORARY DEBUG
+        for _ov in (bubble_result.get("bubbleOverlay") or []):
+            _pid = str(_ov.get("positionId",""))[:20]
+            _oid = str(_ov.get("optionId",""))[:25]
+            _idr = float(_ov.get("innerDarkRatio", 0))
+            _ccr = float(_ov.get("innerCcRatio", 0))
+            _cmd = float(_ov.get("coreMeanDark", 0))
+            _sc = float(_ov.get("score", 0))
+            _cls = str(_ov.get("fillClassification", ""))
+            print(f"BUBBLE {_pid:20s} {_oid:25s} idr={_idr:.3f} cc={_ccr:.3f} cmd={_cmd:.3f} sc={_sc:.3f} cls={_cls}")
         detected = bubble_result.get("contestsDetected", len(selections))
         in_tpl = bubble_result.get("contestsInTemplate", "?")
         ballot_id_disp = scan_result.get("ballotId") or "—"
