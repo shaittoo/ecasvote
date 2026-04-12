@@ -42,6 +42,9 @@ import {
   SCAN_EXPORT_ALL_SCHEMA,
 } from "@/lib/ballot/scanExport";
 import type { OmGeometryTemplate } from "@/lib/ballot/omGeometryTemplate";
+import { confirmPaperVote } from "@/lib/ecasvoteApi";
+import { ScanResultsModal } from "./components/ScanResultsModal";
+import type { ScanResult, ContestReadItem, BubbleOverlayItem } from "./components/ScanPageContent";
 
 /** Gateway/worker expect `scannerTemplate` object with a `geometry` field (DOM-measured layout). */
 function normalizeGeometry(geom: OmGeometryTemplate): OmGeometryTemplate {
@@ -235,6 +238,10 @@ export function BallotScanningContent() {
   const previewAllGovernors = searchParams.get("allGovernors") === "1";
   /** Set from POST /scanner/validate after a decodable ballot QR (issued roster org). */
   const [governorFilterFromBallot, setGovernorFilterFromBallot] = useState<string | null>(null);
+
+  // Results modal state
+  const [showResultsModal, setShowResultsModal] = useState(false);
+  const [latestScanResult, setLatestScanResult] = useState<ScanResult | null>(null);
 
   const handleLogout = () => router.push("/login");
 
@@ -1530,6 +1537,28 @@ export function BallotScanningContent() {
       ]);
       setBatchFiles([]);
 
+      // Show results modal for the latest scanned ballot (if OMR data available)
+      const lastOmrBallot = [...ballots].reverse().find(
+        (b) => b.source === "omr" && b.omrWorkerPayload
+      );
+      if (lastOmrBallot?.omrWorkerPayload) {
+        const omr = lastOmrBallot.omrWorkerPayload as Record<string, unknown>;
+        const bubbleRead = (omr.bubbleRead ?? {}) as Record<string, unknown>;
+        const contestsRead = (bubbleRead.contestsRead ?? []) as ContestReadItem[];
+        const bubbleOverlay = (bubbleRead.bubbleOverlay ?? []) as BubbleOverlayItem[];
+        const result: ScanResult = {
+          selectionsByPosition: lastOmrBallot.selectionsByPosition,
+          ballotId: lastOmrBallot.ballotToken,
+          electionId: electionId,
+          confidence: typeof omr.confidence === "number" ? omr.confidence : 0,
+          ballotStatus: String(omr.ballotStatus ?? "VALID") as "VALID" | "INVALID",
+          ballotInvalidReasons: (omr.ballotInvalidReasons ?? []) as ScanResult["ballotInvalidReasons"],
+          bubbleRead: { bubbleOverlay, contestsRead },
+        };
+        setLatestScanResult(result);
+        setShowResultsModal(true);
+      }
+
       const errC = ballots.length - validCount;
       if (errC === 0) {
         notify.success({
@@ -1584,6 +1613,31 @@ export function BallotScanningContent() {
     } finally {
       setIsScanning(false);
     }
+  };
+
+  const handleConfirmVote = async (finalSelections: Record<string, string[]>) => {
+    if (!latestScanResult?.ballotId) {
+      notify.error({ title: "No ballot token detected. Cannot submit." });
+      return;
+    }
+    try {
+      await confirmPaperVote({
+        electionId,
+        ballotToken: latestScanResult.ballotId,
+        selections: finalSelections,
+      });
+      setShowResultsModal(false);
+      setLatestScanResult(null);
+      notify.success({ title: "Vote recorded successfully" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Submit failed";
+      notify.error({ title: msg });
+    }
+  };
+
+  const handleRescanFromModal = () => {
+    setShowResultsModal(false);
+    setLatestScanResult(null);
   };
 
   return (
@@ -2214,6 +2268,20 @@ export function BallotScanningContent() {
           )}
         </main>
       </div>
+
+      {/* Results review modal */}
+      {latestScanResult && (
+        <ScanResultsModal
+          open={showResultsModal}
+          onClose={() => setShowResultsModal(false)}
+          scanResult={latestScanResult}
+          positions={positions}
+          electionName={electionName || electionId}
+          submitting={false}
+          onConfirm={handleConfirmVote}
+          onRescan={handleRescanFromModal}
+        />
+      )}
     </div>
   );
 }

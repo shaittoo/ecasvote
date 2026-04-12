@@ -980,3 +980,31 @@ export async function fetchHourlyParticipation(
   }
   return res.json();
 }
+
+/** POST /scanner/confirm-vote — submit a scanned paper ballot vote */
+export async function confirmPaperVote(params: {
+  electionId: string;
+  ballotToken: string;
+  templateVersion?: string;
+  selections: Record<string, string[]>;
+}): Promise<{ ok: boolean; ballotToken: string; castAt: string }> {
+  const selectionsFlat: Record<string, string> = {};
+  for (const [pid, picks] of Object.entries(params.selections)) {
+    selectionsFlat[pid] = picks.join(",");
+  }
+  const res = await fetch(`${getGatewayBase()}/scanner/confirm-vote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      electionId: params.electionId,
+      ballotToken: params.ballotToken,
+      templateVersion: params.templateVersion ?? "ballot-template-v2",
+      selections: selectionsFlat,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error ?? `confirm-vote failed (${res.status})`);
+  }
+  return data;
+}
