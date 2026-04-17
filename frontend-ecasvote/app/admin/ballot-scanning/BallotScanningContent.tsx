@@ -42,6 +42,9 @@ import {
   SCAN_EXPORT_ALL_SCHEMA,
 } from "@/lib/ballot/scanExport";
 import type { OmGeometryTemplate } from "@/lib/ballot/omGeometryTemplate";
+import { confirmPaperVote } from "@/lib/ecasvoteApi";
+import { ScanResultsModal } from "./components/ScanResultsModal";
+import type { ScanResult, ContestReadItem, BubbleOverlayItem } from "./components/ScanPageContent";
 
 /** Gateway/worker expect `scannerTemplate` object with a `geometry` field (DOM-measured layout). */
 function normalizeGeometry(geom: OmGeometryTemplate): OmGeometryTemplate {
@@ -235,6 +238,11 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
   const previewAllGovernors = searchParams.get("allGovernors") === "1";
   /** Set from POST /scanner/validate after a decodable ballot QR (issued roster org). */
   const [governorFilterFromBallot, setGovernorFilterFromBallot] = useState<string | null>(null);
+
+  // Results review modal
+  const [showResultsModal, setShowResultsModal] = useState(false);
+  const [latestScanResult, setLatestScanResult] = useState<ScanResult | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleLogout = () => router.push("/login");
 
@@ -1534,6 +1542,29 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
       ]);
       setBatchFiles([]);
 
+      // Show results modal for review before saving to DB
+      const lastOmrBallot = [...ballots].reverse().find(
+        (b) => b.source === "omr" && b.omrWorkerPayload
+      );
+      if (lastOmrBallot?.omrWorkerPayload) {
+        const omr = lastOmrBallot.omrWorkerPayload as Record<string, unknown>;
+        const bubbleRead = (omr.bubbleRead ?? {}) as Record<string, unknown>;
+        const contestsRead = (bubbleRead.contestsRead ?? []) as ContestReadItem[];
+        const bubbleOverlay = (bubbleRead.bubbleOverlay ?? []) as BubbleOverlayItem[];
+        const result: ScanResult = {
+          selectionsByPosition: lastOmrBallot.selectionsByPosition,
+          ballotId: lastOmrBallot.ballotToken,
+          electionId: electionId,
+          confidence: typeof omr.confidence === "number" ? omr.confidence : 0,
+          ballotStatus: String(omr.ballotStatus ?? "VALID") as "VALID" | "INVALID",
+          academicOrg: typeof omr.academicOrg === "string" ? omr.academicOrg : undefined,
+          ballotInvalidReasons: (omr.ballotInvalidReasons ?? []) as ScanResult["ballotInvalidReasons"],
+          bubbleRead: { bubbleOverlay, contestsRead },
+        };
+        setLatestScanResult(result);
+        setShowResultsModal(true);
+      }
+
       const errC = ballots.length - validCount;
       if (errC === 0) {
         notify.success({
@@ -1588,6 +1619,34 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     } finally {
       setIsScanning(false);
     }
+  };
+
+  const handleConfirmVote = async (finalSelections: Record<string, string[]>) => {
+    if (!latestScanResult?.ballotId) {
+      notify.error({ title: "No ballot token detected. Cannot submit." });
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      await confirmPaperVote({
+        electionId,
+        ballotToken: latestScanResult.ballotId,
+        selections: finalSelections,
+      });
+      setShowResultsModal(false);
+      setLatestScanResult(null);
+      notify.success({ title: "Vote recorded successfully" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Submit failed";
+      notify.error({ title: msg });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRescanFromModal = () => {
+    setShowResultsModal(false);
+    setLatestScanResult(null);
   };
 
   return (
@@ -1946,7 +2005,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                 </CardContent>
               </Card>
 
-              {/* <Card>
+              <Card>
                 <CardHeader>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div>
@@ -2056,12 +2115,26 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                     </ul>
                   )}
                 </CardContent>
-              </Card> */}
+              </Card>
 
               </div>
           )}
         </main>
       </div>
+
+      {/* Results review modal */}
+      {latestScanResult && (
+        <ScanResultsModal
+          open={showResultsModal}
+          onClose={() => setShowResultsModal(false)}
+          scanResult={latestScanResult}
+          positions={positions}
+          electionName={electionName || electionId}
+          submitting={isSubmitting}
+          onConfirm={handleConfirmVote}
+          onRescan={handleRescanFromModal}
+        />
+      )}
     </div>
   );
 }
