@@ -42,9 +42,6 @@ import {
   SCAN_EXPORT_ALL_SCHEMA,
 } from "@/lib/ballot/scanExport";
 import type { OmGeometryTemplate } from "@/lib/ballot/omGeometryTemplate";
-import { confirmPaperVote } from "@/lib/ecasvoteApi";
-import { ScanResultsModal } from "./components/ScanResultsModal";
-import type { ScanResult, ContestReadItem, BubbleOverlayItem } from "./components/ScanPageContent";
 
 /** Gateway/worker expect `scannerTemplate` object with a `geometry` field (DOM-measured layout). */
 function normalizeGeometry(geom: OmGeometryTemplate): OmGeometryTemplate {
@@ -183,7 +180,7 @@ type StoredScanBatch = {
   errorCount: number;
 };
 
-export function BallotScanningContent() {
+export function BallotScanningContent({ initialElectionId }: { initialElectionId?: string } = {}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -202,7 +199,7 @@ export function BallotScanningContent() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [elections, setElections] = useState<Election[]>([]);
-  const [electionId, setElectionId] = useState("");
+  const [electionId, setElectionId] = useState(initialElectionId ?? "");
   const [electionName, setElectionName] = useState("");
   const [positions, setPositions] = useState<Position[]>([]);
   const [positionsLoading, setPositionsLoading] = useState(false);
@@ -239,10 +236,6 @@ export function BallotScanningContent() {
   /** Set from POST /scanner/validate after a decodable ballot QR (issued roster org). */
   const [governorFilterFromBallot, setGovernorFilterFromBallot] = useState<string | null>(null);
 
-  // Results modal state
-  const [showResultsModal, setShowResultsModal] = useState(false);
-  const [latestScanResult, setLatestScanResult] = useState<ScanResult | null>(null);
-
   const handleLogout = () => router.push("/login");
 
   useEffect(() => {
@@ -256,6 +249,11 @@ export function BallotScanningContent() {
   }, [previewAllGovernors, urlGovernorOverride, governorFilterFromBallot]);
 
   useEffect(() => {
+    if (initialElectionId) {
+      // Election already selected via URL — skip election list fetch
+      setLoading(false);
+      return;
+    }
     (async () => {
       try {
         const list = await fetchElections();
@@ -382,18 +380,17 @@ export function BallotScanningContent() {
   const addFiles = useCallback((files: FileList | File[]) => {
     const next = Array.from(files).filter((f) => {
       const t = f.type.toLowerCase();
-      if (t.startsWith("image/")) return true;
-      if (t === "application/pdf") return true;
-      return /\.(png|jpe?g|tiff?|bmp|pdf)$/i.test(f.name);
+      return t.startsWith("image/");
     });
     if (!next.length) {
       notify.error({
-        title: "No supported files",
-        description: "Use PNG, JPEG, TIFF, BMP, or PDF (prefer images for OMR).",
+        title: "No supported file",
+        description: "Upload a PNG or JPEG ballot image.",
       });
       return;
     }
-    setBatchFiles((prev) => [...prev, ...next]);
+    // Single ballot at a time — replace any existing file
+    setBatchFiles([next[0]]);
   }, []);
 
   const removeFileAt = (index: number) => {
@@ -1537,28 +1534,6 @@ export function BallotScanningContent() {
       ]);
       setBatchFiles([]);
 
-      // Show results modal for the latest scanned ballot (if OMR data available)
-      const lastOmrBallot = [...ballots].reverse().find(
-        (b) => b.source === "omr" && b.omrWorkerPayload
-      );
-      if (lastOmrBallot?.omrWorkerPayload) {
-        const omr = lastOmrBallot.omrWorkerPayload as Record<string, unknown>;
-        const bubbleRead = (omr.bubbleRead ?? {}) as Record<string, unknown>;
-        const contestsRead = (bubbleRead.contestsRead ?? []) as ContestReadItem[];
-        const bubbleOverlay = (bubbleRead.bubbleOverlay ?? []) as BubbleOverlayItem[];
-        const result: ScanResult = {
-          selectionsByPosition: lastOmrBallot.selectionsByPosition,
-          ballotId: lastOmrBallot.ballotToken,
-          electionId: electionId,
-          confidence: typeof omr.confidence === "number" ? omr.confidence : 0,
-          ballotStatus: String(omr.ballotStatus ?? "VALID") as "VALID" | "INVALID",
-          ballotInvalidReasons: (omr.ballotInvalidReasons ?? []) as ScanResult["ballotInvalidReasons"],
-          bubbleRead: { bubbleOverlay, contestsRead },
-        };
-        setLatestScanResult(result);
-        setShowResultsModal(true);
-      }
-
       const errC = ballots.length - validCount;
       if (errC === 0) {
         notify.success({
@@ -1615,31 +1590,6 @@ export function BallotScanningContent() {
     }
   };
 
-  const handleConfirmVote = async (finalSelections: Record<string, string[]>) => {
-    if (!latestScanResult?.ballotId) {
-      notify.error({ title: "No ballot token detected. Cannot submit." });
-      return;
-    }
-    try {
-      await confirmPaperVote({
-        electionId,
-        ballotToken: latestScanResult.ballotId,
-        selections: finalSelections,
-      });
-      setShowResultsModal(false);
-      setLatestScanResult(null);
-      notify.success({ title: "Vote recorded successfully" });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Submit failed";
-      notify.error({ title: msg });
-    }
-  };
-
-  const handleRescanFromModal = () => {
-    setShowResultsModal(false);
-    setLatestScanResult(null);
-  };
-
   return (
     <div className="flex min-h-screen bg-gray-50">
       <AdminSidebar
@@ -1670,17 +1620,15 @@ export function BallotScanningContent() {
             <div className="mx-auto max-w-4xl space-y-6">
               <Card className="border-[#7A0019]/20 shadow-sm">
                 <CardHeader>
-                  <CardTitle className="text-xl">Scan paper ballots</CardTitle>
+                  <CardTitle className="text-xl">Scan Paper Ballot</CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Upload <strong>PNG / JPEG</strong> (prefer <strong>original / full size</strong>, not
-                    compressed social thumbnails). OMR reads{" "}
-                    <strong>multiple shaded bubbles</strong> per contest when{" "}
-                    <code className="rounded bg-muted px-1">maxVotes &gt; 1</code>. Each batch can
-                    be exported as <code className="rounded bg-muted px-1">ecasvote-scan-export/1</code>{" "}
-                    JSON (selections as arrays + raw bubble scores).
+                    Upload a scanned ballot image (<strong>PNG / JPEG</strong>) or use a connected document scanner.
+                    The system will detect filled bubbles and present the results for review before submitting.
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-5">
+                  {/* Election dropdown — hidden when election is pre-selected via URL */}
+                  {!initialElectionId && (
                   <div>
                     <label
                       htmlFor="scan-election"
@@ -1713,55 +1661,9 @@ export function BallotScanningContent() {
                       </p>
                     ) : null}
                   </div>
+                  )}
 
                   {electionId && positions.length > 0 ? (
-                    <div className="rounded-md border border-dashed border-muted bg-muted/30 p-3 space-y-3">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">Governor row (academic org)</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {previewAllGovernors ? (
-                            <>
-                              Showing <strong>all</strong> governor contests (
-                              <code className="rounded bg-muted px-1">?allGovernors=1</code>). Remove
-                              that flag to use the QR-linked org once a ballot image is in the queue.
-                            </>
-                          ) : urlGovernorOverride ? (
-                            <>
-                              Using URL override{" "}
-                              <code className="rounded bg-muted px-1">
-                                ?department={urlGovernorOverride}
-                              </code>{" "}
-                              (same as ballot print).
-                            </>
-                          ) : governorFilterFromBallot ? (
-                            <>
-                              From issued ballot QR:{" "}
-                              <strong className="text-foreground">{governorFilterFromBallot}</strong>
-                              . Matches the printed sheet for that token; the OMR worker still loads
-                              per-ballot layout from the gateway when configured.
-                            </>
-                          ) : (
-                            <>
-                              Add a ballot image (or use auto-capture): the first decodable QR sets
-                              the org from the roster. For a manual preview without a QR, use{" "}
-                              <code className="rounded bg-muted px-1">?department=Clovers</code> (etc.)
-                              or list every governor with{" "}
-                              <code className="rounded bg-muted px-1">?allGovernors=1</code>.
-                            </>
-                          )}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">OMR layout (required for scan / debug)</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Geometry:{" "}
-                          {omGeometryTemplate ? (
-                            <span className="font-medium text-emerald-800">Ready</span>
-                          ) : (
-                            <span className="text-amber-800">Measuring ballot preview…</span>
-                          )}{" "}
-                          — voter-specific grid (v2), not election-wide.
-                        </p>
                         <div style={{ position: "relative", width: 0, height: 0, overflow: "visible" }}>
                           <div
                             style={{
@@ -1791,9 +1693,7 @@ export function BallotScanningContent() {
                                 setOmGeometryTemplate(geom);
                               }}
                             />
-                          </div>
                         </div>
-                      </div>
                     </div>
                   ) : null}
 
@@ -1833,9 +1733,9 @@ export function BallotScanningContent() {
                         : "border-gray-300 bg-white hover:border-gray-400"
                     )}
                   >
-                    <p className="text-sm font-medium text-gray-900">Drop ballot images here</p>
+                    <p className="text-sm font-medium text-gray-900">Drop ballot image here</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      PNG, JPEG, TIFF, BMP (recommended for OMR)
+                      PNG or JPEG (full-size scan recommended)
                     </p>
                     <div className="mt-4 flex flex-wrap justify-center gap-2">
                       <label htmlFor={fileInputId}>
@@ -1845,14 +1745,13 @@ export function BallotScanningContent() {
                             "cursor-pointer"
                           )}
                         >
-                          Choose files
+                          Choose file
                         </span>
                       </label>
                       <input
                         id={fileInputId}
                         type="file"
-                        accept="image/png,image/jpeg,image/tiff,image/bmp,application/pdf,.pdf"
-                        multiple
+                        accept="image/png,image/jpeg"
                         className="sr-only"
                         disabled={!electionId}
                         onChange={(e) => {
@@ -1987,29 +1886,15 @@ export function BallotScanningContent() {
                   </div>
 
                   {batchFiles.length > 0 && (
-                    <div className="rounded-md border bg-white">
-                      <div className="border-b bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700">
-                        Queue ({batchFiles.length})
-                      </div>
-                      <ul className="max-h-48 divide-y overflow-y-auto text-sm">
-                        {batchFiles.map((f, i) => (
-                          <li
-                            key={`${f.name}-${i}-${f.size}`}
-                            className="flex items-center justify-between gap-2 px-3 py-2"
-                          >
-                            <span className="truncate text-gray-800" title={f.name}>
-                              {f.name}
-                            </span>
-                            <button
-                              type="button"
-                              className="shrink-0 text-xs text-red-600 underline"
-                              onClick={() => removeFileAt(i)}
-                            >
-                              Remove
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
+                    <div className="rounded-md border bg-white px-3 py-2 flex items-center justify-between">
+                      <span className="text-sm text-gray-800 truncate">{batchFiles[0].name}</span>
+                      <button
+                        type="button"
+                        className="shrink-0 text-xs text-red-600 underline ml-2"
+                        onClick={() => setBatchFiles([])}
+                      >
+                        Remove
+                      </button>
                     </div>
                   )}
 
@@ -2024,13 +1909,8 @@ export function BallotScanningContent() {
                       }
                       onClick={() => void runScanBatch()}
                     >
-                      {isScanning ? "Scanning…" : "Scan ballots"}
+                      {isScanning ? "Scanning…" : "Scan Ballot"}
                     </Button>
-                    {batchFiles.length > 0 && (
-                      <Button type="button" variant="outline" onClick={() => setBatchFiles([])}>
-                        Clear queue
-                      </Button>
-                    )}
                     {batchFiles.length > 0 && (
                       <Button
                         type="button"
@@ -2038,7 +1918,7 @@ export function BallotScanningContent() {
                         disabled={debugOverlayBusy || !omGeometryTemplate}
                         onClick={() => void previewDebugOverlay()}
                       >
-                        {debugOverlayBusy ? "Rendering overlay…" : "Preview OpenCV overlay"}
+                        {debugOverlayBusy ? "Rendering…" : "Preview Overlay"}
                       </Button>
                     )}
                   </div>
@@ -2066,23 +1946,18 @@ export function BallotScanningContent() {
                 </CardContent>
               </Card>
 
-              <Card>
+              {/* <Card>
                 <CardHeader>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                      <CardTitle>Results &amp; raw export</CardTitle>
+                      <CardTitle>Scan Results</CardTitle>
                       <p className="mt-1 text-sm text-muted-foreground">
-                        Schema <code className="rounded bg-muted px-1">ecasvote-scan-export/1</code>
-                        : per file — <code className="rounded bg-muted px-1">selectionsByPosition</code>{" "}
-                        (string arrays for multi-mark),{" "}
-                        <code className="rounded bg-muted px-1">rawBubbleScores</code>, token check,
-                        full <code className="rounded bg-muted px-1">omrWorkerPayload</code> when OMR
-                        ran.
+                        Results from scanned ballots. Use the review modal to verify and submit votes.
                       </p>
                     </div>
                     {scanHistory.length > 0 && (
                       <Button type="button" variant="outline" size="sm" onClick={exportAllBatches}>
-                        Export all batches (JSON)
+                        Export JSON
                       </Button>
                     )}
                   </div>
@@ -2090,7 +1965,7 @@ export function BallotScanningContent() {
                 <CardContent>
                   {scanHistory.length === 0 ? (
                     <p className="py-8 text-center text-sm text-muted-foreground">
-                      No batches yet. Scan above, then download raw JSON per batch or all batches.
+                      No scans yet. Upload or scan a ballot above to see results.
                     </p>
                   ) : (
                     <ul className="space-y-4">
@@ -2181,107 +2056,12 @@ export function BallotScanningContent() {
                     </ul>
                   )}
                 </CardContent>
-              </Card>
+              </Card> */}
 
-              <details className="rounded-lg border bg-white">
-                <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50">
-                  Advanced: template &amp; OMR links
-                </summary>
-                <div className="space-y-4 border-t px-4 py-4 text-sm">
-                  <p className="text-muted-foreground">
-                    <a href={OPEN_MCR_URL} className="text-primary underline" target="_blank" rel="noreferrer">
-                      Open MCR
-                    </a>{" "}
-                    uses fixed PDF forms. We use{" "}
-                    <strong>omr-worker</strong> (OpenCV).{" "}
-                    <a href={EXAM_GRADER_URL} className="text-primary underline" target="_blank" rel="noreferrer">
-                      ExamGrader
-                    </a>{" "}
-                    — offline only.
-                  </p>
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={includeAbstain}
-                      onChange={(e) => setIncludeAbstain(e.target.checked)}
-                      className="rounded border-input"
-                    />
-                    Include ABSTAIN in template export
-                  </label>
-                  <div className="space-y-2 rounded-md border border-dashed border-border bg-muted/25 p-3">
-                    <p className="text-xs font-semibold text-foreground">
-                      Last OMR{" "}
-                      <code className="rounded bg-muted px-1 font-normal">
-                        bubbleRead.warpDebug
-                      </code>
-                    </p>
-                    <p className="text-[11px] leading-snug text-muted-foreground">
-                      Fills after you run <strong>Scan ballot(s)</strong> with image files and a
-                      working OMR worker. In DevTools → Network →{" "}
-                      <code className="rounded bg-muted px-0.5">scanner/scan-image</code> →
-                      Response: <code className="rounded bg-muted px-0.5">omr</code> →{" "}
-                      <code className="rounded bg-muted px-0.5">bubbleRead</code> →{" "}
-                      <code className="rounded bg-muted px-0.5">warpDebug</code>.{" "}
-                      <code className="rounded bg-muted px-0.5">
-                        fiducialCentroidInsetCanonical
-                      </code>{" "}
-                      is <code className="rounded bg-muted px-0.5">dx</code> /{" "}
-                      <code className="rounded bg-muted px-0.5">dy</code> when present.
-                    </p>
-                    {lastOmrWarpDebugJson ? (
-                      <pre className="max-h-56 overflow-auto rounded-md border bg-background p-2 font-mono text-[10px] leading-relaxed text-foreground">
-                        {lastOmrWarpDebugJson}
-                      </pre>
-                    ) : (
-                      <p className="text-[11px] italic leading-snug text-muted-foreground">
-                        No OMR capture yet for this browser session. PDFs skip OpenCV; if the
-                        worker is off, scans fall back to QR-only and this stays empty.
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={!electionId || exporting || !omGeometryTemplate}
-                      onClick={() => void handleExportTemplate()}
-                    >
-                      {exporting ? "…" : "Scanner template JSON"}
-                    </Button>
-                    <Link
-                      href={
-                        electionId
-                          ? `/admin/ballot-print?electionId=${encodeURIComponent(electionId)}`
-                          : "/admin/ballot-print"
-                      }
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-                    >
-                      Ballot print
-                    </Link>
-                  </div>
-                </div>
-              </details>
-            </div>
+              </div>
           )}
         </main>
       </div>
-
-      {/* Results review modal */}
-      {latestScanResult && (
-        <ScanResultsModal
-          open={showResultsModal}
-          onClose={() => setShowResultsModal(false)}
-          scanResult={latestScanResult}
-          positions={positions}
-          electionName={electionName || electionId}
-          submitting={false}
-          onConfirm={handleConfirmVote}
-          onRescan={handleRescanFromModal}
-        />
-      )}
     </div>
   );
 }
