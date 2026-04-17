@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { Position } from "@/lib/ecasvoteApi";
@@ -28,17 +28,19 @@ export function ScanResultsModal({
   onConfirm,
   onRescan,
 }: Props) {
-  // Track overrides per contest — only keys that admin has modified
-  const [overrides, setOverrides] = useState<Record<string, string[]>>({});
-  const [hasOverride, setHasOverride] = useState(false);
+  // Filter positions: only show the governor for the voter's department
+  const filteredPositions = useMemo(() => {
+    const org = scanResult.academicOrg?.toLowerCase().trim();
+    if (!org) return positions;
+    return positions.filter((pos) => {
+      const pid = pos.id.toLowerCase();
+      // Keep non-governor contests
+      if (!pid.includes("-governor")) return true;
+      // Keep only the governor matching the voter's department
+      return pid.includes(org.toLowerCase());
+    });
+  }, [positions, scanResult.academicOrg]);
 
-  // Reset overrides when scan result changes
-  useEffect(() => {
-    setOverrides({});
-    setHasOverride(false);
-  }, [scanResult]);
-
-  // Build contest data by merging positions with scan results
   const contestsData = useMemo(() => {
     const contestsRead = scanResult.bubbleRead?.contestsRead ?? [];
     const contestReadMap = new Map<string, ContestReadItem>();
@@ -46,7 +48,7 @@ export function ScanResultsModal({
       contestReadMap.set(cr.positionId, cr);
     }
 
-    return positions.map((pos) => {
+    return filteredPositions.map((pos) => {
       const detected = scanResult.selectionsByPosition[pos.id] ?? [];
       const cr = contestReadMap.get(pos.id);
       return {
@@ -56,52 +58,20 @@ export function ScanResultsModal({
         overvote: cr?.overvoteDetected ?? false,
       };
     });
-  }, [positions, scanResult]);
+  }, [filteredPositions, scanResult]);
 
-  // Compute final selections (detected + overrides)
+  // Build selections from detected results (no override)
   const finalSelections = useMemo(() => {
     const result: Record<string, string[]> = {};
     for (const cd of contestsData) {
-      const pid = cd.position.id;
-      if (overrides[pid] !== undefined) {
-        result[pid] = overrides[pid];
-      } else {
-        result[pid] = cd.detectedSelections;
-      }
+      result[cd.position.id] = cd.detectedSelections;
     }
     return result;
-  }, [contestsData, overrides]);
-
-  // Toggle a candidate in a contest
-  const toggleCandidate = useCallback(
-    (contestId: string, candidateId: string, maxVotes: number) => {
-      setOverrides((prev) => {
-        const current =
-          prev[contestId] ??
-          scanResult.selectionsByPosition[contestId] ??
-          [];
-
-        let next: string[];
-        if (current.includes(candidateId)) {
-          next = current.filter((id) => id !== candidateId);
-        } else {
-          if (current.length >= maxVotes) {
-            return prev; // Don't exceed max votes
-          }
-          next = [...current, candidateId];
-        }
-
-        setHasOverride(true);
-        return { ...prev, [contestId]: next };
-      });
-    },
-    [scanResult.selectionsByPosition]
-  );
+  }, [contestsData]);
 
   if (!open) return null;
 
   const isInvalid = scanResult.ballotStatus === "INVALID";
-  const hasAnyOvervote = contestsData.some((cd) => cd.overvote);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-12">
@@ -111,7 +81,7 @@ export function ScanResultsModal({
           <div className="flex items-start justify-between">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">
-                Scan Results Review
+                Review Scanned Votes
               </h2>
               <p className="mt-0.5 text-sm text-gray-500">{electionName}</p>
             </div>
@@ -153,12 +123,6 @@ export function ScanResultsModal({
               ))}
             </div>
           ) : null}
-
-          {hasOverride && (
-            <div className="mt-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
-              ⚠ You have overridden the scanned results. Review carefully before submitting.
-            </div>
-          )}
         </div>
 
         {/* Body — contest rows */}
@@ -173,18 +137,7 @@ export function ScanResultsModal({
                 key={cd.position.id}
                 position={cd.position}
                 detectedSelections={cd.detectedSelections}
-                currentSelections={
-                  finalSelections[cd.position.id] ?? []
-                }
                 contestRead={cd.contestRead}
-                isOverridden={overrides[cd.position.id] !== undefined}
-                onToggle={(candidateId) =>
-                  toggleCandidate(
-                    cd.position.id,
-                    candidateId,
-                    cd.position.maxVotes
-                  )
-                }
               />
             ))
           )}

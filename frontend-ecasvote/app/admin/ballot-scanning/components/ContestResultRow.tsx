@@ -7,10 +7,7 @@ import type { ContestReadItem } from "./ScanPageContent";
 interface Props {
   position: Position;
   detectedSelections: string[];
-  currentSelections: string[];
   contestRead: ContestReadItem | null;
-  isOverridden: boolean;
-  onToggle: (candidateId: string) => void;
 }
 
 function validityBadge(reason: string) {
@@ -49,23 +46,20 @@ function validityBadge(reason: string) {
 export function ContestResultRow({
   position,
   detectedSelections,
-  currentSelections,
   contestRead,
-  isOverridden,
-  onToggle,
 }: Props) {
   const isOvervote = contestRead?.overvoteDetected ?? false;
   const validityMap = contestRead?.validityResults ?? {};
   const maxVotes = position.maxVotes;
-  const atMax = currentSelections.length >= maxVotes;
+  const selectedCount = detectedSelections.length;
 
   return (
     <div
       className={`rounded-lg border p-4 ${
         isOvervote
           ? "border-red-300 bg-red-50/50"
-          : isOverridden
-          ? "border-amber-300 bg-amber-50/30"
+          : selectedCount > 0
+          ? "border-emerald-200 bg-emerald-50/30"
           : "border-gray-200"
       }`}
     >
@@ -76,7 +70,7 @@ export function ContestResultRow({
             {position.name}
           </h3>
           <span className="text-xs text-gray-400">
-            (choose up to {maxVotes})
+            (max {maxVotes})
           </span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -85,115 +79,99 @@ export function ContestResultRow({
               OVERVOTE
             </Badge>
           )}
-          {isOverridden && (
-            <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-xs">
-              OVERRIDDEN
-            </Badge>
+          {selectedCount === 0 && !isOvervote && (
+            <span className="text-xs text-gray-400 italic">No vote detected</span>
           )}
-          <span className="text-xs text-gray-400">
-            {currentSelections.length}/{maxVotes} selected
-          </span>
+          {selectedCount > 0 && (
+            <span className="text-xs text-gray-500">
+              {selectedCount}/{maxVotes} selected
+            </span>
+          )}
         </div>
       </div>
 
       {/* Candidates */}
-      <div className="space-y-1.5">
+      <div className="space-y-1">
         {position.candidates.map((cand) => {
-          const isSelected = currentSelections.includes(cand.id);
-          const wasDetected = detectedSelections.includes(cand.id);
+          const isSelected = detectedSelections.includes(cand.id);
           const validity = validityMap[cand.id];
-          const isDisabled = !isSelected && atMax;
 
           return (
-            <label
+            <div
               key={cand.id}
-              className={`flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 transition-colors ${
+              className={`flex items-center gap-3 rounded-md px-3 py-2 ${
                 isSelected
                   ? "bg-[#7A0019]/5 border border-[#7A0019]/20"
-                  : "hover:bg-gray-50 border border-transparent"
-              } ${isDisabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                  : "border border-transparent"
+              }`}
             >
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-gray-300 text-[#7A0019] focus:ring-[#7A0019]/30 accent-[#7A0019]"
-                checked={isSelected}
-                disabled={isDisabled}
-                onChange={() => {
-                  if (!isDisabled) onToggle(cand.id);
-                }}
-              />
+              {/* Selection indicator */}
+              <div className={`h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center ${
+                isSelected
+                  ? "border-[#7A0019] bg-[#7A0019]"
+                  : "border-gray-300"
+              }`}>
+                {isSelected && (
+                  <svg className="h-2.5 w-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                )}
+              </div>
+
+              {/* Candidate info */}
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`text-sm ${
-                      isSelected
-                        ? "font-medium text-gray-900"
-                        : "text-gray-600"
-                    }`}
-                  >
-                    {cand.name}
+                <span
+                  className={`text-sm ${
+                    isSelected
+                      ? "font-medium text-gray-900"
+                      : "text-gray-500"
+                  }`}
+                >
+                  {cand.name}
+                </span>
+                {cand.party && (
+                  <span className="ml-1.5 text-xs text-gray-400">
+                    ({cand.party})
                   </span>
-                  {cand.party && (
-                    <span className="text-xs text-gray-400">
-                      ({cand.party})
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                {validity && validityBadge(validity.reason)}
-                {wasDetected && !isSelected && isOverridden && (
-                  <Badge
-                    variant="outline"
-                    className="text-[10px] px-1.5 py-0 text-gray-400 line-through"
-                  >
-                    detected
-                  </Badge>
-                )}
-                {!wasDetected && isSelected && isOverridden && (
-                  <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px] px-1.5 py-0">
-                    added
-                  </Badge>
                 )}
               </div>
-            </label>
+
+              {/* Validity badge */}
+              {validity && validityBadge(validity.reason)}
+            </div>
           );
         })}
 
-        {/* Abstain option */}
+        {/* Abstain */}
         {(() => {
           const abstainId = `abstain:${position.id}`;
-          const isSelected = currentSelections.includes(abstainId);
-          const wasDetected = detectedSelections.includes(abstainId);
+          const isSelected = detectedSelections.includes(abstainId);
           const validity = validityMap[abstainId];
-          const isDisabled = !isSelected && atMax;
+
+          if (!isSelected && !validity) return null;
 
           return (
-            <label
-              className={`flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 transition-colors border-t mt-1 pt-2 ${
+            <div
+              className={`flex items-center gap-3 rounded-md px-3 py-2 border-t mt-1 pt-2 ${
                 isSelected
                   ? "bg-gray-100 border border-gray-300"
-                  : "hover:bg-gray-50 border border-transparent"
-              } ${isDisabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                  : "border border-transparent"
+              }`}
             >
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-gray-300 text-gray-500 focus:ring-gray-300 accent-gray-500"
-                checked={isSelected}
-                disabled={isDisabled}
-                onChange={() => {
-                  if (!isDisabled) onToggle(abstainId);
-                }}
-              />
-              <span
-                className={`text-sm italic ${
-                  isSelected ? "text-gray-700" : "text-gray-400"
-                }`}
-              >
+              <div className={`h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center ${
+                isSelected ? "border-gray-500 bg-gray-500" : "border-gray-300"
+              }`}>
+                {isSelected && (
+                  <svg className="h-2.5 w-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                )}
+              </div>
+              <span className={`text-sm italic ${isSelected ? "text-gray-700" : "text-gray-400"}`}>
                 Abstain
               </span>
               {validity && validityBadge(validity.reason)}
-            </label>
+            </div>
           );
         })()}
       </div>

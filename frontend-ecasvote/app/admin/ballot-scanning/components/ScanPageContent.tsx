@@ -177,6 +177,7 @@ export interface ScanResult {
   electionId?: string;
   confidence?: number;
   ballotStatus?: "VALID" | "INVALID";
+  academicOrg?: string;
   ballotInvalidReasons?: Array<{
     type: string;
     contestId?: string;
