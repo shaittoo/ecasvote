@@ -2005,7 +2005,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                 </CardContent>
               </Card>
 
-              {/* <Card>
+              <Card>
                 <CardHeader>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div>
@@ -2115,7 +2115,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                     </ul>
                   )}
                 </CardContent>
-              </Card> */}
+              </Card>
 
               </div>
           )}
