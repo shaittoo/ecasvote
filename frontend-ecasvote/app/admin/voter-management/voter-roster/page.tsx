@@ -38,18 +38,18 @@ export default function VoterRosterPage() {
   const [printElections, setPrintElections] = useState<Election[]>([]);
   const [printElectionId, setPrintElectionId] = useState("");
   const [electionsLoading, setElectionsLoading] = useState(true);
-  const [editingVoter, setEditingVoter] = useState<VoterRecord | null>(null);
-  const [editForm, setEditForm] = useState({
-    studentNumber: "",
-    upEmail: "",
-    fullName: "",
-    college: "",
-    department: "",
-    program: "",
-    yearLevel: 1,
-    status: "ENROLLED",
-    isEligible: true,
-  });
+  // const [editingVoter, setEditingVoter] = useState<VoterRecord | null>(null);
+  // const [editForm, setEditForm] = useState({
+  //   studentNumber: "",
+  //   upEmail: "",
+  //   fullName: "",
+  //   college: "",
+  //   department: "",
+  //   program: "",
+  //   yearLevel: 1,
+  //   status: "ENROLLED",
+  //   isEligible: true,
+  // });
   const [savingEdit, setSavingEdit] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -226,55 +226,55 @@ export default function VoterRosterPage() {
     URL.revokeObjectURL(url);
   };
 
-  function openEdit(voter: VoterRecord) {
-    setEditingVoter(voter);
-    setEditForm({
-      studentNumber: voter.studentNumber,
-      upEmail: voter.upEmail,
-      fullName: voter.fullName,
-      college: voter.college,
-      department: voter.department,
-      program: voter.program,
-      yearLevel: voter.yearLevel,
-      status: voter.status,
-      isEligible: voter.isEligible,
-    });
-  }
+  // function openEdit(voter: VoterRecord) {
+  //   setEditingVoter(voter);
+  //   setEditForm({
+  //     studentNumber: voter.studentNumber,
+  //     upEmail: voter.upEmail,
+  //     fullName: voter.fullName,
+  //     college: voter.college,
+  //     department: voter.department,
+  //     program: voter.program,
+  //     yearLevel: voter.yearLevel,
+  //     status: voter.status,
+  //     isEligible: voter.isEligible,
+  //   });
+  // }
 
-  async function saveEdit() {
-    if (!editingVoter) return;
-    setSavingEdit(true);
-    try {
-      await updateVoter(editingVoter.id, editForm);
-      notify.success({ title: "Voter updated", description: `${editForm.fullName} saved.` });
-      setEditingVoter(null);
-      await loadVoters();
-    } catch (e: unknown) {
-      notify.error({
-        title: "Update failed",
-        description: e instanceof Error ? e.message : "Could not save voter.",
-      });
-    } finally {
-      setSavingEdit(false);
-    }
-  }
+  // async function saveEdit() {
+  //   if (!editingVoter) return;
+  //   setSavingEdit(true);
+  //   try {
+  //     await updateVoter(editingVoter.id, editForm);
+  //     notify.success({ title: "Voter updated", description: `${editForm.fullName} saved.` });
+  //     setEditingVoter(null);
+  //     await loadVoters();
+  //   } catch (e: unknown) {
+  //     notify.error({
+  //       title: "Update failed",
+  //       description: e instanceof Error ? e.message : "Could not save voter.",
+  //     });
+  //   } finally {
+  //     setSavingEdit(false);
+  //   }
+  // }
 
-  async function handleDeleteVoter(voter: VoterRecord) {
-    const ok = window.confirm(
-      `Remove ${voter.fullName} (${voter.studentNumber}) from the voter roster? This cannot be undone.`
-    );
-    if (!ok) return;
-    try {
-      await deleteVoter(voter.id);
-      notify.success({ title: "Voter removed", description: voter.studentNumber });
-      await loadVoters();
-    } catch (e: unknown) {
-      notify.error({
-        title: "Delete failed",
-        description: e instanceof Error ? e.message : "Could not remove voter.",
-      });
-    }
-  }
+  // async function handleDeleteVoter(voter: VoterRecord) {
+  //   const ok = window.confirm(
+  //     `Remove ${voter.fullName} (${voter.studentNumber}) from the voter roster? This cannot be undone.`
+  //   );
+  //   if (!ok) return;
+  //   try {
+  //     await deleteVoter(voter.id);
+  //     notify.success({ title: "Voter removed", description: voter.studentNumber });
+  //     await loadVoters();
+  //   } catch (e: unknown) {
+  //     notify.error({
+  //       title: "Delete failed",
+  //       description: e instanceof Error ? e.message : "Could not remove voter.",
+  //     });
+  //   }
+  // }
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -450,7 +450,7 @@ export default function VoterRosterPage() {
                                       Print ballot
                                     </Link>
                                   ) : null}
-                                  <Button
+                                  {/* <Button
                                     size="sm"
                                     variant="outline"
                                     type="button"
@@ -467,7 +467,7 @@ export default function VoterRosterPage() {
                                     onClick={() => handleDeleteVoter(voter)}
                                   >
                                     Delete
-                                  </Button>
+                                  </Button> */}
                                 </div>
                               </td>
                             </tr>
@@ -509,7 +509,7 @@ export default function VoterRosterPage() {
             </div>
           )}
 
-          {editingVoter ? (
+          {/* {editingVoter ? (
             <div
               className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
               role="dialog"
@@ -665,7 +665,7 @@ export default function VoterRosterPage() {
                 </div>
               </div>
             </div>
-          ) : null}
+          ) : null} */}
         </main>
       </div>
     </div>

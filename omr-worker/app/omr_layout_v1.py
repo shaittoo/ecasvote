@@ -935,7 +935,7 @@ def _apply_fiducial_bbox_crop_resize(
     # top_offset: positive = crop starts lower = bubbles shift up
     # bottom_trim: positive = crop ends earlier = bubbles shift up (more at bottom)
     top_offset = (max(ys) - min(ys) + 2 * fid_half) * 0.00005
-    crop_trim_bottom = (max(ys) - min(ys) + 2 * fid_half) * 0.09
+    crop_trim_bottom = (max(ys) - min(ys) + 2 * fid_half) * 0.1
     x0 = max(0, int(min(xs) - fid_half))
     y0 = max(0, int(min(ys) - fid_half + top_offset))
     x1 = min(w, int(max(xs) + fid_half))
