@@ -10,53 +10,22 @@ interface Props {
   contestRead: ContestReadItem | null;
 }
 
-function validityBadge(reason: string) {
-  switch (reason) {
-    case "valid_fill":
-      return (
-        <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] px-1.5 py-0">
-          ✓ valid
-        </Badge>
-      );
-    case "partial_fill":
-      return (
-        <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px] px-1.5 py-0">
-          ⚠ partial
-        </Badge>
-      );
-    case "stroke_like":
-      return (
-        <Badge className="bg-red-100 text-red-700 border-red-200 text-[10px] px-1.5 py-0">
-          ✗ stroke
-        </Badge>
-      );
-    case "low_fill":
-      return (
-        <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px] px-1.5 py-0">
-          ✗ low fill
-        </Badge>
-      );
-    case "empty":
-      return null;
-    default:
-      return null;
-  }
-}
-
 export function ContestResultRow({
   position,
   detectedSelections,
   contestRead,
 }: Props) {
   const isOvervote = contestRead?.overvoteDetected ?? false;
-  const validityMap = contestRead?.validityResults ?? {};
+  const isUndervote = contestRead?.undervoteDetected ?? false;
+  const isAbstainConflict = contestRead?.abstainConflict ?? false;
+  const isInvalid = isOvervote || isUndervote || isAbstainConflict;
   const maxVotes = position.maxVotes;
   const selectedCount = detectedSelections.length;
 
   return (
     <div
       className={`rounded-lg border p-4 ${
-        isOvervote
+        isInvalid
           ? "border-red-300 bg-red-50/50"
           : selectedCount > 0
           ? "border-emerald-200 bg-emerald-50/30"
@@ -79,10 +48,17 @@ export function ContestResultRow({
               OVERVOTE
             </Badge>
           )}
-          {selectedCount === 0 && !isOvervote && (
-            <span className="text-xs text-gray-400 italic">No vote detected</span>
+          {isAbstainConflict && (
+            <Badge className="bg-red-100 text-red-800 border-red-200 text-xs">
+              CANDIDATE + ABSTAIN
+            </Badge>
           )}
-          {selectedCount > 0 && (
+          {isUndervote && (
+            <Badge className="bg-red-100 text-red-800 border-red-200 text-xs">
+              NO VOTE
+            </Badge>
+          )}
+          {!isInvalid && selectedCount > 0 && (
             <span className="text-xs text-gray-500">
               {selectedCount}/{maxVotes} selected
             </span>
@@ -94,7 +70,6 @@ export function ContestResultRow({
       <div className="space-y-1">
         {position.candidates.map((cand) => {
           const isSelected = detectedSelections.includes(cand.id);
-          const validity = validityMap[cand.id];
 
           return (
             <div
@@ -135,9 +110,6 @@ export function ContestResultRow({
                   </span>
                 )}
               </div>
-
-              {/* Validity badge */}
-              {validity && validityBadge(validity.reason)}
             </div>
           );
         })}
@@ -146,31 +118,21 @@ export function ContestResultRow({
         {(() => {
           const abstainId = `abstain:${position.id}`;
           const isSelected = detectedSelections.includes(abstainId);
-          const validity = validityMap[abstainId];
 
-          if (!isSelected && !validity) return null;
+          if (!isSelected) return null;
 
           return (
             <div
-              className={`flex items-center gap-3 rounded-md px-3 py-2 border-t mt-1 pt-2 ${
-                isSelected
-                  ? "bg-gray-100 border border-gray-300"
-                  : "border border-transparent"
-              }`}
+              className={`flex items-center gap-3 rounded-md px-3 py-2 border-t mt-1 pt-2 bg-gray-100 border border-gray-300`}
             >
-              <div className={`h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center ${
-                isSelected ? "border-gray-500 bg-gray-500" : "border-gray-300"
-              }`}>
-                {isSelected && (
-                  <svg className="h-2.5 w-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
-                )}
+              <div className="h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center border-gray-500 bg-gray-500">
+                <svg className="h-2.5 w-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
               </div>
-              <span className={`text-sm italic ${isSelected ? "text-gray-700" : "text-gray-400"}`}>
+              <span className="text-sm italic text-gray-700">
                 Abstain
               </span>
-              {validity && validityBadge(validity.reason)}
             </div>
           );
         })()}

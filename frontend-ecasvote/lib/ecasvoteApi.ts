@@ -987,7 +987,9 @@ export async function confirmPaperVote(params: {
   ballotToken: string;
   templateVersion?: string;
   selections: Record<string, string[]>;
-}): Promise<{ ok: boolean; ballotToken: string; castAt: string }> {
+  ballotStatus?: "VALID" | "INVALID";
+  ballotInvalidReasons?: Array<Record<string, unknown>>;
+}): Promise<{ ok: boolean; ballotToken: string; castAt: string; invalidated?: boolean }> {
   const selectionsFlat: Record<string, string> = {};
   for (const [pid, picks] of Object.entries(params.selections)) {
     selectionsFlat[pid] = picks.join(",");
@@ -1000,6 +1002,8 @@ export async function confirmPaperVote(params: {
       ballotToken: params.ballotToken,
       templateVersion: params.templateVersion ?? "ballot-template-v2",
       selections: selectionsFlat,
+      ballotStatus: params.ballotStatus ?? "VALID",
+      ballotInvalidReasons: params.ballotInvalidReasons ?? [],
     }),
   });
   const data = await res.json();

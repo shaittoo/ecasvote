@@ -15,6 +15,7 @@ import {
   fetchPaperCheckIn,
   fetchPaperTokens,
   fetchPositions,
+  getGatewayBase,
   type PaperCheckInVoter,
 } from "@/lib/ecasvoteApi";
 import { mapPositionsToPrintableBallot } from "@/lib/ballot/mapPositionsToPrintable";
@@ -181,6 +182,28 @@ export function BallotPrintClient() {
           return `A.Y. ${y}-${y + 1}`;
         })()
       : undefined;
+
+      useEffect(() => {
+        if (!ballotToken) {
+          console.warn("No ballotToken → skipping layout fetch");
+          return;
+        }
+    
+        console.log("Fetching OMR layout for:", ballotToken);
+    
+        fetch(`${getGatewayBase()}/api/omr-layout/${ballotToken}`)
+          .then((res) => {
+            console.log("GET status:", res.status);
+            if (!res.ok) throw new Error("Failed to fetch layout");
+            return res.json();
+          })
+          .then((data) => {
+            console.log("✅ Layout loaded:", data);
+          })
+          .catch((err) => {
+            console.error("❌ Layout fetch error:", err);
+          });
+      }, [ballotToken]);
 
   return (
     <div className="min-h-screen bg-gray-100 pb-8 pt-2 print:bg-white print:py-0">

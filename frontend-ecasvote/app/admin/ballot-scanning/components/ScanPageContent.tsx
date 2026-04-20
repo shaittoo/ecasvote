@@ -165,6 +165,8 @@ export interface ContestReadItem {
   maxVotes: number;
   selectedOptionIds: string[];
   overvoteDetected?: boolean;
+  undervoteDetected?: boolean;
+  abstainConflict?: boolean;
   validVoteCount?: number;
   invalidMarkings?: Array<{ optionId: string; reason: string }>;
   validityResults?: Record<string, { valid: boolean; reason: string }>;

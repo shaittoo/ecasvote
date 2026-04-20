@@ -1628,14 +1628,23 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     }
     setIsSubmitting(true);
     try {
-      await confirmPaperVote({
+      const result = await confirmPaperVote({
         electionId,
         ballotToken: latestScanResult.ballotId,
         selections: finalSelections,
+        ballotStatus: latestScanResult.ballotStatus,
+        ballotInvalidReasons: latestScanResult.ballotInvalidReasons as Array<Record<string, unknown>> | undefined,
       });
       setShowResultsModal(false);
       setLatestScanResult(null);
-      notify.success({ title: "Vote recorded successfully" });
+      if (result.invalidated) {
+        notify.warning({
+          title: "Ballot marked as INVALID",
+          description: "Token has been used. Votes are not counted due to overvote, missing votes, or improper markings.",
+        });
+      } else {
+        notify.success({ title: "Vote recorded successfully" });
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Submit failed";
       notify.error({ title: msg });
