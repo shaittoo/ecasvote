@@ -9,10 +9,17 @@ Environment variables:
                        resize to canonical — no perspective distortion. Set ``homography`` for
                        full ``warpPerspective`` from the 8-point fiducial grid. ``1``/``true``/``on``
                        are aliases for ``crop``. Set ``0``/``false``/``off`` for resize-only (debug).
+  OMR_COARSE_DOCUMENT_WARP Default ``1``. Bright-sheet quad dewarp before fiducials (live camera).
+                       Set ``0`` to disable.
+  OMR_AUTO_HOMOGRAPHY_SKEW_DEG Default ``2.25``. In crop mode, auto-use homography when corner quad
+                       is skewed; set ``0`` to disable.
   OMR_POST_WARP_DESKEW Default ``0``. After **homography** warp only, set ``1`` for an extra Hough
                        deskew (can shift bubble geometry; ignored for bbox crop).
   OMR_BBOX_SPAN_Y_BIAS_PX Default ``2``. Bbox-crop mode only: subtract from template-mapped Y
                        (shift expected centers up). Use ``0`` to disable.
+  OMR_BBOX_CROP_BOTTOM_TRIM_FRAC Default ``0``. Fraction of bbox height trimmed from crop bottom;
+                       legacy ``0.1`` cut off bottom corner fiducials / QR on camera scans.
+  OMR_BBOX_EXTRA_EDGE_PAD_PX Default ``8``. Extra padding (px) outside corner-centroid bbox on each side.
   OMR_BBOX_RIGHT_COL_X_NUDGE_PX Default ``0``. When template nx ≥ OMR_BBOX_RIGHT_COL_NX_MIN,
                        subtract this from mapped X (shift expected blue dot **left**, e.g. column 3).
   OMR_BBOX_RIGHT_COL_NX_MIN Default ``0.62``. Template-normalized X (0–1) threshold for that nudge.
