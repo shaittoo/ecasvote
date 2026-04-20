@@ -1411,6 +1411,8 @@ app.post('/scanner/confirm-vote', async (req, res) => {
   const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v2');
   const ciphertextB64 = String(req.body?.ciphertextB64 ?? 'mock-encrypted-data');
   const selections = req.body?.selections;
+  const ballotStatus = String(req.body?.ballotStatus ?? 'VALID');
+  const ballotInvalidReasons = req.body?.ballotInvalidReasons ?? [];
 
   if (!electionId || !ballotToken || typeof selections !== 'object' || selections === null) {
     return res.status(400).json({
@@ -1434,35 +1436,42 @@ app.post('/scanner/confirm-vote', async (req, res) => {
       }
 
       const castAt = new Date();
+      const isInvalid = ballotStatus === 'INVALID';
 
+      // Store the vote record — null selections for INVALID ballots
       await tx.paperAnonymousVote.create({
         data: {
           electionId,
           ballotToken,
           ciphertextB64,
-          selectionsJson: selections as object,
+          selectionsJson: isInvalid
+            ? { _invalidated: true, reasons: ballotInvalidReasons }
+            : (selections as object),
           templateVersion,
           castAt,
         },
       });
 
+      // Always mark token as used — voter can only vote once
       await tx.paperBallotIssuance.update({
         where: { id: issuance.id },
         data: { used: true, usedAt: castAt },
       });
 
+      // Always mark voter as having voted
       await tx.voter.update({
         where: { id: issuance.voterId },
         data: { hasVoted: true, votedAt: castAt },
       });
 
-      return { castAt: castAt.toISOString() };
+      return { castAt: castAt.toISOString(), invalidated: isInvalid };
     });
 
     res.json({
       ok: true,
       ballotToken,
-      ciphertextB64,
+      ballotStatus,
+      invalidated: result.invalidated,
       castAt: result.castAt,
       templateVersion,
     });

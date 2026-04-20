@@ -2148,6 +2148,7 @@ def _score_bubbles_from_saved_layout(
     layout: dict[str, Any],
     template: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    print("🔥 FUNCTION ENTERED")
     """
     Template-driven bubble-only OMR: only expected bubble ROIs from the saved layout
     (per printed ballot / org). Headers, QR, timing marks, and lines are masked out
@@ -2316,50 +2317,38 @@ def _score_bubbles_from_saved_layout(
         raw_scores[pid] = scores
 
         # ── Vote validity gate ────────────────────────────────────────
-        # Classify every bubble; only "valid_fill" bubbles count as votes.
-        validity_results: dict[str, tuple[bool, str]] = {}
-        valid_picks: list[str] = []
-        all_valid_fills: list[str] = []  # ALL bubbles that pass validity (for overvote check)
-        invalid_markings: list[dict[str, Any]] = []
+        # ALL detected marks count as valid fills (check, X, dot, half-filled
+        # are accepted — they are not rejected as invalid markings).
+        all_valid_fills: list[str] = []
 
         for oid, roi in acc:
-            is_valid, reason = classify_bubble_validity(roi)
-            validity_results[oid] = (is_valid, reason)
-
-            if is_valid:
+            # Any mark that was detected (in picks) counts as a valid fill
+            if oid in picks:
                 all_valid_fills.append(oid)
 
-            if oid in picks:
-                if is_valid:
-                    valid_picks.append(oid)
-                else:
-                    # Selected by threshold but fails validity → invalid marking
-                    invalid_markings.append({
-                        "optionId": oid,
-                        "reason": reason,
-                        "inner_dark_ratio": roi.inner_dark_ratio,
-                        "inner_cc_ratio": roi.inner_cc_ratio,
-                        "core_mean_dark": roi.core_mean_dark,
-                        "fill_score": roi.fill_score,
-                    })
+        # ── Abstain conflict detection ────────────────────────────────
+        # If voter marked both candidate(s) AND abstain → invalid
+        abstain_fills = [f for f in all_valid_fills if f.startswith("abstain:")]
+        candidate_fills = [f for f in all_valid_fills if not f.startswith("abstain:")]
+        abstain_conflict = len(abstain_fills) > 0 and len(candidate_fills) > 0
 
         # ── Overvote detection ────────────────────────────────────────
-        # Count ALL valid fills (not just picks) — catches cases where WM cleared picks
-        # but multiple bubbles are clearly filled (e.g. both governor candidates shaded).
+        # Count ALL valid fills (not just filtered picks) — includes check/X/dot marks
         contest_overvote = len(all_valid_fills) > max_votes
-        if contest_overvote:
-            # Overvote: zero out this contest's selections
+        # Abstain conflict is also an overvote-like condition
+        if abstain_conflict:
+            contest_overvote = True
+
+        # ── Undervote detection (no mark at all) ──────────────────────
+        undervote_detected = len(all_valid_fills) == 0
+
+        if contest_overvote or abstain_conflict:
             selections[pid] = []
         else:
-            selections[pid] = valid_picks
+            selections[pid] = all_valid_fills
 
-        # TEMPORARY DEBUG — validity decisions
-        print(f"VALIDITY {pid}: picks={picks} valid_picks={valid_picks} all_valid={all_valid_fills} overvote={contest_overvote}")
-        for oid, (v, r) in validity_results.items():
-            if not v and r != "empty":
-                print(f"  REJECTED {oid}: {r} idr={dict((o,ro) for o,ro in acc).get(oid, None) and 'see above'}")
-        for im in invalid_markings:
-            print(f"  INVALID_MARK {im['optionId']}: {im['reason']} idr={im['inner_dark_ratio']:.3f} cc={im['inner_cc_ratio']:.3f}")
+        # DEBUG — validity decisions
+        print(f"VALIDITY {pid}: picks={picks} valid_fills={all_valid_fills} overvote={contest_overvote} undervote={undervote_detected} abstain_conflict={abstain_conflict}")
 
         vals = list(scores.values())
         if vals:
@@ -2389,19 +2378,17 @@ def _score_bubbles_from_saved_layout(
             {
                 "positionId": pid,
                 "maxVotes": max_votes,
-                "selectedOptionIds": valid_picks if not contest_overvote else [],
+                "selectedOptionIds": all_valid_fills if not contest_overvote and not abstain_conflict else [],
                 "originalPicks": picks,
                 "overvote": bool(smeta.get("overvote")) or contest_overvote,
                 "overvoteDetected": contest_overvote,
+                "undervoteDetected": undervote_detected,
+                "abstainConflict": abstain_conflict,
                 "validVoteCount": len(all_valid_fills),
-                "abstainConflict": bool(smeta.get("abstainConflict")),
                 "marksAboveThreshold": int(smeta.get("marksAboveThreshold") or 0),
                 "winnerMarginFailed": bool(smeta.get("winnerMarginFailed")),
-                "invalidMarkings": invalid_markings,
-                "validityResults": {
-                    oid: {"valid": v, "reason": r}
-                    for oid, (v, r) in validity_results.items()
-                },
+                "invalidMarkings": [],
+                "validityResults": {},
                 "ballotEmptyCalibration": ballot_ref,
                 "ballotDominanceDeltasRequired": {
                     "inner": BALLOT_DOMINANCE_DELTA_INNER,
@@ -2431,7 +2418,6 @@ def _score_bubbles_from_saved_layout(
     for cr in contests_read:
         pid_cr = cr.get("positionId", "")
 
-        # Overvote in any contest → contest votes invalidated
         if cr.get("overvoteDetected"):
             ballot_invalid_reasons.append({
                 "type": "overvote_detected",
@@ -2440,19 +2426,63 @@ def _score_bubbles_from_saved_layout(
                 "maxAllowed": cr.get("maxVotes", 1),
             })
 
-        # Invalid markings detected (informational — contest votes still count
-        # for properly filled bubbles; only the invalid-marked bubbles are rejected)
-        for im in cr.get("invalidMarkings", []):
+        if cr.get("undervoteDetected"):
             ballot_invalid_reasons.append({
-                "type": "invalid_marking",
+                "type": "no_vote_detected",
                 "contestId": pid_cr,
-                "optionId": im["optionId"],
-                "reason": im["reason"],
             })
 
-    # Ballot is INVALID only if any contest has an overvote
-    if any(cr.get("overvoteDetected") for cr in contests_read):
+        if cr.get("abstainConflict"):
+            ballot_invalid_reasons.append({
+                "type": "abstain_conflict",
+                "contestId": pid_cr,
+            })
+
+    has_overvote = any(cr.get("overvoteDetected") for cr in contests_read)
+    has_undervote = any(cr.get("undervoteDetected") for cr in contests_read)
+    has_abstain_conflict = any(cr.get("abstainConflict") for cr in contests_read)
+
+    if has_overvote or has_undervote or has_abstain_conflict:
         ballot_status = "INVALID"
+        print("⚠️ BALLOT INVALIDATED — clearing ALL selections")
+
+        for pid, vals in selections.items():
+            print(f"AFTER CLEAR → {pid}: {vals}")
+
+        # Null out ALL contests, not just ones already present in selections
+        selections = {
+            str(cr.get("positionId")): []
+            for cr in contests_read
+            if cr.get("positionId")
+        }
+
+        # Clear contest-level outputs
+        for cr in contests_read:
+            cr["selectedOptionIds"] = []
+            cr["validVoteCount"] = 0
+            cr["originalPicks"] = []
+            cr["marksAboveThreshold"] = 0
+
+        # Clear overlay so frontend/debug won't still show filled bubbles
+        for bo in bubble_overlay:
+            bo["filled"] = False
+            bo["fillClassification"] = "empty"
+            bo["score"] = 0.0
+            bo["scoreRaw"] = 0.0
+
+        # Optional: clear raw scores too
+        raw_scores = {
+            pid: {oid: 0.0 for oid in score_map}
+            for pid, score_map in raw_scores.items()
+        }
+
+    print("=== BALLOT STATUS DEBUG ===")
+    print("ballot_status:", ballot_status)
+    print("has_overvote:", has_overvote)
+    print("has_undervote:", has_undervote)
+    print("has_abstain_conflict:", has_abstain_conflict)
+    print("final selections:", selections)
+    print("===========================")
 
     return {
         "selectionsByPosition": selections,
