@@ -13,6 +13,12 @@ Environment:
                         warp only (ignored for bbox crop; can shift bubble geometry).
   OMR_BBOX_SPAN_Y_BIAS_PX  Default ``2``. For ``OMR_FIDUCIAL_WARP=crop``, subtract this from mapped Y
                         (nudges expected bubble centers **up**). Set ``0`` if alignment is already exact.
+  OMR_BBOX_CROP_BOTTOM_TRIM_FRAC  Default ``0``. Legacy ``0.1`` trimmed 10% off the **bottom** of the
+                        fiducial bbox before resize — it often **cut off** bottom corner L-markers and
+                        the QR on live camera. Set e.g. ``0.02`` only if you need a tiny trim for a
+                        specific scanner.
+  OMR_BBOX_EXTRA_EDGE_PAD_PX  Default ``8``. Extra pixels padded outside the corner-centroid bbox on
+                        each side so the outer black fiducial square and timing strip stay inside the crop.
   OMR_BBOX_RIGHT_COL_X_NUDGE_PX  Default ``0``. For bubbles whose template ``nx`` is at or past
                         ``OMR_BBOX_RIGHT_COL_NX_MIN``, subtract this many pixels from mapped X
                         (nudges **left** — e.g. third column when cols 1–2 already line up).
@@ -22,6 +28,14 @@ Environment:
   OMR_BUBBLE_LOCALIZE       Default ``1`` — ring-gradient search ±``OMR_BUBBLE_LOCALIZE_HALF`` px
                             to snap each bubble center before fill classification.
   OMR_BUBBLE_LOCALIZE_HALF  Default ``12`` (max ±12 px adjustment per axis).
+  OMR_AUTO_HOMOGRAPHY_SKEW_DEG  Default ``2.25``. When ``OMR_FIDUCIAL_WARP=crop``, if the four
+                        corner fiducials form a skewed/trapezoidal quad (camera rotation or
+                        keystone), automatically use the **homography** path instead of an
+                        axis-aligned bbox+resize so bubble ROIs stay aligned. Set ``0``/``off`` to
+                        disable and always use bbox when in crop mode.
+  OMR_COARSE_DOCUMENT_WARP  Default ``1``. Before fiducials, largest bright sheet contour →
+                        upright ``warpPerspective`` so corner L-zones overlap the physical page
+                        (live camera with desk background). Set ``0``/``off`` to disable.
 
 Scoring uses only small circular ROIs at expected bubble centers inside a content mask; headers,
 timing strips, QR, and table lines outside the mask are ignored for ink statistics.
@@ -35,6 +49,7 @@ next-best scores.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -61,6 +76,84 @@ def _fiducial_registration_off() -> bool:
     return _fiducial_registration_raw() in ("0", "false", "no", "off")
 
 
+def _auto_skew_homography_threshold_deg() -> float | None:
+    """
+    Edge deviation from horizontal (degrees) above which bbox crop is abandoned for homography.
+
+    ``None`` disables auto homography (strict bbox when ``OMR_FIDUCIAL_WARP=crop``).
+    """
+    raw = os.getenv("OMR_AUTO_HOMOGRAPHY_SKEW_DEG", "2.25").strip().lower()
+    if raw in ("0", "false", "off", "no", "none"):
+        return None
+    try:
+        v = float(raw)
+        return None if v <= 0 else v
+    except ValueError:
+        return 2.25
+
+
+def _skew_corner_quad_meta(pts: list[tuple[float, float]]) -> dict[str, Any]:
+    """Geometry of the TL–TR–BR–BL corner quadrilateral in image space."""
+    meta: dict[str, Any] = {}
+    if len(pts) < 4:
+        return meta
+    tl, tr, br, bl = pts[0], pts[1], pts[2], pts[3]
+
+    def horiz_dev_deg(dx: float, dy: float) -> float:
+        """Angle of segment to the x-axis, folded to [0, 90] (0 = horizontal, 90 = vertical)."""
+        a = abs(math.degrees(math.atan2(dy, dx)))
+        if a > 90.0:
+            a = 180.0 - a
+        return float(a)
+
+    hd_top = horiz_dev_deg(tr[0] - tl[0], tr[1] - tl[1])
+    hd_bot = horiz_dev_deg(br[0] - bl[0], br[1] - bl[1])
+    top_w = float(np.hypot(tr[0] - tl[0], tr[1] - tl[1]))
+    bot_w = float(np.hypot(br[0] - bl[0], br[1] - bl[1]))
+    left_h = float(np.hypot(bl[0] - tl[0], bl[1] - tl[1]))
+    right_h = float(np.hypot(br[0] - tr[0], br[1] - tr[1]))
+    meta.update(
+        {
+            "topEdgeDegFromHorizontal": hd_top,
+            "bottomEdgeDegFromHorizontal": hd_bot,
+            "topBottomWidthRatio": min(top_w, bot_w) / max(top_w, bot_w)
+            if max(top_w, bot_w) > 1e-6
+            else 1.0,
+            "leftRightHeightRatio": min(left_h, right_h) / max(left_h, right_h)
+            if max(left_h, right_h) > 1e-6
+            else 1.0,
+        }
+    )
+    return meta
+
+
+def _corner_quad_prefers_homography_over_bbox(
+    pts: list[tuple[float, float]],
+) -> tuple[bool, dict[str, Any]]:
+    """
+    Axis-aligned bbox+resize assumes the page is upright in the bitmap. Camera skew / rotation
+    makes that a poor fit (systematic bubble shift). Prefer ``warpPerspective`` when the quad is
+    clearly non-rectangular in image space.
+    """
+    m = _skew_corner_quad_meta(pts)
+    thr = _auto_skew_homography_threshold_deg()
+    if thr is None:
+        return False, m
+    max_hd = max(
+        float(m.get("topEdgeDegFromHorizontal") or 0.0),
+        float(m.get("bottomEdgeDegFromHorizontal") or 0.0),
+    )
+    wr = float(m.get("topBottomWidthRatio") or 1.0)
+    hr = float(m.get("leftRightHeightRatio") or 1.0)
+    skew_ang = max_hd > thr
+    trapezoid = wr < 0.90 or hr < 0.90
+    m["autoSkewHomographyTrigger"] = bool(skew_ang or trapezoid)
+    m["autoSkewHomographyReason"] = (
+        "edge_angle" if skew_ang and not trapezoid else "trapezoid" if trapezoid and not skew_ang else "angle_and_trapezoid" if skew_ang and trapezoid else "none"
+    )
+    return bool(skew_ang or trapezoid), m
+
+
 def _fiducial_warp_registration_mode() -> str:
     """
     ``none`` — resize-only; ``crop`` — bbox from fiducials + resize; ``homography`` — warpPerspective.
@@ -73,6 +166,134 @@ def _fiducial_warp_registration_mode() -> str:
     # "1", "true", "yes", "on", "crop", or unset default
     return "crop"
 
+
+def _coarse_document_warp_enabled() -> bool:
+    v = os.getenv("OMR_COARSE_DOCUMENT_WARP", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def _order_quad_tl_tr_br_bl(pts: np.ndarray) -> np.ndarray:
+    p = pts.reshape(-1, 2).astype(np.float32)
+    s = p.sum(axis=1)
+    d = np.diff(p, axis=1).reshape(-1)
+    tl = p[int(np.argmin(s))]
+    br = p[int(np.argmax(s))]
+    tr = p[int(np.argmin(d))]
+    bl = p[int(np.argmax(d))]
+    return np.array([tl, tr, br, bl], dtype=np.float32)
+
+
+def _edge_len(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.hypot(float(a[0] - b[0]), float(a[1] - b[1])))
+
+
+def _quad_from_contour(c: np.ndarray) -> np.ndarray | None:
+    peri = cv2.arcLength(c, True)
+    if peri < 30:
+        return None
+    hull = cv2.convexHull(c)
+    hperi = cv2.arcLength(hull, True)
+    if hperi < 20:
+        return None
+    for eps_frac in (0.012, 0.018, 0.024, 0.032, 0.045, 0.06, 0.085):
+        approx = cv2.approxPolyDP(hull, eps_frac * hperi, True)
+        if len(approx) == 4:
+            return approx.reshape(4, 2).astype(np.float32)
+    rect = cv2.minAreaRect(c)
+    box = cv2.boxPoints(rect)
+    return box.astype(np.float32)
+
+
+def _largest_sheet_contour(gray: np.ndarray) -> np.ndarray | None:
+    """Largest bright-region contour — outer page boundary for typical scans."""
+    h, w = gray.shape[:2]
+    img_area = float(h * w)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, paper = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    paper = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8), iterations=2)
+    contours, _ = cv2.findContours(paper, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best: np.ndarray | None = None
+    best_a = 0.0
+    for c in contours:
+        a = float(cv2.contourArea(c))
+        if a < img_area * 0.06:
+            continue
+        if a > best_a:
+            best_a = a
+            best = c
+    return best
+
+
+def _maybe_coarse_rectify_document_for_fiducials(bgr: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
+    """
+    Dewarp so sheet corners move toward image corners before zone-based fiducial search.
+
+    Tight camera crops can yield a single ~100% white Otsu mask; do **not** reject large contours.
+    """
+    meta: dict[str, Any] = {"applied": False}
+    if not _coarse_document_warp_enabled():
+        meta["skipped"] = "disabled"
+        return bgr, meta
+    if bgr is None or bgr.size == 0 or bgr.ndim != 3:
+        meta["skipped"] = "invalid_bgr"
+        return bgr, meta
+    h, w = bgr.shape[:2]
+    if h < 80 or w < 80:
+        meta["skipped"] = "too_small"
+        return bgr, meta
+
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    c = _largest_sheet_contour(gray)
+    if c is None:
+        meta["skipped"] = "no_contour"
+        return bgr, meta
+    quad = _quad_from_contour(c)
+    if quad is None:
+        meta["skipped"] = "no_quad"
+        return bgr, meta
+
+    ordered = _order_quad_tl_tr_br_bl(quad)
+    tl, tr, br, bl = ordered[0], ordered[1], ordered[2], ordered[3]
+    wa = _edge_len(tl, tr)
+    wb = _edge_len(bl, br)
+    ha = _edge_len(tl, bl)
+    hb = _edge_len(tr, br)
+    max_w = max(int(wa + 0.5), int(wb + 0.5), 1)
+    max_h = max(int(ha + 0.5), int(hb + 0.5), 1)
+
+    r = max_h / max(max_w, 1)
+    r_inv = max_w / max(max_h, 1)
+    if not (1.12 <= r <= 2.25 or 1.12 <= r_inv <= 2.25):
+        meta["skipped"] = "aspect_ratio"
+        meta["aspect_hw"] = r
+        meta["aspect_wh"] = r_inv
+        return bgr, meta
+
+    if max_w < int(min(h, w) * 0.22) or max_h < int(min(h, w) * 0.22):
+        meta["skipped"] = "quad_too_small"
+        return bgr, meta
+
+    dst = np.array(
+        [[0.0, 0.0], [max_w - 1.0, 0.0], [max_w - 1.0, max_h - 1.0], [0.0, max_h - 1.0]],
+        dtype=np.float32,
+    )
+    try:
+        H = cv2.getPerspectiveTransform(ordered, dst)
+    except Exception:
+        meta["skipped"] = "getPerspectiveTransform_failed"
+        return bgr, meta
+
+    out = cv2.warpPerspective(
+        bgr,
+        H,
+        (max_w, max_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+    meta["applied"] = True
+    meta["outSize"] = [max_w, max_h]
+    meta["srcQuad"] = ordered.astype(float).tolist()
+    return out, meta
 
 
 def map_template_fractions_to_warped_pixels(
@@ -108,6 +329,30 @@ def _post_warp_deskew_env_enabled() -> bool:
     """Optional second deskew after fiducial warp (default off — avoids coordinate drift)."""
     v = os.getenv("OMR_POST_WARP_DESKEW", "0").strip().lower()
     return v in ("1", "true", "yes", "on")
+
+
+def _bbox_crop_bottom_trim_frac() -> float:
+    """
+    Fraction of (detected height + 2×fiducial inset) trimmed from the **bottom** of the bbox crop.
+
+    Default ``0`` — a legacy ``0.1`` value removed too much of the sheet (bottom corner fiducials
+    and footer QR disappeared on camera captures).
+    """
+    raw = os.getenv("OMR_BBOX_CROP_BOTTOM_TRIM_FRAC", "0").strip()
+    try:
+        v = float(raw)
+        return max(0.0, min(0.25, v))
+    except ValueError:
+        return 0.0
+
+
+def _bbox_crop_extra_edge_pad_px() -> float:
+    """Extra padding beyond ``FIDUCIAL_CENTROID_INSET_PX`` on each side of the bbox crop (px)."""
+    raw = os.getenv("OMR_BBOX_EXTRA_EDGE_PAD_PX", "8").strip()
+    try:
+        return max(0.0, min(64.0, float(raw)))
+    except ValueError:
+        return 8.0
 
 
 def _bbox_span_y_bias_px() -> float:
@@ -851,6 +1096,7 @@ def warped_pixel_xy_from_template_fractions(
 def _apply_fiducial_bbox_crop_resize(
     bgr: np.ndarray,
     detect_corner_fiducials: Any,
+    compute_homography: Any,
     template: dict[str, Any] | None,
 ) -> tuple[np.ndarray | None, dict[str, Any]]:
     """
@@ -898,6 +1144,15 @@ def _apply_fiducial_bbox_crop_resize(
         meta["warp_source"] = "resize-no-fiducials"
         return warped, meta
 
+    if len(src_pts) >= 4:
+        prefer_h, skew_m = _corner_quad_prefers_homography_over_bbox(src_pts)
+        if prefer_h:
+            warped_h, meta_h = _apply_fiducial_homography_warp(
+                bgr, detect_corner_fiducials, compute_homography, template
+            )
+            meta_h = {**meta_h, "autoSkewHomography": True, "skewCornerQuad": skew_m}
+            return warped_h, meta_h
+
     xs = [p[0] for p in src_pts]
     ys = [p[1] for p in src_pts]
 
@@ -911,7 +1166,8 @@ def _apply_fiducial_bbox_crop_resize(
 
     detected_width = max(xs) - min(xs)
     detected_height = max(ys) - min(ys)
-    fid_half = FIDUCIAL_CENTROID_INSET_PX  # 16px — centroid to frame edge
+    fid_half = FIDUCIAL_CENTROID_INSET_PX  # ~20px — centroid to nominal scan-frame edge on print
+    edge_pad = _bbox_crop_extra_edge_pad_px()
 
     # Estimate frame edge-to-edge width from centroid-to-centroid + 2*fid_half
     frame_width_px = detected_width + 2 * fid_half
@@ -933,13 +1189,14 @@ def _apply_fiducial_bbox_crop_resize(
 
     # Adjust crop to align bubble coordinates with physical positions.
     # top_offset: positive = crop starts lower = bubbles shift up
-    # bottom_trim: positive = crop ends earlier = bubbles shift up (more at bottom)
+    # bottom_trim_frac: legacy 0.1 removed bottom of sheet (corner fiducials + QR); default 0.
     top_offset = (max(ys) - min(ys) + 2 * fid_half) * 0.00005
-    crop_trim_bottom = (max(ys) - min(ys) + 2 * fid_half) * 0.1
-    x0 = max(0, int(min(xs) - fid_half))
-    y0 = max(0, int(min(ys) - fid_half + top_offset))
-    x1 = min(w, int(max(xs) + fid_half))
-    y1 = min(h, int(max(ys) + fid_half - crop_trim_bottom))
+    span_for_trim = max(ys) - min(ys) + 2 * fid_half
+    crop_trim_bottom = span_for_trim * _bbox_crop_bottom_trim_frac()
+    x0 = max(0, int(min(xs) - fid_half - edge_pad))
+    y0 = max(0, int(min(ys) - fid_half - edge_pad + top_offset))
+    x1 = min(w, int(max(xs) + fid_half + edge_pad))
+    y1 = min(h, int(max(ys) + fid_half + edge_pad - crop_trim_bottom))
 
     if x1 - x0 < w * 0.22 or y1 - y0 < h * 0.22:
         warped, meta = _resize_to_canonical_no_warp(bgr)
@@ -1060,17 +1317,23 @@ def apply_corner_fiducial_warp_only(
     Registration to canonical size: default bbox crop + resize; optional full homography
     when ``OMR_FIDUCIAL_WARP=homography``; resize-only when ``OMR_FIDUCIAL_WARP=0``.
     """
+    bgr_in, coarse_meta = _maybe_coarse_rectify_document_for_fiducials(bgr)
     mode = _fiducial_warp_registration_mode()
     if mode == "none":
-        warped, meta = _resize_to_canonical_no_warp(bgr)
+        warped, meta = _resize_to_canonical_no_warp(bgr_in)
+        meta = {**meta, "coarseDocumentRectify": coarse_meta}
         return warped, meta
     if mode == "homography":
-        return _apply_fiducial_homography_warp(
-            bgr, detect_corner_fiducials, compute_homography, template
+        warped, meta = _apply_fiducial_homography_warp(
+            bgr_in, detect_corner_fiducials, compute_homography, template
         )
-    return _apply_fiducial_bbox_crop_resize(
-        bgr, detect_corner_fiducials, template
+        meta = {**meta, "coarseDocumentRectify": coarse_meta}
+        return warped, meta
+    warped, meta = _apply_fiducial_bbox_crop_resize(
+        bgr_in, detect_corner_fiducials, compute_homography, template
     )
+    meta = {**meta, "coarseDocumentRectify": coarse_meta}
+    return warped, meta
 
 
 def _qr_decode_bgr(det: cv2.QRCodeDetector, bgr: np.ndarray) -> str | None:
