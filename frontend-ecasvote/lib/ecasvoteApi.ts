@@ -300,6 +300,7 @@ export interface Position {
     party?: string;
     program?: string;
     yearLevel?: string;
+    imageUrl?: string; 
   }>;
 }
 
@@ -335,6 +336,7 @@ export interface CreateCandidatesResponse {
     party?: string;
     program?: string;
     yearLevel?: string;
+    imageUrl?: string; 
   }>;
   count: number;
 }

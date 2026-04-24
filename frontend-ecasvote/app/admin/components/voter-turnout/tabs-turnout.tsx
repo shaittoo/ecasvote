@@ -1,6 +1,5 @@
 "use client";
 
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import VoterTurnoutOverall from "./overall-turnout";
 import VoterTurnoutBreakdown from "./breakdown-turnout";
@@ -16,41 +15,47 @@ type Props = {
 };
 
 export default function VoterTurnoutTabs({ stats, groups }: Props) {
-  const [activeTab, setActiveTab] = useState("overall");
+  const [activeTab, setActiveTab] = useState<"overall" | "breakdown">("overall");
 
   return (
-    <Tabs defaultValue="overall" value={activeTab} onValueChange={setActiveTab}>
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Voter Turnout</CardTitle>
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-4">
+        <CardTitle>Voter Turnout</CardTitle>
 
-          <TabsList>
-            <TabsTrigger
-              value="overall"
-              className={activeTab === "overall" ? "cursor-default" : "cursor-pointer"}
-            >
-              Overall
-            </TabsTrigger>
+        {/* Custom toggle — much clearer active state than shadcn TabsTrigger defaults */}
+        <div className="inline-flex overflow-hidden rounded-lg border border-gray-300 bg-gray-100">
+          <button
+            type="button"
+            onClick={() => setActiveTab("overall")}
+            className={
+              activeTab === "overall"
+                ? "px-4 py-2 text-sm font-bold bg-[#7A0019] text-white shadow-inner transition-colors"
+                : "px-4 py-2 text-sm font-medium text-gray-600 bg-white hover:bg-gray-50 transition-colors"
+            }
+          >
+            Overall
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("breakdown")}
+            className={
+              activeTab === "breakdown"
+                ? "px-4 py-2 text-sm font-bold bg-[#7A0019] text-white shadow-inner transition-colors"
+                : "px-4 py-2 text-sm font-medium text-gray-600 bg-white hover:bg-gray-50 transition-colors"
+            }
+          >
+            Breakdown
+          </button>
+        </div>
+      </CardHeader>
 
-            <TabsTrigger
-              value="breakdown"
-              className={activeTab === "breakdown" ? "cursor-default" : "cursor-pointer"}
-            >
-              Breakdown
-            </TabsTrigger>
-          </TabsList>
-        </CardHeader>
-
-        <CardContent>
-          <TabsContent value="overall">
-            <VoterTurnoutOverall {...stats} />
-          </TabsContent>
-
-          <TabsContent value="breakdown">
-            <VoterTurnoutBreakdown groups={groups} />
-          </TabsContent>
-        </CardContent>
-      </Card>
-    </Tabs>
+      <CardContent>
+        {activeTab === "overall" ? (
+          <VoterTurnoutOverall {...stats} />
+        ) : (
+          <VoterTurnoutBreakdown groups={groups} />
+        )}
+      </CardContent>
+    </Card>
   );
 }

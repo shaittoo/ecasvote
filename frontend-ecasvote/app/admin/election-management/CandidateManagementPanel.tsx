@@ -10,6 +10,7 @@ import {
   fetchElection,
   fetchPositions,
   createCandidates,
+  getGatewayBase,
 } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
 import { notify } from "@/lib/notify";
@@ -22,14 +23,17 @@ const emptyDraft = (): CandidateDraft => ({
   party: "",
   program: "",
   yearLevel: "",
+  imageFile: null,
+  imagePreview: "",
 });
 
 type Props = {
   electionId: string;
   electionTitle?: string;
+  locked?: boolean; // true when election is OPEN or CLOSED
 };
 
-export function CandidateManagementPanel({ electionId, electionTitle }: Props) {
+export function CandidateManagementPanel({ electionId, electionTitle, locked = false }: Props) {
   const [ballotPositions, setBallotPositions] = useState<string[]>([]);
   const [candidates, setCandidates] = useState<CandidateRow[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -67,8 +71,7 @@ export function CandidateManagementPanel({ electionId, electionTitle }: Props) {
     loadPositionsForElection(electionId);
   }, [electionId, loadPositionsForElection]);
 
-  const addDraftRow = () =>
-    setDrafts((prev) => [...prev, emptyDraft()]);
+  const addDraftRow = () => setDrafts((prev) => [...prev, emptyDraft()]);
 
   const removeDraftRow = (index: number) => {
     setDrafts((prev) => {
@@ -80,7 +83,7 @@ export function CandidateManagementPanel({ electionId, electionTitle }: Props) {
   const updateDraft = (
     index: number,
     field: keyof CandidateDraft,
-    value: string
+    value: string | File | null
   ) => {
     setDrafts((prev) =>
       prev.map((r, i) => (i === index ? { ...r, [field]: value } : r))
@@ -105,9 +108,32 @@ export function CandidateManagementPanel({ electionId, electionTitle }: Props) {
         yearLevel: c.yearLevel || undefined,
       }));
       const response = await createCandidates(electionId, candidatesToSave);
+
+      // Upload images for candidates that have one
+      if (response.candidates && response.candidates.length > 0) {
+        for (let i = 0; i < toAdd.length; i++) {
+          const draft = toAdd[i];
+          const saved = response.candidates[i];
+          if (draft.imageFile && saved?.id) {
+            try {
+              const form = new FormData();
+              form.append("image", draft.imageFile);
+              await fetch(
+                `${getGatewayBase()}/elections/${electionId}/candidates/${saved.id}/image`,
+                { method: "POST", body: form }
+              );
+            } catch (imgErr) {
+              console.warn(`Failed to upload image for candidate ${saved.id}:`, imgErr);
+              // Non-fatal: candidate is saved, image just won't show
+            }
+          }
+        }
+      }
+
       await loadPositionsForElection(electionId);
       setShowAddModal(false);
       setDrafts([emptyDraft()]);
+
       try {
         const electionData = await fetchElection(electionId);
         if (
@@ -183,23 +209,36 @@ export function CandidateManagementPanel({ electionId, electionTitle }: Props) {
               <CardTitle className="text-2xl">Candidate Management</CardTitle>
               {electionTitle ? (
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Election: <span className="font-medium text-foreground">{electionTitle}</span>
+                  Election:{" "}
+                  <span className="font-medium text-foreground">{electionTitle}</span>
                 </p>
               ) : null}
             </div>
           </div>
+
+          {locked && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+              Election is locked — candidates cannot be added, edited, or deleted.
+            </div>
+          )}
+
           <div className="flex w-full flex-col flex-wrap items-stretch justify-between gap-3 lg:flex-row lg:items-end">
             <div className="flex flex-wrap gap-2">
               <Button
                 className="text-white"
-                style={{ backgroundColor: "#7A0019" }}
-                onClick={() => setShowAddModal(true)}
+                style={{ backgroundColor: locked ? "#9CA3AF" : "#7A0019" }}
+                disabled={locked}
+                onClick={() => !locked && setShowAddModal(true)}
+                title={locked ? "Election is locked" : undefined}
               >
                 <Plus className="mr-2 h-4 w-4" />
                 Add New Candidate
               </Button>
               <Button
+                className="text-white"
                 variant="outline"
+                style={{ backgroundColor: locked ? "#9CA3AF" : "#7A0019" }}
+                disabled={locked}
                 onClick={() =>
                   notify.info({
                     title: "Draft saved",
@@ -210,7 +249,7 @@ export function CandidateManagementPanel({ electionId, electionTitle }: Props) {
               >
                 Save Draft
               </Button>
-              <Link
+              {/* <Link
                 href={`/admin/ballot-print?electionId=${encodeURIComponent(electionId)}`}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -218,17 +257,18 @@ export function CandidateManagementPanel({ electionId, electionTitle }: Props) {
               >
                 <Printer className="mr-2 h-4 w-4" />
                 Preview Ballot
-              </Link>
-              <Button
+              </Link> */}
+              {/* <Button
                 className="text-white"
                 style={{ backgroundColor: "#0C8C3F" }}
                 onClick={() => void refresh()}
               >
                 Refresh
-              </Button>
+              </Button> */}
             </div>
           </div>
         </CardHeader>
+
         <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -265,7 +305,7 @@ export function CandidateManagementPanel({ electionId, electionTitle }: Props) {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="text-gray-600"
+                            className="text-gray-400"
                             type="button"
                             disabled
                             title="Edit candidate (coming soon)"
@@ -275,13 +315,17 @@ export function CandidateManagementPanel({ electionId, electionTitle }: Props) {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="text-red-600"
+                            className={locked ? "text-gray-300 cursor-not-allowed" : "text-red-600"}
                             type="button"
-                            onClick={() =>
-                              setCandidates((prev) =>
-                                prev.filter((_, i) => i !== index)
-                              )
-                            }
+                            disabled={locked}
+                            title={locked ? "Election is locked" : "Delete candidate"}
+                            onClick={() => {
+                              if (!locked) {
+                                setCandidates((prev) =>
+                                  prev.filter((_, i) => i !== index)
+                                );
+                              }
+                            }}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -307,6 +351,7 @@ export function CandidateManagementPanel({ electionId, electionTitle }: Props) {
 
       <AddCandidatesModal
         open={showAddModal}
+        locked={locked}
         onClose={() => {
           setShowAddModal(false);
           setDrafts([emptyDraft()]);

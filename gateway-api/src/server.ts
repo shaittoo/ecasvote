@@ -8,6 +8,29 @@ import crypto from 'crypto';
 import { getContract, getNetwork } from './fabricClient';
 import { prisma } from './prismaClient';
 
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+
+const UPLOADS_DIR = path.join(__dirname, '../uploads/candidates');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const candidateImageStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+  },
+});
+const uploadCandidateImage = multer({
+  storage: candidateImageStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'));
+  },
+});
+
 /** Unique paper ballot token (QR identifies ballot only — not vote data). */
 function generateBallotToken(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -207,6 +230,8 @@ app.use((req, res, next) => {
 });
 
 app.use(bodyParser.json({ limit: '25mb' }));
+
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Simple health-check
 app.get('/health', (_req, res) => {
@@ -901,7 +926,7 @@ app.get('/elections/:id/paper-check-in', async (req, res) => {
     `;
     const isUsed = (u: number | bigint | boolean) =>
       u === true || u === 1 || u === BigInt(1);
-    const byVoterId = new Map(issRows.map((i) => [i.voterId, i]));
+    const byVoterId = new Map<number, { voterId: number; ballotToken: string; used: number | bigint | boolean }>(issRows.map((i) => [i.voterId, i]));
 
     const rows = voters
       .map((v) => {
@@ -1658,7 +1683,7 @@ app.post('/elections/:id/candidates', async (req, res) => {
     const positions = await prisma.position.findMany({
       where: { electionId: id },
     });
-    const positionMap = new Map(positions.map(p => [p.name, p]));
+    const positionMap = new Map<string, typeof positions[number]>(positions.map(p => [p.name, p]));
 
     const contract = await getContract();
     const createdCandidates: any[] = [];
@@ -1741,6 +1766,31 @@ app.post('/elections/:id/candidates', async (req, res) => {
     res.status(400).json({ error: err.message || 'CreateCandidates failed' });
   }
 });
+
+// Upload candidate image
+app.post(
+  '/elections/:id/candidates/:candidateId/image',
+  uploadCandidateImage.single('image'),
+  async (req, res) => {
+    const { candidateId } = req.params;
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file uploaded' });
+    }
+
+    const imageUrl = `/uploads/candidates/${req.file.filename}`;
+
+    try {
+      await prisma.candidate.update({
+        where: { id: candidateId },
+        data: { imageUrl },
+      });
+      res.json({ ok: true, imageUrl });
+    } catch (err: any) {
+      console.error('UploadCandidateImage error:', err);
+      res.status(400).json({ error: err.message || 'Failed to update candidate image' });
+    }
+  }
+);
 
 // 2.5) Update election (update name, description, dates)
 app.put('/elections/:id', async (req, res) => {
@@ -2403,7 +2453,7 @@ async function computeElectionTurnout(electionId: string) {
       : [];
   const votedPaper = new Set(paperVoterRows.map((v) => v.studentNumber));
 
-  const votedInElection = new Set<string>([...votedDigital, ...votedPaper]);
+  const votedInElection = new Set<string>([...votedDigital, ...votedPaper].filter((s): s is string => typeof s === 'string'));
 
   const eligibleNumbers = new Set(allVoters.map((v) => v.studentNumber));
   const votedCount = [...votedInElection].filter((sn) => eligibleNumbers.has(sn)).length;
