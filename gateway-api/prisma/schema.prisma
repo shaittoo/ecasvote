@@ -69,6 +69,7 @@ model Candidate {
   party      String?
   program    String?
   yearLevel  String?
+  imageUrl   String?
 }
 
 model Voter {

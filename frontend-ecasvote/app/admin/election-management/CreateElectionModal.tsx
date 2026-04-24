@@ -18,9 +18,8 @@ type Props = {
   setNewStartDate: (v: string) => void;
   newEndDate: string;
   setNewEndDate: (v: string) => void;
-  newStatus: string;
-  setNewStatus: (v: string) => void;
-  /** Called after successful create with the new election id (e.g. navigate to edit). */
+  // newStatus removed — elections always start as DRAFT
+  /** Called after successful create with the new election id. */
   onCreated?: (electionId: string) => void;
 };
 
@@ -37,11 +36,38 @@ export function CreateElectionModal({
   setNewStartDate,
   newEndDate,
   setNewEndDate,
-  newStatus,
-  setNewStatus,
   onCreated,
 }: Props) {
   if (!open) return null;
+
+  const handleCreate = async () => {
+    if (!newTitle || !newStartDate || !newEndDate) {
+      notify.error({
+        title: "Missing fields",
+        description: "Title, start, and end date & time are required.",
+      });
+      return;
+    }
+    try {
+      const startTime = new Date(newStartDate).toISOString();
+      const endTime = new Date(newEndDate).toISOString();
+      const result = await createElectionApi({
+        electionId: crypto.randomUUID(),
+        name: newTitle,
+        description: `${newAcademicYear} - ${newSemester}`,
+        startTime,
+        endTime,
+      });
+      notify.success({ title: "Election created!" });
+      onClose();
+      if (result?.id) onCreated?.(result.id);
+    } catch (err: unknown) {
+      notify.error({
+        title: "Failed to create election",
+        description: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -55,129 +81,88 @@ export function CreateElectionModal({
             ✕
           </Button>
         </div>
+
+        <p className="mt-1 text-sm text-gray-500">
+          New elections start as <span className="font-medium">DRAFT</span> and open
+          automatically when the start time is reached.
+        </p>
+
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* Election Title */}
           <div className="md:col-span-2">
             <label className="mb-1 block text-sm font-medium text-gray-700">
-              Election Title
+              Election Title <span className="text-red-500">*</span>
             </label>
             <Input
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="Election Title"
+              placeholder="e.g. CAS SC Elections 2025-2026"
             />
           </div>
+
+          {/* Academic Year */}
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">
               Academic Year
             </label>
-            <select
-              className="w-full rounded border px-3 py-2"
+            <Input
               value={newAcademicYear}
               onChange={(e) => setNewAcademicYear(e.target.value)}
-            >
-              <option>2025-2026</option>
-              <option>2026-2027</option>
-              <option>2027-2028</option>
-            </select>
+              placeholder="2025-2026"
+            />
           </div>
+
+          {/* Semester */}
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">
               Semester
             </label>
             <select
-              className="w-full rounded border px-3 py-2"
+              className="w-full rounded border border-gray-300 px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#7A0019]/40"
               value={newSemester}
               onChange={(e) => setNewSemester(e.target.value)}
             >
               <option>First Semester</option>
               <option>Second Semester</option>
+              <option>Summer</option>
             </select>
           </div>
+
+          {/* Start Date */}
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">
-              Start Date & Time
+              Start Date &amp; Time (Philippine Time){" "}
+              <span className="text-red-500">*</span>
             </label>
-            <input
+            <Input
               type="datetime-local"
-              className="w-full rounded border px-3 py-2"
               value={newStartDate}
               onChange={(e) => setNewStartDate(e.target.value)}
             />
           </div>
+
+          {/* End Date */}
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">
-              End Date & Time
+              End Date &amp; Time (Philippine Time){" "}
+              <span className="text-red-500">*</span>
             </label>
-            <input
+            <Input
               type="datetime-local"
-              className="w-full rounded border px-3 py-2"
               value={newEndDate}
               onChange={(e) => setNewEndDate(e.target.value)}
             />
           </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Status
-            </label>
-            <select
-              className="w-full rounded border px-3 py-2"
-              value={newStatus}
-              onChange={(e) => setNewStatus(e.target.value)}
-            >
-              <option>Draft</option>
-              <option>Ongoing</option>
-              <option>Closed</option>
-            </select>
-          </div>
         </div>
-        <div className="mt-6 flex justify-end gap-3">
+
+        <div className="mt-6 flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button
             className="text-white"
             style={{ backgroundColor: "#7A0019" }}
-            onClick={async () => {
-              const title = newTitle?.trim() || "Untitled Election";
-              if (!newStartDate || !newEndDate) {
-                notify.error({
-                  title: "Missing dates",
-                  description: "Please set both Start and End date & time.",
-                });
-                return;
-              }
-              const electionId = `election-${new Date().getFullYear()}-${Date.now()}`;
-              try {
-                await createElectionApi({
-                  electionId,
-                  name: title,
-                  description: `${newAcademicYear} ${newSemester}`,
-                  startTime: new Date(newStartDate).toISOString(),
-                  endTime: new Date(newEndDate).toISOString(),
-                  createdBy: "admin",
-                });
-                notify.success({
-                  title: "Election created",
-                  description: "Election created on blockchain and database.",
-                });
-                onCreated?.(electionId);
-                onClose();
-                setNewTitle("");
-                setNewAcademicYear("2025-2026");
-                setNewSemester("First Semester");
-                setNewStartDate("");
-                setNewEndDate("");
-                setNewStatus("Draft");
-              } catch (err: unknown) {
-                notify.error({
-                  title: "Failed to create election",
-                  description:
-                    err instanceof Error
-                      ? err.message
-                      : "Check gateway and blockchain.",
-                });
-              }
-            }}
+            onClick={() => void handleCreate()}
           >
             Create Election
           </Button>

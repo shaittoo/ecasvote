@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Lock } from "lucide-react";
 import { fetchElection, updateElection } from "@/lib/ecasvoteApi";
 import { notify } from "@/lib/notify";
 import { AdminElectionShell } from "./AdminElectionShell";
@@ -27,8 +27,12 @@ export function EditElectionPage() {
   const [newSemester, setNewSemester] = useState("First Semester");
   const [newStartDate, setNewStartDate] = useState("");
   const [newEndDate, setNewEndDate] = useState("");
-  const [newStatus, setNewStatus] = useState("Draft");
   const [saving, setSaving] = useState(false);
+
+  // Derived from electionRow.status — the status already reflects the chain state
+  // because loadElectionRows() calls fetchElection() which triggers auto-open/close.
+  const electionStatus = electionRow?.status?.toUpperCase() ?? "DRAFT";
+  const locked = electionStatus === "OPEN" || electionStatus === "CLOSED";
 
   useEffect(() => {
     if (!electionId) {
@@ -54,7 +58,7 @@ export function EditElectionPage() {
         setNewSemester(form.newSemester);
         setNewStartDate(form.newStartDate);
         setNewEndDate(form.newEndDate);
-        setNewStatus(form.newStatus);
+        // NOTE: newStatus removed — status is derived, not editable
       } catch (e) {
         notify.error({ title: `Failed to load election: ${e}` });
         setElectionRow(null);
@@ -69,6 +73,16 @@ export function EditElectionPage() {
 
   const handleSave = async () => {
     if (!electionId || !electionRow) return;
+
+    // Double-check lock on the client side before calling the API
+    if (locked) {
+      notify.error({
+        title: "Election is locked",
+        description: "Election already started and is locked.",
+      });
+      return;
+    }
+
     if (!newTitle || !newStartDate || !newEndDate) {
       notify.error({
         title: "Missing fields",
@@ -76,6 +90,7 @@ export function EditElectionPage() {
       });
       return;
     }
+
     setSaving(true);
     try {
       const startTime = new Date(newStartDate).toISOString();
@@ -134,12 +149,14 @@ export function EditElectionPage() {
     return (
       <AdminElectionShell title="Edit election" subtitle="Election not found">
         <p className="mb-4 text-muted-foreground">
-          No election with id <code className="rounded bg-muted px-1">{electionId}</code>.
+          No election with id{" "}
+          <code className="rounded bg-muted px-1">{electionId}</code>.
         </p>
         <Link
           href="/admin/election-management"
           className={cn(buttonVariants({ variant: "outline" }))}
         >
+          <ArrowLeft className="mr-2 h-4 w-4" />
           Back to elections
         </Link>
       </AdminElectionShell>
@@ -149,132 +166,151 @@ export function EditElectionPage() {
   return (
     <AdminElectionShell
       title="Edit election"
-      subtitle="Update details, settings, and candidates for this election"
+      subtitle={electionRow.title || electionId}
     >
       <div className="mx-auto w-full max-w-[min(100%,1920px)] space-y-6">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
           <Link
             href="/admin/election-management"
-            className={cn(
-              buttonVariants({ variant: "outline", size: "sm" }),
-              "inline-flex items-center gap-2"
-            )}
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
           >
-            <ArrowLeft className="h-4 w-4" />
-            Back to election list
+            <ArrowLeft className="mr-1 h-4 w-4" />
+            Back
           </Link>
         </div>
 
+        {/* Election Settings Card */}
         <Card>
-          <CardHeader>
-            <CardTitle className="text-xl">Election details &amp; configuration</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Core information and schedule. Saving updates the blockchain and database.
-            </p>
+          <CardHeader className="pb-4">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-2xl">Election Settings</CardTitle>
+              {/* Status badge */}
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold",
+                  electionStatus === "OPEN"
+                    ? "bg-green-100 text-green-800"
+                    : electionStatus === "CLOSED"
+                    ? "bg-red-100 text-red-800"
+                    : "bg-gray-100 text-gray-700"
+                )}
+              >
+                {locked && <Lock className="h-3 w-3" />}
+                {electionStatus}
+              </span>
+            </div>
           </CardHeader>
-          <CardContent className="space-y-6">
+
+          <CardContent className="space-y-4">
+            {/* Lock banner */}
+            {locked && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <Lock className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  Election already started and is locked. All fields are read-only.
+                </span>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {/* Election Title */}
               <div className="md:col-span-2">
                 <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Election title
+                  Election Title
                 </label>
                 <Input
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="Election title"
+                  placeholder="Election Title"
+                  disabled={locked}
+                  className={locked ? "bg-gray-100 cursor-not-allowed text-gray-500" : ""}
                 />
               </div>
+
+              {/* Academic Year */}
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Academic year
+                  Academic Year
                 </label>
-                <select
-                  className="w-full rounded border px-3 py-2"
+                <Input
                   value={newAcademicYear}
                   onChange={(e) => setNewAcademicYear(e.target.value)}
-                >
-                  <option>2025-2026</option>
-                  <option>2026-2027</option>
-                  <option>2027-2028</option>
-                </select>
+                  placeholder="2025-2026"
+                  disabled={locked}
+                  className={locked ? "bg-gray-100 cursor-not-allowed text-gray-500" : ""}
+                />
               </div>
+
+              {/* Semester */}
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
                   Semester
                 </label>
                 <select
-                  className="w-full rounded border px-3 py-2"
+                  className={cn(
+                    "w-full rounded border px-2 py-2 text-sm",
+                    locked
+                      ? "bg-gray-100 cursor-not-allowed text-gray-500 border-gray-200"
+                      : "border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#7A0019]/40"
+                  )}
                   value={newSemester}
                   onChange={(e) => setNewSemester(e.target.value)}
+                  disabled={locked}
                 >
                   <option>First Semester</option>
                   <option>Second Semester</option>
+                  <option>Summer</option>
                 </select>
               </div>
+
+              {/* Start Date */}
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Start date &amp; time
+                  Start Date &amp; Time (Philippine Time)
                 </label>
-                <input
+                <Input
                   type="datetime-local"
-                  className="w-full rounded border px-3 py-2"
                   value={newStartDate}
                   onChange={(e) => setNewStartDate(e.target.value)}
+                  disabled={locked}
+                  className={locked ? "bg-gray-100 cursor-not-allowed text-gray-500" : ""}
                 />
               </div>
+
+              {/* End Date */}
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
-                  End date &amp; time
+                  End Date &amp; Time (Philippine Time)
                 </label>
-                <input
+                <Input
                   type="datetime-local"
-                  className="w-full rounded border px-3 py-2"
                   value={newEndDate}
                   onChange={(e) => setNewEndDate(e.target.value)}
+                  disabled={locked}
+                  className={locked ? "bg-gray-100 cursor-not-allowed text-gray-500" : ""}
                 />
               </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Status (display)
-                </label>
-                <select
-                  className="w-full rounded border px-3 py-2"
-                  value={newStatus}
-                  onChange={(e) => setNewStatus(e.target.value)}
-                >
-                  <option>Draft</option>
-                  <option>Ongoing</option>
-                  <option>Closed</option>
-                </select>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Opening/closing the election may use separate admin actions on the gateway.
-                </p>
-              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
+
+            <div className="flex justify-end pt-2">
               <Button
                 className="text-white"
-                style={{ backgroundColor: "#7A0019" }}
-                disabled={saving}
+                style={{ backgroundColor: locked ? "#9CA3AF" : "#7A0019" }}
                 onClick={() => void handleSave()}
+                disabled={saving || locked}
+                title={locked ? "Election is locked and cannot be edited" : undefined}
               >
-                {saving ? "Saving…" : "Save changes"}
+                {saving ? "Saving…" : locked ? "Locked" : "Save Changes"}
               </Button>
-              <Link
-                href={`/admin/ballot-print?electionId=${encodeURIComponent(electionId)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn(buttonVariants({ variant: "outline" }))}
-              >
-                Preview ballot
-              </Link>
             </div>
           </CardContent>
         </Card>
 
+        {/* Candidate Management */}
         <CandidateManagementPanel
           electionId={electionId}
           electionTitle={electionRow.title}
+          locked={locked}
         />
       </div>
     </AdminElectionShell>
