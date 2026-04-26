@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Input } from "@/components/ui/input";
 import { ArrowLeft, Lock } from "lucide-react";
 import { fetchElection, updateElection } from "@/lib/ecasvoteApi";
 import { notify } from "@/lib/notify";
@@ -15,24 +13,59 @@ import { CandidateManagementPanel } from "./CandidateManagementPanel";
 import { loadElectionEditFormState } from "./electionEditHelpers";
 import { loadElectionRows } from "./utils";
 import type { ElectionRow } from "./types";
+import { format } from "date-fns";
+import type { DateRange } from "react-day-picker";
+import { ElectionSettingsForm } from "./ElectionSettingsForm";
+import { validateElectionForm } from "./electionFormValidation";
+
+function formatAcademicYear(startYear: number): string {
+  return `${startYear} - ${startYear + 1}`;
+}
+
+function normalizeAcademicYear(value: string): string {
+  const match = value.match(/(\d{4})\s*-\s*(\d{4})/);
+  if (!match) return value;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return value;
+  return `${start} - ${end}`;
+}
+
+type EditFormSnapshot = {
+  title: string;
+  academicYear: string;
+  semester: string;
+  startDate: string;
+  endDate: string;
+  startTime: string;
+  endTime: string;
+};
 
 export function EditElectionPage() {
   const params = useParams();
+  const router = useRouter();
   const electionId = typeof params?.electionId === "string" ? params.electionId : "";
+  const currentYear = new Date().getFullYear();
+  const defaultAcademicYear = formatAcademicYear(currentYear);
+  const generatedAcademicYears = Array.from({ length: 8 }, (_, index) =>
+    formatAcademicYear(currentYear - 1 + index)
+  );
 
   const [loading, setLoading] = useState(true);
   const [electionRow, setElectionRow] = useState<ElectionRow | null>(null);
   const [newTitle, setNewTitle] = useState("");
-  const [newAcademicYear, setNewAcademicYear] = useState("2025-2026");
+  const [newAcademicYear, setNewAcademicYear] = useState(defaultAcademicYear);
   const [newSemester, setNewSemester] = useState("First Semester");
-  const [newStartDate, setNewStartDate] = useState("");
-  const [newEndDate, setNewEndDate] = useState("");
+  const [durationRange, setDurationRange] = useState<DateRange | undefined>();
+  const [startTime, setStartTime] = useState("08:00");
+  const [endTime, setEndTime] = useState("17:00");
   const [saving, setSaving] = useState(false);
+  const initialSnapshotRef = useRef<EditFormSnapshot | null>(null);
 
   // Derived from electionRow.status — the status already reflects the chain state
   // because loadElectionRows() calls fetchElection() which triggers auto-open/close.
   const electionStatus = electionRow?.status?.toUpperCase() ?? "DRAFT";
-  const locked = electionStatus === "OPEN" || electionStatus === "CLOSED";
+  const locked = electionStatus !== "DRAFT";
 
   useEffect(() => {
     if (!electionId) {
@@ -53,11 +86,30 @@ export function EditElectionPage() {
         setElectionRow(row);
         const form = await loadElectionEditFormState(row);
         if (cancelled) return;
+        const normalizedAcademicYear =
+          normalizeAcademicYear(form.newAcademicYear) || defaultAcademicYear;
+        const initialStartDate = form.newStartDate?.slice(0, 10) || "";
+        const initialEndDate = form.newEndDate?.slice(0, 10) || "";
+        const initialStartTime = form.newStartDate?.slice(11, 16) || "08:00";
+        const initialEndTime = form.newEndDate?.slice(11, 16) || "17:00";
         setNewTitle(form.newTitle);
-        setNewAcademicYear(form.newAcademicYear);
+        setNewAcademicYear(normalizedAcademicYear);
         setNewSemester(form.newSemester);
-        setNewStartDate(form.newStartDate);
-        setNewEndDate(form.newEndDate);
+        setDurationRange({
+          from: initialStartDate ? new Date(`${initialStartDate}T00:00:00`) : undefined,
+          to: initialEndDate ? new Date(`${initialEndDate}T00:00:00`) : undefined,
+        });
+        setStartTime(initialStartTime);
+        setEndTime(initialEndTime);
+        initialSnapshotRef.current = {
+          title: form.newTitle,
+          academicYear: normalizedAcademicYear,
+          semester: form.newSemester,
+          startDate: initialStartDate,
+          endDate: initialEndDate,
+          startTime: initialStartTime,
+          endTime: initialEndTime,
+        };
         // NOTE: newStatus removed — status is derived, not editable
       } catch (e) {
         notify.error({ title: `Failed to load election: ${e}` });
@@ -69,9 +121,10 @@ export function EditElectionPage() {
     return () => {
       cancelled = true;
     };
-  }, [electionId]);
+  }, [defaultAcademicYear, electionId]);
 
   const handleSave = async () => {
+    if (saving) return;
     if (!electionId || !electionRow) return;
 
     // Double-check lock on the client side before calling the API
@@ -83,23 +136,34 @@ export function EditElectionPage() {
       return;
     }
 
-    if (!newTitle || !newStartDate || !newEndDate) {
+    const validation = validateElectionForm({
+      title: newTitle,
+      academicYear: newAcademicYear,
+      semester: newSemester,
+      durationRange,
+      startTime,
+      endTime,
+      status: electionStatus as "DRAFT" | "OPEN" | "CLOSED",
+    });
+    if (!validation.ok) {
       notify.error({
-        title: "Missing fields",
-        description: "Title, start, and end date & time are required.",
+        title: validation.title,
+        description: validation.description,
       });
       return;
     }
+    const selectedRange = durationRange;
+    if (!selectedRange?.from || !selectedRange?.to) return;
+    const startDatePart = format(selectedRange.from, "yyyy-MM-dd");
+    const endDatePart = format(selectedRange.to, "yyyy-MM-dd");
 
     setSaving(true);
     try {
-      const startTime = new Date(newStartDate).toISOString();
-      const endTime = new Date(newEndDate).toISOString();
       await updateElection(electionId, {
         name: newTitle,
         description: `${newAcademicYear} - ${newSemester}`,
-        startTime,
-        endTime,
+        startTime: validation.startTimeIso,
+        endTime: validation.endTimeIso,
       });
       const electionData = await fetchElection(electionId);
       if (electionData) {
@@ -112,6 +176,15 @@ export function EditElectionPage() {
           startEnd: `${new Date(electionData.startTime).toLocaleString("en-US", { timeZone: "Asia/Manila" })} - ${new Date(electionData.endTime).toLocaleString("en-US", { timeZone: "Asia/Manila" })}`,
         });
       }
+      initialSnapshotRef.current = {
+        title: newTitle,
+        academicYear: newAcademicYear,
+        semester: newSemester,
+        startDate: startDatePart,
+        endDate: endDatePart,
+        startTime,
+        endTime,
+      };
       notify.success({
         title: "Election updated",
         description: "Changes saved to blockchain and database.",
@@ -124,6 +197,38 @@ export function EditElectionPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const rangeLabel = !durationRange?.from
+    ? "Select election date range"
+    : !durationRange.to
+    ? format(durationRange.from, "MMM dd, yyyy")
+    : `${format(durationRange.from, "MMM dd, yyyy")} - ${format(durationRange.to, "MMM dd, yyyy")}`;
+  const academicYearOptions = generatedAcademicYears.includes(newAcademicYear)
+    ? generatedAcademicYears
+    : [newAcademicYear, ...generatedAcademicYears];
+  const currentSnapshot: EditFormSnapshot = {
+    title: newTitle,
+    academicYear: newAcademicYear,
+    semester: newSemester,
+    startDate: durationRange?.from ? format(durationRange.from, "yyyy-MM-dd") : "",
+    endDate: durationRange?.to ? format(durationRange.to, "yyyy-MM-dd") : "",
+    startTime,
+    endTime,
+  };
+  const isDirty = initialSnapshotRef.current
+    ? JSON.stringify(initialSnapshotRef.current) !== JSON.stringify(currentSnapshot)
+    : false;
+
+  const handleBack = () => {
+    if (isDirty) {
+      notify.error({
+        title: "Unsaved changes",
+        description: "Please save drafts first before going back.",
+      });
+      return;
+    }
+    router.push("/admin/election-management");
   };
 
   if (!electionId) {
@@ -152,13 +257,14 @@ export function EditElectionPage() {
           No election with id{" "}
           <code className="rounded bg-muted px-1">{electionId}</code>.
         </p>
-        <Link
-          href="/admin/election-management"
-          className={cn(buttonVariants({ variant: "outline" }))}
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => router.push("/admin/election-management")}
         >
           <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to elections
-        </Link>
+          Back to Elections
+        </Button>
       </AdminElectionShell>
     );
   }
@@ -170,13 +276,16 @@ export function EditElectionPage() {
     >
       <div className="mx-auto w-full max-w-[min(100%,1920px)] space-y-6">
         <div className="flex items-center gap-2">
-          <Link
-            href="/admin/election-management"
-            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleBack}
+            disabled={saving}
           >
-            <ArrowLeft className="mr-1 h-4 w-4" />
-            Back
-          </Link>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Elections
+          </Button>
         </div>
 
         {/* Election Settings Card */}
@@ -207,90 +316,27 @@ export function EditElectionPage() {
               <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 <Lock className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
-                  Election already started and is locked. All fields are read-only.
+                  Only draft elections can be edited. All fields are read-only.
                 </span>
               </div>
             )}
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {/* Election Title */}
-              <div className="md:col-span-2">
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Election Title
-                </label>
-                <Input
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="Election Title"
-                  disabled={locked}
-                  className={locked ? "bg-gray-100 cursor-not-allowed text-gray-500" : ""}
-                />
-              </div>
-
-              {/* Academic Year */}
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Academic Year
-                </label>
-                <Input
-                  value={newAcademicYear}
-                  onChange={(e) => setNewAcademicYear(e.target.value)}
-                  placeholder="2025-2026"
-                  disabled={locked}
-                  className={locked ? "bg-gray-100 cursor-not-allowed text-gray-500" : ""}
-                />
-              </div>
-
-              {/* Semester */}
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Semester
-                </label>
-                <select
-                  className={cn(
-                    "w-full rounded border px-2 py-2 text-sm",
-                    locked
-                      ? "bg-gray-100 cursor-not-allowed text-gray-500 border-gray-200"
-                      : "border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#7A0019]/40"
-                  )}
-                  value={newSemester}
-                  onChange={(e) => setNewSemester(e.target.value)}
-                  disabled={locked}
-                >
-                  <option>First Semester</option>
-                  <option>Second Semester</option>
-                  <option>Summer</option>
-                </select>
-              </div>
-
-              {/* Start Date */}
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Start Date &amp; Time (Philippine Time)
-                </label>
-                <Input
-                  type="datetime-local"
-                  value={newStartDate}
-                  onChange={(e) => setNewStartDate(e.target.value)}
-                  disabled={locked}
-                  className={locked ? "bg-gray-100 cursor-not-allowed text-gray-500" : ""}
-                />
-              </div>
-
-              {/* End Date */}
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  End Date &amp; Time (Philippine Time)
-                </label>
-                <Input
-                  type="datetime-local"
-                  value={newEndDate}
-                  onChange={(e) => setNewEndDate(e.target.value)}
-                  disabled={locked}
-                  className={locked ? "bg-gray-100 cursor-not-allowed text-gray-500" : ""}
-                />
-              </div>
-            </div>
+            <ElectionSettingsForm
+              title={newTitle}
+              onTitleChange={setNewTitle}
+              academicYear={newAcademicYear}
+              onAcademicYearChange={setNewAcademicYear}
+              semester={newSemester}
+              onSemesterChange={setNewSemester}
+              durationRange={durationRange}
+              onDurationRangeChange={setDurationRange}
+              startTime={startTime}
+              onStartTimeChange={setStartTime}
+              endTime={endTime}
+              onEndTimeChange={setEndTime}
+              academicYearOptions={academicYearOptions}
+              disabled={locked}
+            />
 
             <div className="flex justify-end pt-2">
               <Button

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { deleteElection } from "@/lib/ecasvoteApi";
 import { notify } from "@/lib/notify";
 import { AdminElectionShell } from "./AdminElectionShell";
@@ -12,7 +11,8 @@ import { loadElectionRows } from "./utils";
 import type { ElectionRow } from "./types";
 
 export default function ElectionManagementPage() {
-  const router = useRouter();
+  const currentYear = new Date().getFullYear();
+  const defaultAcademicYear = `${currentYear} - ${currentYear + 1}`;
   const [elections, setElections] = useState<ElectionRow[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [electionPendingDelete, setElectionPendingDelete] = useState<{
@@ -22,7 +22,7 @@ export default function ElectionManagementPage() {
   const [deleteElectionSubmitting, setDeleteElectionSubmitting] = useState(false);
 
   const [newTitle, setNewTitle] = useState("");
-  const [newAcademicYear, setNewAcademicYear] = useState("2025-2026");
+  const [newAcademicYear, setNewAcademicYear] = useState(defaultAcademicYear);
   const [newSemester, setNewSemester] = useState("First Semester");
   const [newStartDate, setNewStartDate] = useState("");
   const [newEndDate, setNewEndDate] = useState("");
@@ -89,11 +89,9 @@ export default function ElectionManagementPage() {
           setNewStartDate={setNewStartDate}
           newEndDate={newEndDate}
           setNewEndDate={setNewEndDate}
-          onCreated={async (electionId) => {
+          onCreated={async () => {
             await refreshElections();
-            router.push(
-              `/admin/election-management/${encodeURIComponent(electionId)}/edit`
-            );
+            setShowCreateModal(false);
           }}
         />
 

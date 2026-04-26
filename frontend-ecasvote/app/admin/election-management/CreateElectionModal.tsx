@@ -1,9 +1,13 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { createElection as createElectionApi } from "@/lib/ecasvoteApi";
 import { notify } from "@/lib/notify";
+import { format } from "date-fns";
+import type { DateRange } from "react-day-picker";
+import { ElectionSettingsForm } from "./ElectionSettingsForm";
+import { validateElectionForm } from "./electionFormValidation";
 
 type Props = {
   open: boolean;
@@ -23,6 +27,18 @@ type Props = {
   onCreated?: (electionId: string) => void;
 };
 
+function formatAcademicYear(startYear: number): string {
+  return `${startYear} - ${startYear + 1}`;
+}
+
+function parseDateTimeLocal(value: string): { date: string; time: string } {
+  if (!value) return { date: "", time: "" };
+  return {
+    date: value.slice(0, 10),
+    time: value.slice(11, 16),
+  };
+}
+
 export function CreateElectionModal({
   open,
   onClose,
@@ -38,25 +54,70 @@ export function CreateElectionModal({
   setNewEndDate,
   onCreated,
 }: Props) {
+  const currentYear = new Date().getFullYear();
+  const generatedAcademicYears = useMemo(
+    () => Array.from({ length: 8 }, (_, index) => formatAcademicYear(currentYear - 1 + index)),
+    [currentYear]
+  );
+  const [durationRange, setDurationRange] = useState<DateRange | undefined>();
+  const [startTime, setStartTime] = useState("08:00");
+  const [endTime, setEndTime] = useState("17:00");
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const startParsed = parseDateTimeLocal(newStartDate);
+    const endParsed = parseDateTimeLocal(newEndDate);
+    setDurationRange({
+      from: startParsed.date ? new Date(`${startParsed.date}T00:00:00`) : undefined,
+      to: endParsed.date ? new Date(`${endParsed.date}T00:00:00`) : undefined,
+    });
+    setStartTime(startParsed.time || "08:00");
+    setEndTime(endParsed.time || "17:00");
+  }, [newEndDate, newStartDate, open]);
+
   if (!open) return null;
 
   const handleCreate = async () => {
-    if (!newTitle || !newStartDate || !newEndDate) {
+    if (creating) return;
+
+    const validation = validateElectionForm({
+      title: newTitle,
+      academicYear: newAcademicYear,
+      semester: newSemester,
+      durationRange,
+      startTime,
+      endTime,
+      mode: "create",
+    });
+    if (!validation.ok) {
       notify.error({
-        title: "Missing fields",
-        description: "Title, start, and end date & time are required.",
+        title: validation.title,
+        description: validation.description,
       });
       return;
     }
+
     try {
-      const startTime = new Date(newStartDate).toISOString();
-      const endTime = new Date(newEndDate).toISOString();
+      setCreating(true);
+      const selectedRange = durationRange;
+      if (!selectedRange?.from || !selectedRange?.to) {
+        notify.error({
+          title: "Missing fields",
+          description: "Title, election date range, and start/end times are required.",
+        });
+        return;
+      }
+      const startDatePart = format(selectedRange.from, "yyyy-MM-dd");
+      const endDatePart = format(selectedRange.to, "yyyy-MM-dd");
+      setNewStartDate(`${startDatePart}T${startTime}`);
+      setNewEndDate(`${endDatePart}T${endTime}`);
       const result = await createElectionApi({
         electionId: crypto.randomUUID(),
         name: newTitle,
         description: `${newAcademicYear} - ${newSemester}`,
-        startTime,
-        endTime,
+        startTime: validation.startTimeIso,
+        endTime: validation.endTimeIso,
       });
       notify.success({ title: "Election created!" });
       onClose();
@@ -66,18 +127,25 @@ export function CreateElectionModal({
         title: "Failed to create election",
         description: err instanceof Error ? err.message : String(err),
       });
+    } finally {
+      setCreating(false);
     }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div
+        className="absolute inset-0 bg-black/50"
+        onClick={() => {
+          if (!creating) onClose();
+        }}
+      />
       <div className="relative mx-4 w-full max-w-2xl rounded-lg bg-white p-6">
         <div className="flex items-start justify-between">
           <h3 className="text-2xl font-semibold text-[#7A0019]">
             Create New Election
           </h3>
-          <Button variant="ghost" size="icon" onClick={onClose}>
+          <Button variant="ghost" size="icon" onClick={onClose} disabled={creating}>
             ✕
           </Button>
         </div>
@@ -87,84 +155,37 @@ export function CreateElectionModal({
           automatically when the start time is reached.
         </p>
 
-        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-          {/* Election Title */}
-          <div className="md:col-span-2">
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Election Title <span className="text-red-500">*</span>
-            </label>
-            <Input
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="e.g. CAS SC Elections 2025-2026"
-            />
-          </div>
-
-          {/* Academic Year */}
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Academic Year
-            </label>
-            <Input
-              value={newAcademicYear}
-              onChange={(e) => setNewAcademicYear(e.target.value)}
-              placeholder="2025-2026"
-            />
-          </div>
-
-          {/* Semester */}
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Semester
-            </label>
-            <select
-              className="w-full rounded border border-gray-300 px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#7A0019]/40"
-              value={newSemester}
-              onChange={(e) => setNewSemester(e.target.value)}
-            >
-              <option>First Semester</option>
-              <option>Second Semester</option>
-              <option>Summer</option>
-            </select>
-          </div>
-
-          {/* Start Date */}
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Start Date &amp; Time (Philippine Time){" "}
-              <span className="text-red-500">*</span>
-            </label>
-            <Input
-              type="datetime-local"
-              value={newStartDate}
-              onChange={(e) => setNewStartDate(e.target.value)}
-            />
-          </div>
-
-          {/* End Date */}
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              End Date &amp; Time (Philippine Time){" "}
-              <span className="text-red-500">*</span>
-            </label>
-            <Input
-              type="datetime-local"
-              value={newEndDate}
-              onChange={(e) => setNewEndDate(e.target.value)}
-            />
-          </div>
+        <div className="mt-4">
+          <ElectionSettingsForm
+            title={newTitle}
+            onTitleChange={setNewTitle}
+            academicYear={newAcademicYear}
+            onAcademicYearChange={setNewAcademicYear}
+            semester={newSemester}
+            onSemesterChange={setNewSemester}
+            durationRange={durationRange}
+            onDurationRangeChange={setDurationRange}
+            startTime={startTime}
+            onStartTimeChange={setStartTime}
+            endTime={endTime}
+            onEndTimeChange={setEndTime}
+            academicYearOptions={generatedAcademicYears}
+            disabled={creating}
+            showRequiredIndicators
+          />
         </div>
 
         <div className="mt-6 flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={creating}>
             Cancel
           </Button>
           <Button
             className="text-white"
             style={{ backgroundColor: "#7A0019" }}
             onClick={() => void handleCreate()}
+            disabled={creating}
           >
-            Create Election
+            {creating ? "Creating..." : "Create Election"}
           </Button>
         </div>
       </div>
