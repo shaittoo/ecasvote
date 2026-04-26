@@ -7,6 +7,12 @@ import bodyParser from 'body-parser';
 import crypto from 'crypto';
 import { getContract, getNetwork } from './fabricClient';
 import { prisma } from './prismaClient';
+import {
+  ensureCanonicalPositionsInPrisma,
+  registerCanonicalPositionsOnChainForElection,
+  resolveCanonicalPositionId,
+  STANDARD_CAS_SC_POSITIONS,
+} from './canonicalPositions';
 
 import multer from 'multer';
 import path from 'path';
@@ -859,13 +865,11 @@ app.get('/elections/:id', async (req, res) => {
 app.get('/elections/:id/positions', async (req, res) => {
   const { id } = req.params;
   try {
-    // Get positions from database
+    await ensureCanonicalPositionsInPrisma();
     const positions = await prisma.position.findMany({
-      where: { electionId: id },
       orderBy: { order: 'asc' },
     });
 
-    // Get candidates from database for each position
     const positionsWithCandidates = await Promise.all(
       positions.map(async (position) => {
         const candidates = await prisma.candidate.findMany({
@@ -1401,8 +1405,8 @@ app.post('/scanner/validate', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'TOKEN_USED' });
     }
 
+    await ensureCanonicalPositionsInPrisma();
     const positions = await prisma.position.findMany({
-      where: { electionId },
       orderBy: { order: 'asc' },
     });
     const mockSelections: Record<string, string> = {};
@@ -1670,33 +1674,68 @@ res.status(400).json({ error: err.message || 'GetCandidatesByPosition failed' })
   }
 });
 
+// 2b-seed) Seed standard CAS SC positions for a new election (blockchain + DB)
+app.post('/elections/:id/positions/seed', async (req, res) => {
+  const { id: electionId } = req.params;
+
+  try {
+    const contract = await getContract();
+    await ensureCanonicalPositionsInPrisma();
+    await registerCanonicalPositionsOnChainForElection(contract, electionId);
+    const seeded = STANDARD_CAS_SC_POSITIONS.map((p) => p.name);
+    res.json({ ok: true, seeded, count: seeded.length });
+  } catch (err: any) {
+    console.error('SeedPositions error:', err);
+    res.status(400).json({ error: err.message || 'SeedPositions failed' });
+  }
+});
+
 // 2c) Create/Add candidates to database and blockchain
 app.post('/elections/:id/candidates', async (req, res) => {
   const { id } = req.params;
-  const { candidates } = req.body; // Array of { positionName, name, party, yearLevel, program? }
+  const { candidates } = req.body; // Array of { positionName?, positionId?, name, party, yearLevel, program? }
 
   if (!Array.isArray(candidates) || candidates.length === 0) {return res.status(400).json({ error: 'candidates array is required' });
   }
 
   try {
-    // Get all positions to map position names to IDs
-    const positions = await prisma.position.findMany({
-      where: { electionId: id },
-    });
-    const positionMap = new Map<string, typeof positions[number]>(positions.map(p => [p.name, p]));
-
     const contract = await getContract();
+    await ensureCanonicalPositionsInPrisma();
+    try {
+      await registerCanonicalPositionsOnChainForElection(contract, id);
+    } catch (chainPosErr: any) {
+      console.warn(
+        '⚠️ Registering canonical positions on chain (non-fatal for DB save):',
+        chainPosErr?.message || chainPosErr
+      );
+    }
+
+    const positions = await prisma.position.findMany({
+      orderBy: { order: 'asc' },
+    });
+    const positionById = new Map(positions.map((p) => [p.id, p]));
+
     const createdCandidates: any[] = [];
+    let onChainRegistered = 0;
 
     for (const candidateData of candidates) {
-      const { positionName, name, party, yearLevel, program } = candidateData;
+      const { positionName, positionId, name, party, yearLevel, program } = candidateData;
 
-      if (!positionName || !name) {
-        continue; // Skip invalid candidates
+      if (!String(name || '').trim()) {
+        continue;
       }
 
-      const position = positionMap.get(positionName);
-      if (!position) {continue;
+      const canonicalId = resolveCanonicalPositionId({
+        positionName,
+        positionId,
+      });
+      if (!canonicalId) {
+        continue;
+      }
+
+      const position = positionById.get(canonicalId);
+      if (!position) {
+        continue;
       }
 
       // Generate candidate ID
@@ -1748,6 +1787,7 @@ app.post('/elections/:id/candidates', async (req, res) => {
               program || '',
               yearLevel || ''
             );
+            onChainRegistered += 1;
             console.log(`✅ Candidate ${candidateId} registered on blockchain`);
           } else {
             console.warn(`⚠️ Skipping blockchain registration: Election ${id} is ${election.status} (must be DRAFT)`);
@@ -1758,9 +1798,29 @@ app.post('/elections/:id/candidates', async (req, res) => {
         // Continue even if blockchain registration fails - candidate is in database
       }
 
-      createdCandidates.push(candidate);
+      createdCandidates.push({
+        ...candidate,
+        positionName: position.name,
+      });
     }
-    res.json({ ok: true, candidates: createdCandidates, count: createdCandidates.length });
+
+    if (candidates.length > 0 && createdCandidates.length === 0) {
+      const validList = STANDARD_CAS_SC_POSITIONS.map((p) => `${p.id} (${p.name})`).join(', ');
+      return res.status(400).json({
+        error:
+          'No candidates were saved. Send positionId (e.g. usc-councilor) and/or positionName matching a standard ballot title.',
+        validPositions: STANDARD_CAS_SC_POSITIONS.map((p) => p.name),
+        validPositionIds: STANDARD_CAS_SC_POSITIONS.map((p) => p.id),
+        hint: `Standard positions: ${validList}`,
+      });
+    }
+
+    res.json({
+      ok: true,
+      candidates: createdCandidates,
+      count: createdCandidates.length,
+      onChainRegistered,
+    });
   } catch (err: any) {
     console.error('CreateCandidates error:', err);
     res.status(400).json({ error: err.message || 'CreateCandidates failed' });
@@ -1912,7 +1972,6 @@ app.delete('/elections/:id', async (req, res) => {
       await tx.paperBallotIssuance.deleteMany({ where: { electionId: id } });
       await tx.paperAnonymousVote.deleteMany({ where: { electionId: id } });
       await tx.candidate.deleteMany({ where: { electionId: id } });
-      await tx.position.deleteMany({ where: { electionId: id } });
       await tx.ballot.deleteMany({ where: { electionId: id } });
       await tx.auditLog.deleteMany({ where: { electionId: id } });
       await (tx as typeof prisma).electionVoter.deleteMany({

@@ -288,7 +288,6 @@ export async function fetchDashboard(
 
 export interface Position {
   id: string;
-  electionId: string;
   name: string;
   maxVotes: number;
   order: number;
@@ -319,7 +318,10 @@ export async function fetchPositions(
 }
 
 export interface CreateCandidatePayload {
-  positionName: string;
+  /** Preferred: canonical id (e.g. usc-councilor). */
+  positionId?: string;
+  /** Optional display name; resolved with positionId via server mapping. */
+  positionName?: string;
   name: string;
   party?: string;
   yearLevel?: string;
@@ -336,9 +338,12 @@ export interface CreateCandidatesResponse {
     party?: string;
     program?: string;
     yearLevel?: string;
-    imageUrl?: string; 
+    imageUrl?: string;
+    positionName?: string;
   }>;
   count: number;
+  /** How many candidates were successfully submitted to RegisterCandidate (DRAFT only). */
+  onChainRegistered?: number;
 }
 
 export async function createCandidates(

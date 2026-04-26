@@ -84,11 +84,9 @@ async function main() {
         name: pos.name,
         maxVotes: pos.maxVotes,
         order: pos.order,
-        electionId: electionId,
       },
       create: {
         id: pos.id,
-        electionId: electionId,
         name: pos.name,
         maxVotes: pos.maxVotes,
         order: pos.order,

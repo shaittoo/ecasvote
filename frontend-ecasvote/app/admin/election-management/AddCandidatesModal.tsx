@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { CandidateDraft } from "./types";
+import { CANONICAL_BALLOT_POSITIONS } from "./canonicalBallotPositions";
 
 const DEGREE_PROGRAMS = [
   "BA in Communication and Media Studies",
@@ -24,7 +25,6 @@ const DEGREE_PROGRAMS = [
 type Props = {
   open: boolean;
   onClose: () => void;
-  ballotPositions: string[];
   drafts: CandidateDraft[];
   onAddRow: () => void;
   onRemoveRow: (index: number) => void;
@@ -36,7 +36,6 @@ type Props = {
 export function AddCandidatesModal({
   open,
   onClose,
-  ballotPositions,
   drafts,
   onAddRow,
   onRemoveRow,
@@ -145,25 +144,11 @@ export function AddCandidatesModal({
                     onChange={(e) => onUpdateDraft(idx, "position", e.target.value)}
                   >
                     <option value="">Select Position</option>
-                    {ballotPositions.length > 0 ? (
-                      ballotPositions.map((p, i) => (
-                        <option key={i} value={p}>
-                          {p}
-                        </option>
-                      ))
-                    ) : (
-                      <>
-                        <option>USC Councilor</option>
-                        <option>CAS Representative to the USC</option>
-                        <option>CAS Chairperson</option>
-                        <option>CAS Vice Chairperson</option>
-                        <option>CAS Councilor</option>
-                        <option>Clovers Governor</option>
-                        <option>Elektrons Governor</option>
-                        <option>Redbolts Governor</option>
-                        <option>Skimmers Governor</option>
-                      </>
-                    )}
+                    {CANONICAL_BALLOT_POSITIONS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
 

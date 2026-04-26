@@ -11,6 +11,29 @@ const body_parser_1 = __importDefault(require("body-parser"));
 const crypto_1 = __importDefault(require("crypto"));
 const fabricClient_1 = require("./fabricClient");
 const prismaClient_1 = require("./prismaClient");
+const canonicalPositions_1 = require("./canonicalPositions");
+const multer_1 = __importDefault(require("multer"));
+const path_1 = __importDefault(require("path"));
+const fs_1 = __importDefault(require("fs"));
+const UPLOADS_DIR = path_1.default.join(__dirname, '../uploads/candidates');
+fs_1.default.mkdirSync(UPLOADS_DIR, { recursive: true });
+const candidateImageStorage = multer_1.default.diskStorage({
+    destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+    filename: (_req, file, cb) => {
+        const ext = path_1.default.extname(file.originalname).toLowerCase();
+        cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+    },
+});
+const uploadCandidateImage = (0, multer_1.default)({
+    storage: candidateImageStorage,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+    fileFilter: (_req, file, cb) => {
+        if (file.mimetype.startsWith('image/'))
+            cb(null, true);
+        else
+            cb(new Error('Only image files are allowed'));
+    },
+});
 /** Unique paper ballot token (QR identifies ballot only — not vote data). */
 function generateBallotToken() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -188,6 +211,7 @@ app.use((req, res, next) => {
     next();
 });
 app.use(body_parser_1.default.json({ limit: '25mb' }));
+app.use('/uploads', express_1.default.static(path_1.default.join(__dirname, '../uploads')));
 // Simple health-check
 app.get('/health', (_req, res) => {
     res.json({ ok: true });
@@ -557,28 +581,7 @@ app.post('/init', async (req, res) => {
         // Sync to DB
         try {
             const electionBuffer = await contract.evaluateTransaction('GetElection', 'election-2025');
-            const raw = Buffer.isBuffer(electionBuffer)
-                ? electionBuffer.toString('utf8')
-                : new TextDecoder().decode(electionBuffer);
-            const jsonStr = raw.trim();
-            // Handle possible merged/duplicate response from multiple endorsers: take first valid JSON object
-            let election;
-            try {
-                election = JSON.parse(jsonStr);
-            }
-            catch {
-                const firstBrace = jsonStr.indexOf('{');
-                const lastBrace = jsonStr.lastIndexOf('}');
-                if (firstBrace !== -1 && lastBrace > firstBrace) {
-                    election = JSON.parse(jsonStr.slice(firstBrace, lastBrace + 1));
-                }
-                else {
-                    throw new Error('Invalid JSON from GetElection');
-                }
-            }
-            if (!election || election.id !== 'election-2025') {
-                throw new Error('GetElection did not return election-2025');
-            }
+            const election = JSON.parse(electionBuffer.toString());
             await prismaClient_1.prisma.election.upsert({
                 where: { id: election.id },
                 update: {
@@ -790,12 +793,10 @@ app.get('/elections/:id', async (req, res) => {
 app.get('/elections/:id/positions', async (req, res) => {
     const { id } = req.params;
     try {
-        // Get positions from database
+        await (0, canonicalPositions_1.ensureCanonicalPositionsInPrisma)();
         const positions = await prismaClient_1.prisma.position.findMany({
-            where: { electionId: id },
             orderBy: { order: 'asc' },
         });
-        // Get candidates from database for each position
         const positionsWithCandidates = await Promise.all(positions.map(async (position) => {
             const candidates = await prismaClient_1.prisma.candidate.findMany({
                 where: {
@@ -1251,8 +1252,8 @@ app.post('/scanner/validate', async (req, res) => {
         if (issuance.used) {
             return res.status(400).json({ ok: false, error: 'TOKEN_USED' });
         }
+        await (0, canonicalPositions_1.ensureCanonicalPositionsInPrisma)();
         const positions = await prismaClient_1.prisma.position.findMany({
-            where: { electionId },
             orderBy: { order: 'asc' },
         });
         const mockSelections = {};
@@ -1286,6 +1287,8 @@ app.post('/scanner/confirm-vote', async (req, res) => {
     const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v2');
     const ciphertextB64 = String(req.body?.ciphertextB64 ?? 'mock-encrypted-data');
     const selections = req.body?.selections;
+    const ballotStatus = String(req.body?.ballotStatus ?? 'VALID');
+    const ballotInvalidReasons = req.body?.ballotInvalidReasons ?? [];
     if (!electionId || !ballotToken || typeof selections !== 'object' || selections === null) {
         return res.status(400).json({
             error: 'electionId, ballotToken, and selections object are required',
@@ -1306,30 +1309,37 @@ app.post('/scanner/confirm-vote', async (req, res) => {
                 throw Object.assign(new Error('TEMPLATE_MISMATCH'), { code: 400 });
             }
             const castAt = new Date();
+            const isInvalid = ballotStatus === 'INVALID';
+            // Store the vote record — null selections for INVALID ballots
             await tx.paperAnonymousVote.create({
                 data: {
                     electionId,
                     ballotToken,
                     ciphertextB64,
-                    selectionsJson: selections,
+                    selectionsJson: isInvalid
+                        ? { _invalidated: true, reasons: ballotInvalidReasons }
+                        : selections,
                     templateVersion,
                     castAt,
                 },
             });
+            // Always mark token as used — voter can only vote once
             await tx.paperBallotIssuance.update({
                 where: { id: issuance.id },
                 data: { used: true, usedAt: castAt },
             });
+            // Always mark voter as having voted
             await tx.voter.update({
                 where: { id: issuance.voterId },
                 data: { hasVoted: true, votedAt: castAt },
             });
-            return { castAt: castAt.toISOString() };
+            return { castAt: castAt.toISOString(), invalidated: isInvalid };
         });
         res.json({
             ok: true,
             ballotToken,
-            ciphertextB64,
+            ballotStatus,
+            invalidated: result.invalidated,
             castAt: result.castAt,
             templateVersion,
         });
@@ -1485,27 +1495,56 @@ app.get('/elections/:id/positions/:positionId/candidates', async (req, res) => {
         res.status(400).json({ error: err.message || 'GetCandidatesByPosition failed' });
     }
 });
+// 2b-seed) Seed standard CAS SC positions for a new election (blockchain + DB)
+app.post('/elections/:id/positions/seed', async (req, res) => {
+    const { id: electionId } = req.params;
+    try {
+        const contract = await (0, fabricClient_1.getContract)();
+        await (0, canonicalPositions_1.ensureCanonicalPositionsInPrisma)();
+        await (0, canonicalPositions_1.registerCanonicalPositionsOnChainForElection)(contract, electionId);
+        const seeded = canonicalPositions_1.STANDARD_CAS_SC_POSITIONS.map((p) => p.name);
+        res.json({ ok: true, seeded, count: seeded.length });
+    }
+    catch (err) {
+        console.error('SeedPositions error:', err);
+        res.status(400).json({ error: err.message || 'SeedPositions failed' });
+    }
+});
 // 2c) Create/Add candidates to database and blockchain
 app.post('/elections/:id/candidates', async (req, res) => {
     const { id } = req.params;
-    const { candidates } = req.body; // Array of { positionName, name, party, yearLevel, program? }
+    const { candidates } = req.body; // Array of { positionName?, positionId?, name, party, yearLevel, program? }
     if (!Array.isArray(candidates) || candidates.length === 0) {
         return res.status(400).json({ error: 'candidates array is required' });
     }
     try {
-        // Get all positions to map position names to IDs
-        const positions = await prismaClient_1.prisma.position.findMany({
-            where: { electionId: id },
-        });
-        const positionMap = new Map(positions.map(p => [p.name, p]));
         const contract = await (0, fabricClient_1.getContract)();
+        await (0, canonicalPositions_1.ensureCanonicalPositionsInPrisma)();
+        try {
+            await (0, canonicalPositions_1.registerCanonicalPositionsOnChainForElection)(contract, id);
+        }
+        catch (chainPosErr) {
+            console.warn('⚠️ Registering canonical positions on chain (non-fatal for DB save):', chainPosErr?.message || chainPosErr);
+        }
+        const positions = await prismaClient_1.prisma.position.findMany({
+            orderBy: { order: 'asc' },
+        });
+        const positionById = new Map(positions.map((p) => [p.id, p]));
         const createdCandidates = [];
+        let onChainRegistered = 0;
         for (const candidateData of candidates) {
-            const { positionName, name, party, yearLevel, program } = candidateData;
-            if (!positionName || !name) {
-                continue; // Skip invalid candidates
+            const { positionName, positionId, name, party, yearLevel, program } = candidateData;
+            if (!String(name || '').trim()) {
+                continue;
             }
-            const position = positionMap.get(positionName);
+            const canonicalId = (0, canonicalPositions_1.resolveCanonicalPositionId)({
+                positionName,
+                positionId,
+            });
+            if (!canonicalId) {
+                continue;
+            }
+            const position = positionById.get(canonicalId);
             if (!position) {
                 continue;
             }
@@ -1547,6 +1586,7 @@ app.post('/elections/:id/candidates', async (req, res) => {
                     const election = JSON.parse(electionText);
                     if (election.status === 'DRAFT') {
                         await contract.submitTransaction('RegisterCandidate', id, position.id, candidateId, name, party || 'Independent', program || '', yearLevel || '');
+                        onChainRegistered += 1;
                         console.log(`✅ Candidate ${candidateId} registered on blockchain`);
                     }
                     else {
@@ -1558,13 +1598,49 @@ app.post('/elections/:id/candidates', async (req, res) => {
                 console.warn(`⚠️ Failed to register candidate ${candidateId} on blockchain:`, blockchainErr.message);
                 // Continue even if blockchain registration fails - candidate is in database
             }
-            createdCandidates.push(candidate);
+            createdCandidates.push({
+                ...candidate,
+                positionName: position.name,
+            });
         }
-        res.json({ ok: true, candidates: createdCandidates, count: createdCandidates.length });
+        if (candidates.length > 0 && createdCandidates.length === 0) {
+            const validList = canonicalPositions_1.STANDARD_CAS_SC_POSITIONS.map((p) => `${p.id} (${p.name})`).join(', ');
+            return res.status(400).json({
+                error: 'No candidates were saved. Send positionId (e.g. usc-councilor) and/or positionName matching a standard ballot title.',
+                validPositions: canonicalPositions_1.STANDARD_CAS_SC_POSITIONS.map((p) => p.name),
+                validPositionIds: canonicalPositions_1.STANDARD_CAS_SC_POSITIONS.map((p) => p.id),
+                hint: `Standard positions: ${validList}`,
+            });
+        }
+        res.json({
+            ok: true,
+            candidates: createdCandidates,
+            count: createdCandidates.length,
+            onChainRegistered,
+        });
     }
     catch (err) {
         console.error('CreateCandidates error:', err);
         res.status(400).json({ error: err.message || 'CreateCandidates failed' });
+    }
+});
+// Upload candidate image
+app.post('/elections/:id/candidates/:candidateId/image', uploadCandidateImage.single('image'), async (req, res) => {
+    const { candidateId } = req.params;
+    if (!req.file) {
+        return res.status(400).json({ error: 'No image file uploaded' });
+    }
+    const imageUrl = `/uploads/candidates/${req.file.filename}`;
+    try {
+        await prismaClient_1.prisma.candidate.update({
+            where: { id: candidateId },
+            data: { imageUrl },
+        });
+        res.json({ ok: true, imageUrl });
+    }
+    catch (err) {
+        console.error('UploadCandidateImage error:', err);
+        res.status(400).json({ error: err.message || 'Failed to update candidate image' });
     }
 });
 // 2.5) Update election (update name, description, dates)
@@ -1663,7 +1739,6 @@ app.delete('/elections/:id', async (req, res) => {
             await tx.paperBallotIssuance.deleteMany({ where: { electionId: id } });
             await tx.paperAnonymousVote.deleteMany({ where: { electionId: id } });
             await tx.candidate.deleteMany({ where: { electionId: id } });
-            await tx.position.deleteMany({ where: { electionId: id } });
             await tx.ballot.deleteMany({ where: { electionId: id } });
             await tx.auditLog.deleteMany({ where: { electionId: id } });
             await tx.electionVoter.deleteMany({
@@ -2144,7 +2219,7 @@ async function computeElectionTurnout(electionId) {
         })
         : [];
     const votedPaper = new Set(paperVoterRows.map((v) => v.studentNumber));
-    const votedInElection = new Set([...votedDigital, ...votedPaper]);
+    const votedInElection = new Set([...votedDigital, ...votedPaper].filter((s) => typeof s === 'string'));
     const eligibleNumbers = new Set(allVoters.map((v) => v.studentNumber));
     const votedCount = [...votedInElection].filter((sn) => eligibleNumbers.has(sn)).length;
     const totalVoters = allVoters.length;

@@ -15,6 +15,7 @@ import {
 import type { Position } from "@/lib/ecasvoteApi";
 import { notify } from "@/lib/notify";
 import { AddCandidatesModal } from "./AddCandidatesModal";
+import { CANONICAL_BALLOT_POSITIONS } from "./canonicalBallotPositions";
 import type { CandidateDraft, CandidateRow } from "./types";
 
 const emptyDraft = (): CandidateDraft => ({
@@ -34,7 +35,6 @@ type Props = {
 };
 
 export function CandidateManagementPanel({ electionId, electionTitle, locked = false }: Props) {
-  const [ballotPositions, setBallotPositions] = useState<string[]>([]);
   const [candidates, setCandidates] = useState<CandidateRow[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [drafts, setDrafts] = useState<CandidateDraft[]>([emptyDraft()]);
@@ -43,7 +43,6 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
     try {
       const positionsData = await fetchPositions(eid).catch(() => []);
       if (positionsData?.length) {
-        setBallotPositions(positionsData.map((p: Position) => p.name));
         const rows: CandidateRow[] = [];
         positionsData.forEach((position: Position) => {
           position.candidates?.forEach((candidate) => {
@@ -58,7 +57,6 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
         });
         setCandidates(rows);
       } else {
-        setBallotPositions([]);
         setCandidates([]);
       }
     } catch (err) {
@@ -95,44 +93,80 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
       (c) => c.name.trim() !== "" && c.position.trim() !== ""
     );
     if (toAdd.length === 0) {
-      setShowAddModal(false);
-      setDrafts([emptyDraft()]);
+      notify.warning({
+        title: "Nothing to save",
+        description: "Enter a full name and choose a position for at least one row.",
+      });
       return;
     }
     try {
-      const candidatesToSave = toAdd.map((c) => ({
-        positionName: c.position,
-        name: c.name,
-        party: c.party || undefined,
-        program: c.program || undefined,
-        yearLevel: c.yearLevel || undefined,
-      }));
+      const candidatesToSave = toAdd.map((c) => {
+        const pid = c.position.trim();
+        const label = CANONICAL_BALLOT_POSITIONS.find((p) => p.id === pid)?.name;
+        return {
+          positionId: pid || undefined,
+          positionName: label,
+          name: c.name.trim(),
+          party: c.party?.trim() || undefined,
+          program: c.program?.trim() || undefined,
+          yearLevel: c.yearLevel?.trim() || undefined,
+        };
+      });
       const response = await createCandidates(electionId, candidatesToSave);
 
-      // Upload images for candidates that have one
-      if (response.candidates && response.candidates.length > 0) {
-        for (let i = 0; i < toAdd.length; i++) {
-          const draft = toAdd[i];
-          const saved = response.candidates[i];
-          if (draft.imageFile && saved?.id) {
-            try {
-              const form = new FormData();
-              form.append("image", draft.imageFile);
-              await fetch(
-                `${getGatewayBase()}/elections/${electionId}/candidates/${saved.id}/image`,
-                { method: "POST", body: form }
-              );
-            } catch (imgErr) {
-              console.warn(`Failed to upload image for candidate ${saved.id}:`, imgErr);
-              // Non-fatal: candidate is saved, image just won't show
-            }
-          }
+      const savedList = response.candidates ?? [];
+      const savedCount = savedList.length;
+      const onChain = response.onChainRegistered ?? 0;
+
+      if (savedCount === 0) {
+        notify.error({
+          title: "No candidates were saved",
+          description:
+            "Pick a standard position from the list and ensure the name field is filled. If this persists, use Create Election (position seed) or check gateway logs.",
+        });
+        await loadPositionsForElection(electionId);
+        return;
+      }
+
+      // Match image uploads to saved rows by name + position (response order may differ)
+      const hasMeta = savedList.some((c) => !!c.positionId || !!c.positionName?.trim());
+      for (let i = 0; i < toAdd.length; i++) {
+        const draft = toAdd[i];
+        if (!draft.imageFile) continue;
+        const saved = hasMeta
+          ? savedList.find(
+              (c) =>
+                c.name.trim() === draft.name.trim() &&
+                (c.positionId === draft.position.trim() ||
+                  c.positionName?.trim() ===
+                    CANONICAL_BALLOT_POSITIONS.find((p) => p.id === draft.position.trim())?.name)
+            )
+          : savedCount === toAdd.length
+            ? savedList[i]
+            : undefined;
+        if (!saved?.id) continue;
+        try {
+          const form = new FormData();
+          form.append("image", draft.imageFile);
+          await fetch(
+            `${getGatewayBase()}/elections/${electionId}/candidates/${saved.id}/image`,
+            { method: "POST", body: form }
+          );
+        } catch (imgErr) {
+          console.warn(`Failed to upload image for candidate ${saved.id}:`, imgErr);
         }
       }
 
       await loadPositionsForElection(electionId);
       setShowAddModal(false);
       setDrafts([emptyDraft()]);
+
+      const chainLine =
+        onChain > 0
+          ? `${onChain} of ${savedCount} also registered on the blockchain (while election is DRAFT).`
+          : savedCount > 0
+            ? "Ledger: not updated (only DRAFT elections register candidates on-chain, or the Fabric step failed — see gateway logs). Database save completed."
+            : "";
 
       try {
         const electionData = await fetchElection(electionId);
@@ -141,23 +175,35 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
           (electionData.status === "OPEN" || electionData.status === "CLOSED")
         ) {
           notify.success({
-            title: `Successfully added ${response.count} candidate(s) to database!`,
-            description: `Candidates were saved to the database. Election is ${electionData.status}.`,
+            title: `Successfully added ${savedCount} candidate(s)`,
+            description: `Saved to the database. Election is ${electionData.status}. ${chainLine}`.trim(),
           });
         } else {
           notify.success({
-            title: `Successfully added ${response.count} candidate(s)!`,
+            title: `Successfully added ${savedCount} candidate(s)`,
+            description: `Saved to the database. ${chainLine}`.trim(),
           });
         }
       } catch {
         notify.success({
-          title: `Successfully added ${response.count} candidate(s)!`,
+          title: `Successfully added ${savedCount} candidate(s)`,
+          description: `Saved to the database. ${chainLine}`.trim(),
         });
       }
     } catch (err: unknown) {
+      const raw = err instanceof Error ? err.message : "Unknown error";
+      let description = raw;
+      try {
+        const parsed = JSON.parse(raw) as { error?: string; hint?: string };
+        if (parsed?.error) {
+          description = parsed.hint ? `${parsed.error} ${parsed.hint}` : parsed.error;
+        }
+      } catch {
+        /* plain text */
+      }
       notify.error({
         title: "Failed to save candidates",
-        description: err instanceof Error ? err.message : "Unknown error",
+        description,
       });
     }
   };
@@ -166,7 +212,6 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
     try {
       const positionsData = await fetchPositions(electionId);
       if (positionsData?.length) {
-        setBallotPositions(positionsData.map((p: Position) => p.name));
         const rows: CandidateRow[] = [];
         positionsData.forEach((position: Position) => {
           position.candidates?.forEach((candidate) => {
@@ -185,7 +230,6 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
           description: "Latest candidates loaded from the database.",
         });
       } else {
-        setBallotPositions([]);
         setCandidates([]);
         notify.info({
           title: "Candidates refreshed",
@@ -356,7 +400,6 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
           setShowAddModal(false);
           setDrafts([emptyDraft()]);
         }}
-        ballotPositions={ballotPositions}
         drafts={drafts}
         onAddRow={addDraftRow}
         onRemoveRow={removeDraftRow}

@@ -51,14 +51,17 @@ model Election {
   createdAt   DateTime        @default(now())
   /** Which registered voters may participate in this election (roster is per election). */
   electionVoters ElectionVoter[]
+  candidates      Candidate[]
 }
 
+/** Global standard ballot positions (shared by all elections). IDs match chaincode (e.g. usc-councilor). */
 model Position {
-  id         String @id
-  electionId String
-  name       String
-  maxVotes   Int
-  order      Int
+  id        String @id
+  name      String
+  maxVotes  Int
+  order     Int
+
+  candidates Candidate[]
 }
 
 model Candidate {
@@ -70,6 +73,12 @@ model Candidate {
   program    String?
   yearLevel  String?
   imageUrl   String?
+
+  election Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  position Position @relation(fields: [positionId], references: [id], onDelete: Restrict)
+
+  @@index([electionId])
+  @@index([positionId])
 }
 
 model Voter {

@@ -1,13 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { createElection as createElectionApi } from "@/lib/ecasvoteApi";
+import { Input } from "@/components/ui/input";
+import { createElection as createElectionApi, getGatewayBase } from "@/lib/ecasvoteApi";
 import { notify } from "@/lib/notify";
-import { format } from "date-fns";
-import type { DateRange } from "react-day-picker";
-import { ElectionSettingsForm } from "./ElectionSettingsForm";
-import { validateElectionForm } from "./electionFormValidation";
 
 type Props = {
   open: boolean;
@@ -22,22 +18,11 @@ type Props = {
   setNewStartDate: (v: string) => void;
   newEndDate: string;
   setNewEndDate: (v: string) => void;
-  // newStatus removed — elections always start as DRAFT
-  /** Called after successful create with the new election id. */
+  newStatus: string;
+  setNewStatus: (v: string) => void;
+  /** Called after successful create with the new election id (e.g. navigate to edit). */
   onCreated?: (electionId: string) => void;
 };
-
-function formatAcademicYear(startYear: number): string {
-  return `${startYear} - ${startYear + 1}`;
-}
-
-function parseDateTimeLocal(value: string): { date: string; time: string } {
-  if (!value) return { date: "", time: "" };
-  return {
-    date: value.slice(0, 10),
-    time: value.slice(11, 16),
-  };
-}
 
 export function CreateElectionModal({
   open,
@@ -52,140 +37,158 @@ export function CreateElectionModal({
   setNewStartDate,
   newEndDate,
   setNewEndDate,
+  newStatus,
+  setNewStatus,
   onCreated,
 }: Props) {
-  const currentYear = new Date().getFullYear();
-  const generatedAcademicYears = useMemo(
-    () => Array.from({ length: 8 }, (_, index) => formatAcademicYear(currentYear - 1 + index)),
-    [currentYear]
-  );
-  const [durationRange, setDurationRange] = useState<DateRange | undefined>();
-  const [startTime, setStartTime] = useState("08:00");
-  const [endTime, setEndTime] = useState("17:00");
-  const [creating, setCreating] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    const startParsed = parseDateTimeLocal(newStartDate);
-    const endParsed = parseDateTimeLocal(newEndDate);
-    setDurationRange({
-      from: startParsed.date ? new Date(`${startParsed.date}T00:00:00`) : undefined,
-      to: endParsed.date ? new Date(`${endParsed.date}T00:00:00`) : undefined,
-    });
-    setStartTime(startParsed.time || "08:00");
-    setEndTime(endParsed.time || "17:00");
-  }, [newEndDate, newStartDate, open]);
-
   if (!open) return null;
-
-  const handleCreate = async () => {
-    if (creating) return;
-
-    const validation = validateElectionForm({
-      title: newTitle,
-      academicYear: newAcademicYear,
-      semester: newSemester,
-      durationRange,
-      startTime,
-      endTime,
-      mode: "create",
-    });
-    if (!validation.ok) {
-      notify.error({
-        title: validation.title,
-        description: validation.description,
-      });
-      return;
-    }
-
-    try {
-      setCreating(true);
-      const selectedRange = durationRange;
-      if (!selectedRange?.from || !selectedRange?.to) {
-        notify.error({
-          title: "Missing fields",
-          description: "Title, election date range, and start/end times are required.",
-        });
-        return;
-      }
-      const startDatePart = format(selectedRange.from, "yyyy-MM-dd");
-      const endDatePart = format(selectedRange.to, "yyyy-MM-dd");
-      setNewStartDate(`${startDatePart}T${startTime}`);
-      setNewEndDate(`${endDatePart}T${endTime}`);
-      const result = await createElectionApi({
-        electionId: crypto.randomUUID(),
-        name: newTitle,
-        description: `${newAcademicYear} - ${newSemester}`,
-        startTime: validation.startTimeIso,
-        endTime: validation.endTimeIso,
-      });
-      notify.success({ title: "Election created!" });
-      onClose();
-      if (result?.id) onCreated?.(result.id);
-    } catch (err: unknown) {
-      notify.error({
-        title: "Failed to create election",
-        description: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setCreating(false);
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div
-        className="absolute inset-0 bg-black/50"
-        onClick={() => {
-          if (!creating) onClose();
-        }}
-      />
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative mx-4 w-full max-w-2xl rounded-lg bg-white p-6">
         <div className="flex items-start justify-between">
           <h3 className="text-2xl font-semibold text-[#7A0019]">
             Create New Election
           </h3>
-          <Button variant="ghost" size="icon" onClick={onClose} disabled={creating}>
+          <Button variant="ghost" size="icon" onClick={onClose}>
             ✕
           </Button>
         </div>
-
-        <p className="mt-1 text-sm text-gray-500">
-          New elections start as <span className="font-medium">DRAFT</span> and open
-          automatically when the start time is reached.
-        </p>
-
-        <div className="mt-4">
-          <ElectionSettingsForm
-            title={newTitle}
-            onTitleChange={setNewTitle}
-            academicYear={newAcademicYear}
-            onAcademicYearChange={setNewAcademicYear}
-            semester={newSemester}
-            onSemesterChange={setNewSemester}
-            durationRange={durationRange}
-            onDurationRangeChange={setDurationRange}
-            startTime={startTime}
-            onStartTimeChange={setStartTime}
-            endTime={endTime}
-            onEndTimeChange={setEndTime}
-            academicYearOptions={generatedAcademicYears}
-            disabled={creating}
-            showRequiredIndicators
-          />
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Election Title
+            </label>
+            <Input
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              placeholder="Election Title"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Academic Year
+            </label>
+            <Input
+              value={newAcademicYear}
+              onChange={(e) => setNewAcademicYear(e.target.value)}
+              placeholder="2025-2026"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Semester
+            </label>
+            <select
+              className="w-full rounded border border-gray-300 px-2 py-2 text-sm"
+              value={newSemester}
+              onChange={(e) => setNewSemester(e.target.value)}
+            >
+              <option>First Semester</option>
+              <option>Second Semester</option>
+              <option>Summer</option>
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Start Date &amp; Time (Philippine Time)
+            </label>
+            <Input
+              type="datetime-local"
+              value={newStartDate}
+              onChange={(e) => setNewStartDate(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              End Date &amp; Time (Philippine Time)
+            </label>
+            <Input
+              type="datetime-local"
+              value={newEndDate}
+              onChange={(e) => setNewEndDate(e.target.value)}
+            />
+          </div>
         </div>
-
         <div className="mt-6 flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose} disabled={creating}>
+          <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button
             className="text-white"
             style={{ backgroundColor: "#7A0019" }}
-            onClick={() => void handleCreate()}
-            disabled={creating}
+            onClick={async () => {
+              const title = newTitle.trim();
+              if (!title || !newStartDate || !newEndDate) {
+                notify.error({
+                  title: "Missing fields",
+                  description: "Title, start date, and end date are required.",
+                });
+                return;
+              }
+              const electionId = `election-${new Date().getFullYear()}-${Date.now()}`;
+              try {
+                // Step 1: Create election on blockchain + DB
+                await createElectionApi({
+                  electionId,
+                  name: title,
+                  description: `${newAcademicYear} ${newSemester}`,
+                  startTime: new Date(newStartDate).toISOString(),
+                  endTime: new Date(newEndDate).toISOString(),
+                  createdBy: "admin",
+                });
+
+                // Step 2: Seed the 9 standard CAS SC positions on blockchain + DB
+                try {
+                  const seedRes = await fetch(
+                    `${getGatewayBase()}/elections/${electionId}/positions/seed`,
+                    { method: "POST" }
+                  );
+                  if (!seedRes.ok) {
+                    const err = await seedRes.text();
+                    console.warn("Positions seed failed (non-fatal):", err);
+                    notify.error({
+                      title: "Election created but positions failed",
+                      description:
+                        "The election was created but positions could not be seeded. Check gateway logs.",
+                    });
+                  } else {
+                    notify.success({
+                      title: "Election created",
+                      description:
+                        "Election and all 9 positions added to blockchain and database.",
+                    });
+                  }
+                } catch (seedErr) {
+                  console.warn("Positions seed error (non-fatal):", seedErr);
+                  notify.error({
+                    title: "Election created but positions failed",
+                    description:
+                      "The election was created but positions could not be seeded. Check gateway logs.",
+                  });
+                }
+
+                onCreated?.(electionId);
+                onClose();
+                setNewTitle("");
+                setNewAcademicYear("2025-2026");
+                setNewSemester("First Semester");
+                setNewStartDate("");
+                setNewEndDate("");
+                setNewStatus("Draft");
+              } catch (err: unknown) {
+                notify.error({
+                  title: "Failed to create election",
+                  description:
+                    err instanceof Error
+                      ? err.message
+                      : "Check gateway and blockchain.",
+                });
+              }
+            }}
           >
-            {creating ? "Creating..." : "Create Election"}
+            Create Election
           </Button>
         </div>
       </div>
