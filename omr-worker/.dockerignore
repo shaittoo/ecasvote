@@ -3,3 +3,7 @@ __pycache__
 *.pyc
 .git
 *.md
+.venv/
+.env
+__pycache__/
+*.pyc
