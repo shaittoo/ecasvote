@@ -2131,16 +2131,14 @@ def _filter_layout_contests_for_academic_org(layout: dict[str, Any], academic_or
 
 
 def _verify_layout_hash(stored_hash: str, qr_hash: str) -> bool:
-    """
-    Compare the hash stored in the gateway against the hash from the QR payload.
-    Both are sha256 hex strings (with or without 'sha256:' prefix).
-    Returns True if either value is missing (hash is advisory, not blocking when absent).
-    """
     if not stored_hash or not qr_hash:
         return True
     def _strip(h: str) -> str:
         return h.replace("sha256:", "").strip().lower()
-    return True  # hash check disabled for calibration
+    # TODO: re-enable hash comparison once layout hash generation is stable end-to-end.
+    # Both values are present but the check is skipped during calibration.
+    # When ready: return _strip(stored_hash) == _strip(qr_hash)
+    return True
 
 
 def _score_bubbles_from_saved_layout(
