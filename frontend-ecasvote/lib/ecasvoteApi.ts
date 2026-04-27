@@ -300,6 +300,7 @@ export interface Position {
     party?: string;
     program?: string;
     yearLevel?: string;
+    imageUrl?: string; 
   }>;
 }
 
@@ -335,6 +336,7 @@ export interface CreateCandidatesResponse {
     party?: string;
     program?: string;
     yearLevel?: string;
+    imageUrl?: string; 
   }>;
   count: number;
 }
@@ -939,6 +941,8 @@ export type OmrLayoutRecord = {
   layoutHash: string;
   layout: unknown;
   academicOrg?: string;
+  /** How `academicOrg` was resolved: issuance row, or preview `*-BV-{studentNumber}` token + roster. */
+  academicOrgSource?: "issuance" | "preview-bv" | "none";
   allowedContestIds?: string[];
 };
 
@@ -977,4 +981,36 @@ export async function fetchHourlyParticipation(
     throw new Error(text || `hourly participation failed (${res.status})`);
   }
   return res.json();
+}
+
+/** POST /scanner/confirm-vote — submit a scanned paper ballot vote */
+export async function confirmPaperVote(params: {
+  electionId: string;
+  ballotToken: string;
+  templateVersion?: string;
+  selections: Record<string, string[]>;
+  ballotStatus?: "VALID" | "INVALID";
+  ballotInvalidReasons?: Array<Record<string, unknown>>;
+}): Promise<{ ok: boolean; ballotToken: string; castAt: string; invalidated?: boolean }> {
+  const selectionsFlat: Record<string, string> = {};
+  for (const [pid, picks] of Object.entries(params.selections)) {
+    selectionsFlat[pid] = picks.join(",");
+  }
+  const res = await fetch(`${getGatewayBase()}/scanner/confirm-vote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      electionId: params.electionId,
+      ballotToken: params.ballotToken,
+      templateVersion: params.templateVersion ?? "ballot-template-v2",
+      selections: selectionsFlat,
+      ballotStatus: params.ballotStatus ?? "VALID",
+      ballotInvalidReasons: params.ballotInvalidReasons ?? [],
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error ?? `confirm-vote failed (${res.status})`);
+  }
+  return data;
 }

@@ -51,6 +51,130 @@ function isTemplateVersionCompatible(issuedTemplateVersion, scannedTemplateVersi
     const v2 = 'ballot-template-v2';
     return (issued === v1 && scanned === v2) || (issued === v2 && scanned === v1);
 }
+/**
+ * OMR GET /api/omr-layout contest filtering — keep in sync with
+ * frontend-ecasvote/lib/ballot/filterPositionsByDepartment.ts
+ */
+function departmentSlugFromAcademicOrg(department) {
+    const raw = department
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+    const aliases = {
+        'red-bolts': 'redbolts',
+        redbolts: 'redbolts',
+        skimmers: 'skimmers',
+        clovers: 'clovers',
+        clo: 'clovers',
+        elektrons: 'elektrons',
+        elecktrons: 'elektrons',
+    };
+    return aliases[raw] ?? raw;
+}
+/** Longer prefixes first so `clo` does not match `clovers-*`. */
+const ACADEMIC_ORG_PREFIXES = [
+    ['clovers', 'clovers'],
+    ['elektrons', 'elektrons'],
+    ['redbolts', 'redbolts'],
+    ['skimmers', 'skimmers'],
+    ['clo', 'clovers'],
+];
+function orgSlugOwningAcademicOrgPosition(positionId) {
+    const id = positionId.trim().toLowerCase();
+    for (const [prefix, org] of ACADEMIC_ORG_PREFIXES) {
+        const gov = `${prefix}-governor`;
+        if (id === gov || id.startsWith(`${prefix}-`)) {
+            return org;
+        }
+    }
+    return null;
+}
+function isVoterOrgGovernorPositionId(id, voterSlug) {
+    if (id === `${voterSlug}-governor`)
+        return true;
+    if (voterSlug === 'clovers' && id === 'clo-governor')
+        return true;
+    return false;
+}
+function isContestAllowedForDepartment(positionId, deptSlug) {
+    if (!deptSlug)
+        return true;
+    const id = positionId.trim().toLowerCase();
+    const head = id.split('-')[0] ?? '';
+    if (head === 'usc' || head === 'cas')
+        return true;
+    const owner = orgSlugOwningAcademicOrgPosition(id);
+    if (owner == null)
+        return true;
+    if (owner !== deptSlug)
+        return false;
+    return isVoterOrgGovernorPositionId(id, deptSlug);
+}
+function positionIdFromLayoutContest(c) {
+    if (!c || typeof c !== 'object' || Array.isArray(c))
+        return '';
+    const o = c;
+    return String(o.positionId ?? o.id ?? '').trim();
+}
+/** Match sanitization in frontend `buildVoterPreviewBallotToken` (election segment in id). */
+function normalizeElectionKeyForPreviewToken(s) {
+    return s
+        .replace(/[^a-zA-Z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .toLowerCase();
+}
+/**
+ * `academicOrg` from PaperBallotIssuance → Voter, or — when there is no issuance row yet —
+ * from a deterministic preview ballot id `{sanitizedElection}-BV-{sanitizedStudentNumber}`.
+ */
+async function resolveOmrLayoutAcademicOrg(ballotId, recordElectionId) {
+    const issuance = await prismaClient_1.prisma.paperBallotIssuance.findFirst({
+        where: { ballotToken: ballotId },
+        include: { voter: true },
+    });
+    const fromIssuance = String(issuance?.voter?.department ?? '').trim();
+    if (fromIssuance) {
+        return { academicOrg: fromIssuance, academicOrgSource: 'issuance' };
+    }
+    const id = ballotId.trim();
+    const marker = '-BV-';
+    const p = id.toUpperCase().indexOf(marker.toUpperCase());
+    if (p < 0) {
+        return { academicOrg: '', academicOrgSource: 'none' };
+    }
+    const prefix = id.slice(0, p);
+    const studentTail = id.slice(p + marker.length).trim();
+    if (!studentTail) {
+        return { academicOrg: '', academicOrgSource: 'none' };
+    }
+    if (normalizeElectionKeyForPreviewToken(prefix) !==
+        normalizeElectionKeyForPreviewToken(recordElectionId)) {
+        return { academicOrg: '', academicOrgSource: 'none' };
+    }
+    const snVariants = [
+        ...new Set([studentTail, studentTail.toUpperCase(), studentTail.toLowerCase()]),
+    ];
+    const voter = await prismaClient_1.prisma.voter.findFirst({
+        where: { OR: snVariants.map((studentNumber) => ({ studentNumber })) },
+    });
+    if (!voter) {
+        return { academicOrg: '', academicOrgSource: 'none' };
+    }
+    const onRoster = await prismaClient_1.prisma.electionVoter.findUnique({
+        where: {
+            electionId_voterId: { electionId: recordElectionId, voterId: voter.id },
+        },
+    });
+    if (!onRoster) {
+        return { academicOrg: '', academicOrgSource: 'none' };
+    }
+    const d = String(voter.department ?? '').trim();
+    return {
+        academicOrg: d,
+        academicOrgSource: d ? 'preview-bv' : 'none',
+    };
+}
 const app = (0, express_1.default)();
 // Enable CORS for all routes
 app.use((req, res, next) => {
@@ -433,7 +557,28 @@ app.post('/init', async (req, res) => {
         // Sync to DB
         try {
             const electionBuffer = await contract.evaluateTransaction('GetElection', 'election-2025');
-            const election = JSON.parse(electionBuffer.toString());
+            const raw = Buffer.isBuffer(electionBuffer)
+                ? electionBuffer.toString('utf8')
+                : new TextDecoder().decode(electionBuffer);
+            const jsonStr = raw.trim();
+            // Handle possible merged/duplicate response from multiple endorsers: take first valid JSON object
+            let election;
+            try {
+                election = JSON.parse(jsonStr);
+            }
+            catch {
+                const firstBrace = jsonStr.indexOf('{');
+                const lastBrace = jsonStr.lastIndexOf('}');
+                if (firstBrace !== -1 && lastBrace > firstBrace) {
+                    election = JSON.parse(jsonStr.slice(firstBrace, lastBrace + 1));
+                }
+                else {
+                    throw new Error('Invalid JSON from GetElection');
+                }
+            }
+            if (!election || election.id !== 'election-2025') {
+                throw new Error('GetElection did not return election-2025');
+            }
             await prismaClient_1.prisma.election.upsert({
                 where: { id: election.id },
                 update: {
@@ -1095,6 +1240,7 @@ app.post('/scanner/validate', async (req, res) => {
     try {
         const issuance = await prismaClient_1.prisma.paperBallotIssuance.findFirst({
             where: { electionId, ballotToken },
+            include: { voter: true },
         });
         if (!issuance) {
             return res.status(404).json({ ok: false, error: 'UNKNOWN_TOKEN' });
@@ -1123,6 +1269,8 @@ app.post('/scanner/validate', async (req, res) => {
             electionId,
             ballotToken,
             templateVersion: issuance.templateVersion,
+            /** Academic org on the voter roster — same field used for ballot print `?department=` / governor row. */
+            voterDepartment: String(issuance.voter?.department ?? '').trim(),
             mockSelections,
         });
     }
@@ -1203,25 +1351,40 @@ app.post('/scanner/confirm-vote', async (req, res) => {
  * Store measured bubble geometry for a ballot.  Called by the print page when
  * onGeometryTemplateReady fires (after DOM layout).  Uses UPSERT so re-prints
  * of the same ballotId always have the latest measured positions.
- * Body: { ballotId, electionId, templateId, templateVersion, layout, layoutHash }
+ * Body: { ballotId, electionId, templateVersion, layout, templateId?, layoutHash? }
+ * — templateId defaults to layout.templateId; layoutHash defaults to sha256(layout JSON).
  */
 app.post('/api/omr-layout', async (req, res) => {
     const ballotId = String(req.body?.ballotId ?? '').trim();
     const electionId = String(req.body?.electionId ?? '').trim();
-    const templateId = String(req.body?.templateId ?? '').trim();
+    let templateId = String(req.body?.templateId ?? '').trim();
     const templateVersion = String(req.body?.templateVersion ?? '').trim();
     const layout = req.body?.layout;
-    const layoutHash = String(req.body?.layoutHash ?? '').trim();
-    if (!ballotId || !electionId || !templateId || !templateVersion || !layout || !layoutHash) {
+    let layoutHash = String(req.body?.layoutHash ?? '').trim();
+    if (!ballotId || !electionId || !templateVersion || !layout) {
         return res.status(400).json({
-            error: 'ballotId, electionId, templateId, templateVersion, layout, and layoutHash are required',
+            error: 'ballotId, electionId, templateVersion, and layout are required',
         });
     }
     if (typeof layout !== 'object' || Array.isArray(layout)) {
         return res.status(400).json({ error: 'layout must be an object (OmGeometryTemplate)' });
     }
+    if (!templateId) {
+        const tid = layout.templateId;
+        if (typeof tid === 'string' && tid.trim())
+            templateId = tid.trim();
+    }
+    if (!templateId) {
+        return res.status(400).json({
+            error: 'templateId must be sent in the body or present on layout.templateId',
+        });
+    }
     try {
         const layoutJson = JSON.stringify(layout);
+        if (!layoutHash) {
+            const hex = crypto_1.default.createHash('sha256').update(layoutJson, 'utf8').digest('hex');
+            layoutHash = `sha256:${hex}`;
+        }
         await prismaClient_1.prisma.ballotLayout.upsert({
             where: { ballotId },
             update: { electionId, templateId, templateVersion, layoutJson, layoutHash },
@@ -1253,13 +1416,51 @@ app.get('/api/omr-layout/:ballotId', async (req, res) => {
         catch {
             return res.status(500).json({ error: 'LAYOUT_JSON_CORRUPT', ballotId });
         }
+        const { academicOrg, academicOrgSource } = await resolveOmrLayoutAcademicOrg(ballotId, record.electionId);
+        const deptSlug = departmentSlugFromAcademicOrg(academicOrg);
+        let layoutOut = layout;
+        if (layout &&
+            typeof layout === 'object' &&
+            !Array.isArray(layout) &&
+            deptSlug &&
+            'contests' in layout) {
+            const layoutObj = layout;
+            const rawContests = layoutObj.contests;
+            if (Array.isArray(rawContests)) {
+                const filtered = rawContests.filter((c) => {
+                    const pid = positionIdFromLayoutContest(c);
+                    if (!pid)
+                        return false;
+                    return isContestAllowedForDepartment(pid, deptSlug);
+                });
+                layoutOut = { ...layoutObj, contests: filtered };
+            }
+        }
+        const allowedContestIds = [];
+        if (layoutOut &&
+            typeof layoutOut === 'object' &&
+            !Array.isArray(layoutOut) &&
+            'contests' in layoutOut) {
+            const raw = layoutOut.contests;
+            if (Array.isArray(raw)) {
+                for (const c of raw) {
+                    const pid = positionIdFromLayoutContest(c);
+                    if (pid)
+                        allowedContestIds.push(pid);
+                }
+            }
+        }
+        console.log('[GET /api/omr-layout] ballotId=%s academicOrg=%s source=%s contests=%s', ballotId, academicOrg || '(none)', academicOrgSource, allowedContestIds.length ? allowedContestIds.join(',') : '(none)');
         return res.json({
             ballotId: record.ballotId,
             electionId: record.electionId,
             templateId: record.templateId,
             templateVersion: record.templateVersion,
             layoutHash: record.layoutHash,
-            layout,
+            layout: layoutOut,
+            academicOrg,
+            academicOrgSource,
+            allowedContestIds,
         });
     }
     catch (err) {

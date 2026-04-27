@@ -34,6 +34,13 @@ export type OmGeometryTemplate = {
   templateId: string;
   page: { width: number; height: number };
   contests: OmGeometryContest[];
+  /**
+   * Original `#printable-ballot-scan-frame` size in CSS px before coordinates were
+   * normalized to `page: {1,1}`. The omr-worker uses this for fiducial homography
+   * destination inset (`dx`/`dy`); without it, a normalized-only payload forces a
+   * generic nominal frame and can misalign the warp vs. measured bubbles.
+   */
+  pageMeasuredPx?: { width: number; height: number };
 };
 
 /** Deterministic id from ballot structure (stable before/after DOM measure). */

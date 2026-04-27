@@ -44,7 +44,7 @@ const SCAN_GEOMETRY = {
   /** Outer frame around fiducials; `border-0` removes the line so only timing marks outline the sheet. */
   frameBorder: "border-0",
   /** Corner + edge timing marks (~20% smaller than original 30px; still OMR-ratio safe). */
-  cornerSize: 24,
+  cornerSize: 32,
   /**
    * Corner squares flush to the scan-frame padding edges (no translate) so TL/TR align with BL/BR
    * and match the frame corners; `@page` margin avoids print clip.
@@ -57,17 +57,17 @@ const SCAN_GEOMETRY = {
   ballotTopStripTopClass: "top-0",
   ballotBottomStripBottomClass: "bottom-0",
   /** Side strips sit between top and bottom 24px bands; x aligns with strip inset (corner width). */
-  ballotSideStripInsetClass: "top-[24px] bottom-[24px]",
+  ballotSideStripInsetClass: "top-[32px] bottom-[32px]",
   /**
    * Top/bottom: vertical bars. w/h ≥ ~0.55 for OMR contour filter.
    */
-  timingTrackBarVertical: "h-[24px] w-[14px] shrink-0 bg-black",
+  timingTrackBarVertical: "h-[15px] w-[10px] shrink-0 bg-black",
   /** Left/right: horizontal bars (90° from vertical strip). */
-  timingTrackBarHorizontal: "h-[14px] w-[24px] shrink-0 bg-black",
+  timingTrackBarHorizontal: "h-[10px] w-[15px] shrink-0 bg-black",
   /** Index 0..11 of the 12 top/bottom marks for the centered ∪ landmark. */
-  timingTrackCenterIndexTB: 5,
-  /** Index 0..17 of the 18 left/right marks for the centered landmark (nearest strip midline). */
-  timingTrackCenterIndexLR: 8,
+  timingTrackCenterIndexTB: 16,
+  /** Index 0..25 of the 26 left/right marks for the centered landmark (nearest strip midline). */
+  timingTrackCenterIndexLR: 24,
   /** v2: spreadsheet-style fixed layout (px — not responsive). */
   v2RowHeightPx: 40,
   v2NumWidthPx: 32,
@@ -85,7 +85,7 @@ const SCAN_GEOMETRY = {
   qrFooterInsetBottomPx: 14,
   qrFooterInsetRightPx: 14,
   /** Below the single 24px top registration band + gap — z-[2] bg must not cover fiducials. */
-  contentInsetTop: "pt-[32px]",
+  contentInsetTop: "pt-[40px]",
   contentInsetBottom: "pb-10 print:pb-4",
   contentInsetX: "px-8",
   /** Tighter print insets so contests + QR share one A4; zoom-fit further compresses if needed. */
@@ -150,8 +150,8 @@ function CornerFiducial({ kind, className }: { kind: CornerFiducialKind; classNa
       style={{ width: SCAN_GEOMETRY.cornerSize, height: SCAN_GEOMETRY.cornerSize }}
       aria-hidden
     >
-      <div className={`absolute h-[6px] w-[6px] bg-white ${cutoutsByKind[kind]}`} />
-      <div className="absolute left-1/2 top-1/2 h-[5px] w-[5px] -translate-x-1/2 -translate-y-1/2 bg-white" />
+      <div className={`absolute h-[8px] w-[8px] bg-white ${cutoutsByKind[kind]}`} />
+      <div className="absolute left-1/2 top-1/2 h-[7px] w-[7px] -translate-x-1/2 -translate-y-1/2 bg-white" />
     </div>
   );
 }
@@ -176,9 +176,9 @@ function TimingTrackCenterMark({ variant }: { variant: TimingTrackCenterVariant 
       aria-hidden
     >
       <div className="relative h-full w-full bg-black">
-        <div className="absolute left-[5px] top-[5px] h-[15px] w-[4px] bg-white" />
-        <div className="absolute right-[5px] top-[5px] h-[15px] w-[4px] bg-white" />
-        <div className="absolute bottom-[5px] left-[5px] h-[4px] w-[14px] bg-white" />
+        <div className="absolute left-[6px] top-[6px] h-[20px] w-[5px] bg-white" />
+        <div className="absolute right-[6px] top-[6px] h-[20px] w-[5px] bg-white" />
+        <div className="absolute bottom-[6px] left-[6px] h-[5px] w-[20px] bg-white" />
       </div>
     </div>
   );
@@ -190,12 +190,10 @@ function TimingTrackCenterMark({ variant }: { variant: TimingTrackCenterVariant 
  * - repeated edge squares: timing / line-fit / warp stability
  */
 function ScanFrameRegistration() {
-  const stripX = "absolute left-[24px] right-[24px] flex";
+  const stripX = "absolute left-[32px] right-[32px] flex";
   const topStrip = SCAN_GEOMETRY.ballotTopStripTopClass;
   const bottomStrip = SCAN_GEOMETRY.ballotBottomStripBottomClass;
   const stripY = `absolute ${SCAN_GEOMETRY.ballotSideStripInsetClass} flex flex-col`;
-  const centerTB = SCAN_GEOMETRY.timingTrackCenterIndexTB;
-  const centerLR = SCAN_GEOMETRY.timingTrackCenterIndexLR;
   const barV = SCAN_GEOMETRY.timingTrackBarVertical;
   const barH = SCAN_GEOMETRY.timingTrackBarHorizontal;
   const slotMin = SCAN_GEOMETRY.cornerSize;
@@ -205,56 +203,39 @@ function ScanFrameRegistration() {
       <CornerFiducial kind="tr" className={SCAN_GEOMETRY.cornerAnchorTR} />
       <CornerFiducial kind="bl" className={SCAN_GEOMETRY.cornerAnchorBL} />
       <CornerFiducial kind="br" className={SCAN_GEOMETRY.cornerAnchorBR} />
-      {/* Equal-width / equal-height slots preserve mark centers for OMR (12 / 18 counts unchanged). */}
       <div className={`${stripX} ${topStrip}`} aria-hidden>
-        {Array.from({ length: 12 }, (_, i) => (
+        {Array.from({ length: 33 }, (_, i) => (
           <div
             key={`t-${i}`}
             className="flex min-h-0 flex-1 items-center justify-center"
             style={{ minHeight: slotMin }}
           >
-            {i === centerTB ? (
-              <TimingTrackCenterMark variant="top" />
-            ) : (
-              <div className={barV} />
-            )}
+            <div className={barV} />
           </div>
         ))}
       </div>
       <div className={`${stripX} ${bottomStrip}`} aria-hidden>
-        {Array.from({ length: 12 }, (_, i) => (
+        {Array.from({ length: 33 }, (_, i) => (
           <div
             key={`b-${i}`}
             className="flex min-h-0 flex-1 items-center justify-center"
             style={{ minHeight: slotMin }}
           >
-            {i === centerTB ? (
-              <TimingTrackCenterMark variant="bottom" />
-            ) : (
-              <div className={barV} />
-            )}
+            <div className={barV} />
           </div>
         ))}
       </div>
-      <div className={`${stripY} left-[0px] w-[24px]`} aria-hidden>
-        {Array.from({ length: 18 }, (_, i) => (
+      <div className={`${stripY} left-[0px] w-[32px]`} aria-hidden>
+        {Array.from({ length: 49 }, (_, i) => (
           <div key={`l-${i}`} className="flex min-h-0 w-full min-w-0 flex-1 items-center justify-center">
-            {i === centerLR ? (
-              <TimingTrackCenterMark variant="left" />
-            ) : (
-              <div className={barH} />
-            )}
+            <div className={barH} />
           </div>
         ))}
       </div>
-      <div className={`${stripY} right-[0px] w-[24px]`} aria-hidden>
-        {Array.from({ length: 18 }, (_, i) => (
+      <div className={`${stripY} right-[0px] w-[32px]`} aria-hidden>
+        {Array.from({ length: 49 }, (_, i) => (
           <div key={`r-${i}`} className="flex min-h-0 w-full min-w-0 flex-1 items-center justify-center">
-            {i === centerLR ? (
-              <TimingTrackCenterMark variant="right" />
-            ) : (
-              <div className={barH} />
-            )}
+            <div className={barH} />
           </div>
         ))}
       </div>
@@ -527,7 +508,7 @@ export function PrintableBallotSheet({
       if (!cb) return;
       const root = document.getElementById("printable-ballot-root");
       if (!root) return;
-      /** Same box whose corners carry timing/fiducial marks — OMR warp maps this quad to canonical px. */
+      /** Same box whose corners carry timing/fiducial marks — OMR worker aligns scans via bbox crop+resize (or optional homography) to canonical px. */
       const frame = document.getElementById("printable-ballot-scan-frame");
       const ref = frame ?? root;
       const rr = ref.getBoundingClientRect();

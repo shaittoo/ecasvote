@@ -45,16 +45,22 @@ from app.omr_layout_v1 import (
     BubbleRoiScore,
     annotate_warped_layout,
     bubble_fill_class_v2,
+    classify_bubble_validity,
     build_ballot_empty_reference,
-    build_bubble_scoring_mask,
+    build_bubble_scoring_mask_from_layout,
     contest_scores_with_dominance,
     evaluate_ballot_level_calibration,
+    fiducial_dst_four_corners,
     fill_hard_gate_failures,
     layout_scan_quality,
     prepare_bubble_scoring_gray,
     reproduce_warped_after_rotation,
     rotate_input,
+    merge_layout_geometry_for_mapping,
+    map_template_fractions_to_warped_pixels,
+    _fiducial_warp_registration_mode,
     run_layout_scan_on_bgr,
+    scan_frame_pixel_size_from_template_geometry,
     score_bubble_fixed_roi,
     select_marks_strict_overvote,
     _zone_fiducial_anchor_inv,
@@ -514,8 +520,10 @@ def detect_corner_fiducials(img: np.ndarray) -> dict[str, Any]:
     _, inv = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     h, w = gray.shape[:2]
     m = int(min(w, h) * 0.18)
-    top_band = max(18, int(min(w, h) * 0.11))
-    edge_inset = max(2, int(min(w, h) * 0.01))
+    m = max(24, min(m, 220))
+    mn = float(min(w, h))
+    top_band = max(18, int(mn * 0.11))
+    edge_inset = max(2, int(mn * 0.01))
     zones = {
         "img_tl": ((0, 0, m, top_band), (0.0, 0.0)),
         "img_tr": ((w - m - edge_inset, 0, w - edge_inset, top_band), (float(w - 1), 0.0)),
@@ -547,15 +555,18 @@ def detect_corner_fiducials(img: np.ndarray) -> dict[str, Any]:
     return {"zones": zones, "found": found, "confidence": conf}
 
 
-def compute_homography(corners: dict[str, tuple[float, float]], width: int, height: int) -> np.ndarray | None:
+def compute_homography(
+    corners: dict[str, tuple[float, float]],
+    width: int,
+    height: int,
+    frame_w: float | None = None,
+    frame_h: float | None = None,
+) -> np.ndarray | None:
     need = ("img_tl", "img_tr", "img_br", "img_bl")
     if not all(k in corners for k in need):
         return None
     src = np.array([corners[k] for k in need], dtype=np.float32)
-    dst = np.array(
-        [(0, 0), (width - 1, 0), (width - 1, height - 1), (0, height - 1)],
-        dtype=np.float32,
-    )
+    dst = fiducial_dst_four_corners(frame_w, frame_h)
     return cv2.getPerspectiveTransform(src, dst)
 
 
@@ -704,13 +715,40 @@ def _rotate_to_template_orientation(warped: np.ndarray) -> tuple[np.ndarray, dic
     return best_img, best
 
 
+def _warped_fiducial_corner_label_bonus(warped_bgr: np.ndarray) -> float:
+    """
+    After fiducial crop/warp to canonical, L-pattern corner IDs should match zone names.
+    Used to break ties when QR decodes at multiple input rotations (wrong rot often still reads).
+    """
+    det = detect_corner_fiducials(warped_bgr)
+    found = det.get("found") or {}
+    expected = {"img_tl": "tl", "img_tr": "tr", "img_br": "br", "img_bl": "bl"}
+    bonus = 0.0
+    for z, exp in expected.items():
+        hit = found.get(z)
+        if not hit:
+            continue
+        lab = str(hit.get("best_label") or "")
+        if lab == exp:
+            bonus += 18.0 + 0.25 * float(hit.get("best_score") or 0.0)
+        elif lab:
+            bonus -= 6.0
+    return bonus
+
+
 def warp_for_template(img: np.ndarray, template: dict[str, Any]) -> tuple[np.ndarray, dict[str, Any]]:
     mode = _template_layout_mode(template)
 
     if mode == "legacy":
         H = _detect_page_outline_homography(img, LAYOUT_SPEC.canonical_w, LAYOUT_SPEC.canonical_h)
         if H is not None:
-            warped = cv2.warpPerspective(img, H, (LAYOUT_SPEC.canonical_w, LAYOUT_SPEC.canonical_h))
+            warped = cv2.warpPerspective(
+                img,
+                H,
+                (LAYOUT_SPEC.canonical_w, LAYOUT_SPEC.canonical_h),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REPLICATE,
+            )
             return warped, {
                 "mode": "legacy",
                 "warp_source": "legacy-page-outline",
@@ -732,7 +770,18 @@ def warp_for_template(img: np.ndarray, template: dict[str, Any]) -> tuple[np.nda
         if zone in found:
             corners[zone] = tuple(found[zone]["centroid"])
 
-    H = compute_homography(corners, LAYOUT_SPEC.canonical_w, LAYOUT_SPEC.canonical_h)
+    g = template.get("geometry") or {}
+    fw, fh = scan_frame_pixel_size_from_template_geometry(
+        g if isinstance(g, dict) else {}
+    )
+
+    H = compute_homography(
+        corners,
+        LAYOUT_SPEC.canonical_w,
+        LAYOUT_SPEC.canonical_h,
+        frame_w=fw,
+        frame_h=fh,
+    )
     warp_source = "corner-fiducials"
 
     if H is None:
@@ -740,7 +789,13 @@ def warp_for_template(img: np.ndarray, template: dict[str, Any]) -> tuple[np.nda
         warp_source = "page-outline" if H is not None else "legacy-fallback"
 
     if H is not None:
-        warped = cv2.warpPerspective(img, H, (LAYOUT_SPEC.canonical_w, LAYOUT_SPEC.canonical_h))
+        warped = cv2.warpPerspective(
+            img,
+            H,
+            (LAYOUT_SPEC.canonical_w, LAYOUT_SPEC.canonical_h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
     else:
         warped = warp_if_possible(img)
 
@@ -1104,6 +1159,8 @@ def score_bubbles_from_geometry(
         sx = w / pw
         sy = h / ph
 
+    _remap_fracs = _fiducial_warp_registration_mode() != "none"
+
     contests_geo = geometry.get("contests") or []
     raw_scores: dict[str, dict[str, float]] = {}
     selections_by_position: dict[str, list[str]] = {}
@@ -1132,10 +1189,28 @@ def score_bubbles_from_geometry(
             yf = float(b.get("y") or 0)
             wf = float(b.get("w") or 0)
             hf = float(b.get("h") or 0)
-            x0 = int(xf * sx)
-            y0 = int(yf * sy)
-            x1 = int((xf + wf) * sx)
-            y1 = int((yf + hf) * sy)
+            if _remap_fracs and (wf > 1e-9 or hf > 1e-9):
+                if abs(pw - 1.0) < 0.01:
+                    nx0, ny0 = xf, yf
+                    nx1, ny1 = xf + wf, yf + hf
+                else:
+                    nx0, ny0 = xf / pw, yf / ph
+                    nx1, ny1 = (xf + wf) / pw, (yf + hf) / ph
+                nx0 = max(0.0, min(1.0, nx0))
+                ny0 = max(0.0, min(1.0, ny0))
+                nx1 = max(0.0, min(1.0, nx1))
+                ny1 = max(0.0, min(1.0, ny1))
+                px0, py0 = map_template_fractions_to_warped_pixels(nx0, ny0, w, h, geometry)
+                px1, py1 = map_template_fractions_to_warped_pixels(nx1, ny1, w, h, geometry)
+                x0 = int(min(px0, px1))
+                y0 = int(min(py0, py1))
+                x1 = int(max(px0, px1)) + 1
+                y1 = int(max(py0, py1)) + 1
+            else:
+                x0 = int(xf * sx)
+                y0 = int(yf * sy)
+                x1 = int((xf + wf) * sx)
+                y1 = int((yf + hf) * sy)
             x0 = max(0, min(w - 1, x0))
             x1 = max(x0 + 1, min(w, x1))
             y0 = max(0, min(h - 1, y0))
@@ -1736,7 +1811,8 @@ def _finalize_layout_scan_result(res: dict[str, Any], rotation_deg: int) -> dict
     election_id = res.get("electionId")
     conf = bubble.get("confidence")
     conf_f = float(conf) if isinstance(conf, (int, float)) else 0.0
-    warp_applied = bool(wmeta.get("fiducial_warp", True))
+    _ws = str(wmeta.get("warp_source") or "")
+    warp_applied = bool(wmeta.get("fiducial_warp")) or _ws == "bbox-crop-resize"
     return {
         "qr": res.get("qr"),
         "qrRaw": res.get("qrRaw"),
@@ -1925,9 +2001,10 @@ def scan_ballot_image_with_warp(
         )
     _log_template_contest_ids(template, "WORKER TEMPLATE CONTEST IDS (client payload advisory)")
     if gateway_url:
-        result, warped = _scan_ballot_image_v2(img, gateway_url)
+        result, warped = _scan_ballot_image_v2(img, gateway_url, template or {})
         if result.get("ok"):
             return result, warped
+        print(f"WORKER: v2 failed. error={result.get('error')} ballotId={result.get('ballotId')}")
         allow_fb = os.getenv("OMR_ALLOW_TEMPLATE_FALLBACK", "").strip().lower() in (
             "1",
             "true",
@@ -1984,6 +2061,75 @@ def _fetch_ballot_layout(ballot_id: str, gateway_url: str) -> dict[str, Any] | N
         return None
 
 
+# Match gateway + frontend-ecasvote/lib/ballot/filterPositionsByDepartment.ts
+_ACADEMIC_ORG_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("clovers", "clovers"),
+    ("elektrons", "elektrons"),
+    ("redbolts", "redbolts"),
+    ("skimmers", "skimmers"),
+    ("clo", "clovers"),
+)
+
+
+def _department_slug_from_academic_org(dept: str) -> str:
+    raw = re.sub(r"[^a-z0-9]+", "-", dept.strip().lower()).strip("-")
+    aliases = {
+        "red-bolts": "redbolts",
+        "redbolts": "redbolts",
+        "skimmers": "skimmers",
+        "clovers": "clovers",
+        "clo": "clovers",
+        "elektrons": "elektrons",
+        "elecktrons": "elektrons",
+    }
+    return aliases.get(raw, raw)
+
+
+def _org_slug_owning_academic_org_position(position_id: str) -> str | None:
+    id_l = position_id.strip().lower()
+    for prefix, org in _ACADEMIC_ORG_PREFIXES:
+        gov = f"{prefix}-governor"
+        if id_l == gov or id_l.startswith(f"{prefix}-"):
+            return org
+    return None
+
+
+def _contest_allowed_for_department_slug(position_id: str, dept_slug: str) -> bool:
+    if not dept_slug:
+        return True
+    id_l = position_id.strip().lower()
+    head = id_l.split("-", 1)[0] if id_l else ""
+    if head in ("usc", "cas"):
+        return True
+    owner = _org_slug_owning_academic_org_position(id_l)
+    if owner is None:
+        return True
+    if owner != dept_slug:
+        return False
+    if id_l == f"{dept_slug}-governor":
+        return True
+    if dept_slug == "clovers" and id_l == "clo-governor":
+        return True
+    return False
+
+
+def _filter_layout_contests_for_academic_org(layout: dict[str, Any], academic_org: str) -> None:
+    slug = _department_slug_from_academic_org(academic_org) if academic_org.strip() else ""
+    if not slug:
+        return
+    contests = layout.get("contests")
+    if not isinstance(contests, list):
+        return
+    layout["contests"] = [
+        c
+        for c in contests
+        if isinstance(c, dict)
+        and _contest_allowed_for_department_slug(
+            str(c.get("positionId") or c.get("id") or ""), slug
+        )
+    ]
+
+
 def _verify_layout_hash(stored_hash: str, qr_hash: str) -> bool:
     if not stored_hash or not qr_hash:
         return True
@@ -1998,7 +2144,9 @@ def _verify_layout_hash(stored_hash: str, qr_hash: str) -> bool:
 def _score_bubbles_from_saved_layout(
     warped: np.ndarray,
     layout: dict[str, Any],
+    template: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    print("🔥 FUNCTION ENTERED")
     """
     Template-driven bubble-only OMR: only expected bubble ROIs from the saved layout
     (per printed ballot / org). Headers, QR, timing marks, and lines are masked out
@@ -2006,9 +2154,12 @@ def _score_bubbles_from_saved_layout(
     """
     gray, gray_meta = prepare_bubble_scoring_gray(warped)
     h_img, w_img = warped.shape[:2]
-    score_mask = build_bubble_scoring_mask(h_img, w_img)
+    layout_map = merge_layout_geometry_for_mapping(layout, template)
+    # With bbox crop, the image is already cropped to the scan frame — no need to mask
+    # out timing marks/headers. Use a full-white mask so all regions are scoreable.
+    score_mask = np.full((h_img, w_img), 255, dtype=np.uint8)
 
-    page = layout.get("page") or {}
+    page = layout_map.get("page") or {}
     pw = float(page.get("width") or CANONICAL_W)
     ph = float(page.get("height") or CANONICAL_H)
     if pw <= 0 or ph <= 0:
@@ -2024,7 +2175,9 @@ def _score_bubbles_from_saved_layout(
     flat_rois: dict[str, BubbleRoiScore] = {}
     contest_plan: list[tuple[str, int, list[tuple[str, BubbleRoiScore]]]] = []
 
-    for contest in (layout.get("contests") or []):
+    _remap_fracs = _fiducial_warp_registration_mode() != "none"
+
+    for contest in (layout_map.get("contests") or []):
         pid = str(contest.get("positionId") or "")
         if not pid:
             continue
@@ -2051,8 +2204,15 @@ def _score_bubbles_from_saved_layout(
                 ny = max(0.0, min(1.0, yf))
             nx = max(0.0, min(1.0, nx))
             ny = max(0.0, min(1.0, ny))
-            ex = int(round(max(0, min(w_img - 1, nx * w_img))))
-            ey = int(round(max(0, min(h_img - 1, ny * h_img))))
+            if _remap_fracs:
+                ex_f, ey_f = map_template_fractions_to_warped_pixels(
+                    nx, ny, w_img, h_img, layout_map
+                )
+                ex = int(round(max(0, min(w_img - 1, ex_f))))
+                ey = int(round(max(0, min(h_img - 1, ey_f))))
+            else:
+                ex = int(round(max(0, min(w_img - 1, nx * w_img))))
+                ey = int(round(max(0, min(h_img - 1, ny * h_img))))
             roi = score_bubble_fixed_roi(gray, ex, ey, mask=score_mask)
             acc.append((oid, roi))
             flat_rois[f"{pid}::{oid}"] = roi
@@ -2077,7 +2237,9 @@ def _score_bubbles_from_saved_layout(
             baseline,
             dom_detail,
             gate_fail,
-        ) = contest_scores_with_dominance(rois_map, ballot_ref, ballot_slice)
+        ) = contest_scores_with_dominance(
+            rois_map, ballot_ref, ballot_slice, max_votes=max_votes
+        )
         picks, smeta = select_marks_strict_overvote(
             scores,
             max_votes,
@@ -2145,11 +2307,46 @@ def _score_bubbles_from_saved_layout(
                     "contestAbstainConflict": abst_bad,
                     "fillClassification": cls,
                     "filled": oid in picks,
+                    "validityPass": classify_bubble_validity(roi)[0],
+                    "validityReason": classify_bubble_validity(roi)[1],
                 }
             )
 
         raw_scores[pid] = scores
-        selections[pid] = picks
+
+        # ── Vote validity gate ────────────────────────────────────────
+        # ALL detected marks count as valid fills (check, X, dot, half-filled
+        # are accepted — they are not rejected as invalid markings).
+        all_valid_fills: list[str] = []
+
+        for oid, roi in acc:
+            # Any mark that was detected (in picks) counts as a valid fill
+            if oid in picks:
+                all_valid_fills.append(oid)
+
+        # ── Abstain conflict detection ────────────────────────────────
+        # If voter marked both candidate(s) AND abstain → invalid
+        abstain_fills = [f for f in all_valid_fills if f.startswith("abstain:")]
+        candidate_fills = [f for f in all_valid_fills if not f.startswith("abstain:")]
+        abstain_conflict = len(abstain_fills) > 0 and len(candidate_fills) > 0
+
+        # ── Overvote detection ────────────────────────────────────────
+        # Count ALL valid fills (not just filtered picks) — includes check/X/dot marks
+        contest_overvote = len(all_valid_fills) > max_votes
+        # Abstain conflict is also an overvote-like condition
+        if abstain_conflict:
+            contest_overvote = True
+
+        # ── Undervote detection (no mark at all) ──────────────────────
+        undervote_detected = len(all_valid_fills) == 0
+
+        if contest_overvote or abstain_conflict:
+            selections[pid] = []
+        else:
+            selections[pid] = all_valid_fills
+
+        # DEBUG — validity decisions
+        print(f"VALIDITY {pid}: picks={picks} valid_fills={all_valid_fills} overvote={contest_overvote} undervote={undervote_detected} abstain_conflict={abstain_conflict}")
 
         vals = list(scores.values())
         if vals:
@@ -2179,11 +2376,17 @@ def _score_bubbles_from_saved_layout(
             {
                 "positionId": pid,
                 "maxVotes": max_votes,
-                "selectedOptionIds": picks,
-                "overvote": bool(smeta.get("overvote")),
-                "abstainConflict": bool(smeta.get("abstainConflict")),
+                "selectedOptionIds": all_valid_fills if not contest_overvote and not abstain_conflict else [],
+                "originalPicks": picks,
+                "overvote": bool(smeta.get("overvote")) or contest_overvote,
+                "overvoteDetected": contest_overvote,
+                "undervoteDetected": undervote_detected,
+                "abstainConflict": abstain_conflict,
+                "validVoteCount": len(all_valid_fills),
                 "marksAboveThreshold": int(smeta.get("marksAboveThreshold") or 0),
                 "winnerMarginFailed": bool(smeta.get("winnerMarginFailed")),
+                "invalidMarkings": [],
+                "validityResults": {},
                 "ballotEmptyCalibration": ballot_ref,
                 "ballotDominanceDeltasRequired": {
                     "inner": BALLOT_DOMINANCE_DELTA_INNER,
@@ -2205,6 +2408,80 @@ def _score_bubbles_from_saved_layout(
         )
 
     overall = float(np.mean(contest_confs)) if contest_confs else 0.0
+
+    # ── Ballot-level validation ───────────────────────────────────────
+    ballot_status = "VALID"
+    ballot_invalid_reasons: list[dict[str, Any]] = []
+
+    for cr in contests_read:
+        pid_cr = cr.get("positionId", "")
+
+        if cr.get("overvoteDetected"):
+            ballot_invalid_reasons.append({
+                "type": "overvote_detected",
+                "contestId": pid_cr,
+                "validVotes": cr.get("validVoteCount", 0),
+                "maxAllowed": cr.get("maxVotes", 1),
+            })
+
+        if cr.get("undervoteDetected"):
+            ballot_invalid_reasons.append({
+                "type": "no_vote_detected",
+                "contestId": pid_cr,
+            })
+
+        if cr.get("abstainConflict"):
+            ballot_invalid_reasons.append({
+                "type": "abstain_conflict",
+                "contestId": pid_cr,
+            })
+
+    has_overvote = any(cr.get("overvoteDetected") for cr in contests_read)
+    has_undervote = any(cr.get("undervoteDetected") for cr in contests_read)
+    has_abstain_conflict = any(cr.get("abstainConflict") for cr in contests_read)
+
+    if has_overvote or has_undervote or has_abstain_conflict:
+        ballot_status = "INVALID"
+        print("⚠️ BALLOT INVALIDATED — clearing ALL selections")
+
+        for pid, vals in selections.items():
+            print(f"AFTER CLEAR → {pid}: {vals}")
+
+        # Null out ALL contests, not just ones already present in selections
+        selections = {
+            str(cr.get("positionId")): []
+            for cr in contests_read
+            if cr.get("positionId")
+        }
+
+        # Clear contest-level outputs
+        for cr in contests_read:
+            cr["selectedOptionIds"] = []
+            cr["validVoteCount"] = 0
+            cr["originalPicks"] = []
+            cr["marksAboveThreshold"] = 0
+
+        # Clear overlay so frontend/debug won't still show filled bubbles
+        for bo in bubble_overlay:
+            bo["filled"] = False
+            bo["fillClassification"] = "empty"
+            bo["score"] = 0.0
+            bo["scoreRaw"] = 0.0
+
+        # Optional: clear raw scores too
+        raw_scores = {
+            pid: {oid: 0.0 for oid in score_map}
+            for pid, score_map in raw_scores.items()
+        }
+
+    print("=== BALLOT STATUS DEBUG ===")
+    print("ballot_status:", ballot_status)
+    print("has_overvote:", has_overvote)
+    print("has_undervote:", has_undervote)
+    print("has_abstain_conflict:", has_abstain_conflict)
+    print("final selections:", selections)
+    print("===========================")
+
     return {
         "selectionsByPosition": selections,
         "rawBubbleScores": raw_scores,
@@ -2214,11 +2491,15 @@ def _score_bubbles_from_saved_layout(
         "bubbleScoringMaskApplied": True,
         "grayPreprocess": gray_meta,
         "ballotEmptyCalibration": ballot_ref,
+        "ballotStatus": ballot_status,
+        "ballotInvalidReasons": ballot_invalid_reasons,
     }
 
 
 def _scan_ballot_image_v2(
-    img: np.ndarray, gateway_url: str
+    img: np.ndarray,
+    gateway_url: str,
+    template: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], np.ndarray | None]:
     """
     1. Try rotations 0°, 90°, 270°: fiducial warp + QR on warped canvas; pick best composite score.
@@ -2241,7 +2522,7 @@ def _scan_ballot_image_v2(
     for deg in (0, 90, 270):
         rotated = rotate_input(img, deg)
         warped_try, wmeta_try = apply_corner_fiducial_warp_only(
-            rotated, detect_corner_fiducials, compute_homography
+            rotated, detect_corner_fiducials, compute_homography, template
         )
         if warped_try is None:
             continue
@@ -2252,7 +2533,8 @@ def _scan_ballot_image_v2(
         bid = _ballot_id_from_qr(qr_obj)
         has_bid = 1.0 if bid else 0.0
         qconf = float(qr_conf or 0.0)
-        composite = has_bid * 500.0 + qconf * 80.0 + fid_c
+        corner_bonus = _warped_fiducial_corner_label_bonus(warped_try)
+        composite = has_bid * 500.0 + qconf * 80.0 + fid_c + corner_bonus
         if best is None or composite > best[0]:
             best = (
                 composite,
@@ -2324,8 +2606,23 @@ def _scan_ballot_image_v2(
             warped,
         )
 
-    _lc = layout.get("contests") or []
     _acct = str(layout_record.get("academicOrg") or "").strip()
+    if _acct:
+        _filter_layout_contests_for_academic_org(layout, _acct)
+
+    allowed_raw = layout_record.get("allowedContestIds") or []
+    allowed = {str(x).strip() for x in allowed_raw if str(x).strip()}
+    if allowed:
+        contests = layout.get("contests")
+        if isinstance(contests, list):
+            layout["contests"] = [
+                c
+                for c in contests
+                if isinstance(c, dict)
+                and str(c.get("positionId") or c.get("id") or "").strip() in allowed
+            ]
+
+    _lc = layout.get("contests") or []
     if _acct:
         print("AUTO ORG (from issuance / GET omr-layout):", _acct)
     _fc = [
@@ -2335,7 +2632,7 @@ def _scan_ballot_image_v2(
     ]
     print("AUTO FILTERED CONTEST IDS (stored layout):", _fc)
 
-    bubble_result = _score_bubbles_from_saved_layout(warped, layout)
+    bubble_result = _score_bubbles_from_saved_layout(warped, layout, template)
 
     by_pos = bubble_result.get("selectionsByPosition") or {}
     selections_flat = selections_multi_to_flat(by_pos)
@@ -2347,7 +2644,8 @@ def _scan_ballot_image_v2(
 
     warp_debug = dict(wmeta)
     warp_debug["inputRotationDeg"] = best_deg
-    warp_applied = bool(wmeta.get("fiducial_warp", True))
+    _ws = str(wmeta.get("warp_source") or "")
+    warp_applied = bool(wmeta.get("fiducial_warp")) or _ws == "bbox-crop-resize"
 
     return (
         {
@@ -2386,6 +2684,8 @@ def _scan_ballot_image_v2(
                 "selections": selections_flat,
                 "confidence": overall_conf,
             },
+            "ballotStatus": bubble_result.get("ballotStatus", "VALID"),
+            "ballotInvalidReasons": bubble_result.get("ballotInvalidReasons", []),
         },
         warped,
     )
@@ -2400,7 +2700,7 @@ def _debug_annotate_v2(
     canvas = warped.copy()
     h_img, w_img = canvas.shape[:2]
 
-    score_mask = build_bubble_scoring_mask(h_img, w_img)
+    score_mask = build_bubble_scoring_mask_from_layout(h_img, w_img, layout)
     if np.any(score_mask == 0):
         m0 = score_mask == 0
         c = canvas.astype(np.float32)
@@ -2439,11 +2739,40 @@ def _debug_annotate_v2(
     # legacy normalized geometry (page.width ≈ 1, boxes in 0–1), w_img/pw would be ~1000×
     # too large — every "filled" disk covers the sheet (solid green debug view).
     if abs(pw - 1.0) < 0.01:
-        scale = min(w_img / CANONICAL_W, h_img / CANONICAL_H)
+        mp = layout.get("pageMeasuredPx")
+        if isinstance(mp, dict):
+            try:
+                mw = float(mp.get("width") or 0)
+                mh = float(mp.get("height") or 0)
+            except (TypeError, ValueError):
+                mw, mh = 0.0, 0.0
+            if mw > 8 and mh > 8:
+                scale = min(w_img / mw, h_img / mh)
+            else:
+                scale = min(w_img / CANONICAL_W, h_img / CANONICAL_H)
+        else:
+            scale = min(w_img / CANONICAL_W, h_img / CANONICAL_H)
     else:
         scale = min(w_img / pw, h_img / ph)
-    bub_r = max(6, int(7.5 * scale))
-    bub_r = min(bub_r, max(24, min(w_img, h_img) // 25))
+    # Fallback radius when a contest bubble has no w/h in layout (legacy).
+    bub_r_fallback = max(6, int(7.5 * scale))
+    bub_r_fallback = min(bub_r_fallback, max(24, min(w_img, h_img) // 25))
+
+    def _overlay_radius_for_bubble(b: dict[str, Any]) -> int:
+        """Match printed bubble size on warped canvas (layout w/h are scan-frame units)."""
+        wf = float(b.get("w") or 0.0)
+        hf = float(b.get("h") or 0.0)
+        if wf <= 1e-9 or hf <= 1e-9:
+            return bub_r_fallback
+        if abs(pw - 1.0) < 0.01:
+            rw = wf * float(w_img) * 0.5
+            rh = hf * float(h_img) * 0.5
+        else:
+            rw = wf * float(w_img) / (2.0 * pw)
+            rh = hf * float(h_img) / (2.0 * ph)
+        r = int(max(5, round(min(rw, rh))))
+        cap = min(48, max(10, min(w_img, h_img) // 8))
+        return min(r, cap)
 
     for contest in (layout.get("contests") or []):
         pid = str(contest.get("positionId") or "")
@@ -2451,6 +2780,7 @@ def _debug_annotate_v2(
         scores = raw_scores.get(pid) or {}
         for bubble in (contest.get("bubbles") or []):
             oid = str(bubble.get("optionId") or "")
+            bub_r = _overlay_radius_for_bubble(bubble)
             row = overlay_by.get((pid, oid))
             if row:
                 ex, ey = int(row["expected"][0]), int(row["expected"][1])
@@ -2490,8 +2820,15 @@ def _debug_annotate_v2(
                     ny = max(0.0, min(1.0, yf))
                 nx = max(0.0, min(1.0, nx))
                 ny = max(0.0, min(1.0, ny))
-                ex = int(round(max(0, min(w_img - 1, nx * w_img))))
-                ey = int(round(max(0, min(h_img - 1, ny * h_img))))
+                if _fiducial_warp_registration_mode() != "none":
+                    ex_f, ey_f = map_template_fractions_to_warped_pixels(
+                        nx, ny, w_img, h_img, layout
+                    )
+                    ex = int(round(max(0, min(w_img - 1, ex_f))))
+                    ey = int(round(max(0, min(h_img - 1, ey_f))))
+                else:
+                    ex = int(round(max(0, min(w_img - 1, nx * w_img))))
+                    ey = int(round(max(0, min(h_img - 1, ny * h_img))))
                 cv2.circle(canvas, (ex, ey), bub_r, (255, 0, 0), 2)
                 cv2.circle(canvas, (ex, ey), 3, (255, 100, 0), -1)
                 cx, cy = ex, ey

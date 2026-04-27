@@ -16,9 +16,11 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { notify } from "@/lib/notify";
 import {
   fetchDashboard,
   fetchElections,
+  fetchPositions,
   openElection,
   closeElection,
   type DashboardData,
@@ -322,10 +324,33 @@ export default function AdminDashboardPage() {
                             disabled={loading}
                             onClick={async () => {
                               try {
+                                const positions = await fetchPositions(electionId);
+                                if (!positions.length) {
+                                  notify.error({
+                                    title: "Unable to open election",
+                                    description: "No positions exist for this election yet.",
+                                  });
+                                  return;
+                                }
+                                const hasCandidates = positions.some(
+                                  (position) => position.candidates.length > 0
+                                );
+                                if (!hasCandidates) {
+                                  notify.error({
+                                    title: "Unable to open election",
+                                    description:
+                                      "No candidates exist for this election yet.",
+                                  });
+                                  return;
+                                }
                                 await openElection(electionId);
                                 await loadDashboard();
                               } catch (err) {
-                                console.error("Failed to open election:", err);
+                                notify.error({
+                                  title: "Failed to open election",
+                                  description:
+                                    err instanceof Error ? err.message : String(err),
+                                });
                               }
                             }}
                           >

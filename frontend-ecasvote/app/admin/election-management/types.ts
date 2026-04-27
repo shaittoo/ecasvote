@@ -13,6 +13,8 @@ export type CandidateDraft = {
   party: string;
   program: string;
   yearLevel: string;
+  imageFile: File | null;
+  imagePreview?: string;
 };
 
 export type CandidateRow = {

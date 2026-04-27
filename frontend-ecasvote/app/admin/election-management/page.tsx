@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { deleteElection } from "@/lib/ecasvoteApi";
 import { notify } from "@/lib/notify";
 import { AdminElectionShell } from "./AdminElectionShell";
@@ -12,7 +11,8 @@ import { loadElectionRows } from "./utils";
 import type { ElectionRow } from "./types";
 
 export default function ElectionManagementPage() {
-  const router = useRouter();
+  const currentYear = new Date().getFullYear();
+  const defaultAcademicYear = `${currentYear} - ${currentYear + 1}`;
   const [elections, setElections] = useState<ElectionRow[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [electionPendingDelete, setElectionPendingDelete] = useState<{
@@ -22,11 +22,11 @@ export default function ElectionManagementPage() {
   const [deleteElectionSubmitting, setDeleteElectionSubmitting] = useState(false);
 
   const [newTitle, setNewTitle] = useState("");
-  const [newAcademicYear, setNewAcademicYear] = useState("2025-2026");
+  const [newAcademicYear, setNewAcademicYear] = useState(defaultAcademicYear);
   const [newSemester, setNewSemester] = useState("First Semester");
   const [newStartDate, setNewStartDate] = useState("");
   const [newEndDate, setNewEndDate] = useState("");
-  const [newStatus, setNewStatus] = useState("Draft");
+  // newStatus removed — elections always start as DRAFT
 
   const refreshElections = async () => {
     try {
@@ -41,6 +41,24 @@ export default function ElectionManagementPage() {
     void refreshElections();
   }, []);
 
+  const handleDeleteConfirm = async () => {
+    if (!electionPendingDelete) return;
+    setDeleteElectionSubmitting(true);
+    try {
+      await deleteElection(electionPendingDelete.id);
+      notify.success({ title: "Election deleted" });
+      setElectionPendingDelete(null);
+      await refreshElections();
+    } catch (err) {
+      notify.error({
+        title: "Failed to delete election",
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setDeleteElectionSubmitting(false);
+    }
+  };
+
   return (
     <AdminElectionShell
       title="Election Management"
@@ -53,7 +71,9 @@ export default function ElectionManagementPage() {
           onDeleteClick={(e) =>
             setElectionPendingDelete({ id: e.id, title: e.title || e.id })
           }
-          editHref={(id) => `/admin/election-management/${encodeURIComponent(id)}/edit`}
+          editHref={(id) =>
+            `/admin/election-management/${encodeURIComponent(id)}/edit`
+          }
         />
 
         <CreateElectionModal
@@ -69,11 +89,9 @@ export default function ElectionManagementPage() {
           setNewStartDate={setNewStartDate}
           newEndDate={newEndDate}
           setNewEndDate={setNewEndDate}
-          newStatus={newStatus}
-          setNewStatus={setNewStatus}
-          onCreated={async (electionId) => {
+          onCreated={async () => {
             await refreshElections();
-            router.push(`/admin/election-management/${encodeURIComponent(electionId)}/edit`);
+            setShowCreateModal(false);
           }}
         />
 
@@ -81,28 +99,8 @@ export default function ElectionManagementPage() {
           open={!!electionPendingDelete}
           title={electionPendingDelete?.title ?? ""}
           submitting={deleteElectionSubmitting}
-          onCancel={() => !deleteElectionSubmitting && setElectionPendingDelete(null)}
-          onConfirm={async () => {
-            const pending = electionPendingDelete;
-            if (!pending) return;
-            setDeleteElectionSubmitting(true);
-            try {
-              await deleteElection(pending.id);
-              notify.success({
-                title: "Election deleted",
-                description: `"${pending.title}" was removed.`,
-              });
-              setElectionPendingDelete(null);
-              await refreshElections();
-            } catch (err: unknown) {
-              notify.error({
-                title: "Could not delete election",
-                description: err instanceof Error ? err.message : String(err),
-              });
-            } finally {
-              setDeleteElectionSubmitting(false);
-            }
-          }}
+          onCancel={() => setElectionPendingDelete(null)}
+          onConfirm={handleDeleteConfirm}
         />
       </div>
     </AdminElectionShell>

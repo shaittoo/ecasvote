@@ -15,6 +15,7 @@ import {
   fetchPaperCheckIn,
   fetchPaperTokens,
   fetchPositions,
+  getGatewayBase,
   type PaperCheckInVoter,
 } from "@/lib/ecasvoteApi";
 import { mapPositionsToPrintableBallot } from "@/lib/ballot/mapPositionsToPrintable";
@@ -182,6 +183,28 @@ export function BallotPrintClient() {
         })()
       : undefined;
 
+      useEffect(() => {
+        if (!ballotToken) {
+          console.warn("No ballotToken → skipping layout fetch");
+          return;
+        }
+    
+        console.log("Fetching OMR layout for:", ballotToken);
+    
+        fetch(`${getGatewayBase()}/api/omr-layout/${ballotToken}`)
+          .then((res) => {
+            console.log("GET status:", res.status);
+            if (!res.ok) throw new Error("Failed to fetch layout");
+            return res.json();
+          })
+          .then((data) => {
+            console.log("✅ Layout loaded:", data);
+          })
+          .catch((err) => {
+            console.error("❌ Layout fetch error:", err);
+          });
+      }, [ballotToken]);
+
   return (
     <div className="min-h-screen bg-gray-100 pb-8 pt-2 print:bg-white print:py-0">
       <div className="mx-auto max-w-4xl px-4 print:max-w-none print:px-0">
@@ -230,18 +253,33 @@ export function BallotPrintClient() {
               ) : null}
             </>
           ) : (
-            <p className="mt-1 text-xs text-gray-500">
-              Change via <code className="rounded bg-gray-100 px-1">?electionId=…</code>
-              {ballotTokenFromQuery ? (
-                <> · Using <code className="rounded bg-gray-100 px-1">ballotToken</code> from URL.</>
-              ) : (
-                <>
-                  . Ballot token below is a preview label until you issue a real token; add{" "}
-                  <code className="rounded bg-gray-100 px-1">?ballotToken=TKN-…</code> to print an issued
-                  token.
-                </>
-              )}
-            </p>
+            <>
+              <p className="mt-1 text-xs text-gray-500">
+                Change via <code className="rounded bg-gray-100 px-1">?electionId=…</code>
+                {ballotTokenFromQuery ? (
+                  <> · Using <code className="rounded bg-gray-100 px-1">ballotToken</code> from URL.</>
+                ) : (
+                  <>
+                    . Ballot token below is a preview label until you issue a real token; add{" "}
+                    <code className="rounded bg-gray-100 px-1">?ballotToken=TKN-…</code> to print an issued
+                    token.
+                  </>
+                )}
+              </p>
+              <div
+                className="mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950"
+                role="status"
+              >
+                <strong className="font-semibold">Not voter-specific.</strong> This preview lists every
+                contest in the election. For real paper ballots, open print from{" "}
+                <Link href="/admin/voter-management/voter-roster" className="font-medium underline">
+                  voter roster
+                </Link>{" "}
+                (includes <code className="rounded bg-white/80 px-0.5">department</code> and{" "}
+                <code className="rounded bg-white/80 px-0.5">studentNumber</code>) so the sheet matches the
+                voter and OMR bubble geometry is not saved with the wrong contest count.
+              </div>
+            </>
           )}
         </div>
 
@@ -294,6 +332,9 @@ export function BallotPrintClient() {
               jurisdictionLine={jurisdictionLine || undefined}
               onGeometryTemplateReady={(geom) => {
                 setScannerTemplateJson(JSON.stringify(geom, null, 2));
+                if (!isVoterSpecific) {
+                  return;
+                }
                 void saveOmrLayout({
                   ballotId: ballotToken,
                   electionId,

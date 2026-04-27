@@ -5,12 +5,29 @@ Environment variables:
   GATEWAY_URL          URL of the eCASVote gateway (e.g. http://127.0.0.1:3000).
                        When set, the worker fetches bubble layout from /api/omr-layout/:ballotId
                        instead of reading it from the QR payload or the template object.
-  OMR_FIDUCIAL_WARP    Default ``1`` (on): perspective warp from up to 8 edge/corner fiducials
-                       to canonical 1000×1400. Set to ``0``/``false``/``off`` for resize-only (debug).
-  OMR_POST_WARP_DESKEW Default ``0``. Set to ``1`` to run an extra Hough deskew after fiducial
-                       warp (can shift bubble geometry; keep off when fiducials succeed).
+  OMR_FIDUCIAL_WARP    Default ``crop``: bbox from corner fiducials (or grid corners), crop,
+                       resize to canonical — no perspective distortion. Set ``homography`` for
+                       full ``warpPerspective`` from the 8-point fiducial grid. ``1``/``true``/``on``
+                       are aliases for ``crop``. Set ``0``/``false``/``off`` for resize-only (debug).
+  OMR_COARSE_DOCUMENT_WARP Default ``1``. Bright-sheet quad dewarp before fiducials (live camera).
+                       Set ``0`` to disable.
+  OMR_AUTO_HOMOGRAPHY_SKEW_DEG Default ``2.25``. In crop mode, auto-use homography when corner quad
+                       is skewed; set ``0`` to disable.
+  OMR_POST_WARP_DESKEW Default ``0``. After **homography** warp only, set ``1`` for an extra Hough
+                       deskew (can shift bubble geometry; ignored for bbox crop).
+  OMR_BBOX_SPAN_Y_BIAS_PX Default ``2``. Bbox-crop mode only: subtract from template-mapped Y
+                       (shift expected centers up). Use ``0`` to disable.
+  OMR_BBOX_CROP_BOTTOM_TRIM_FRAC Default ``0``. Fraction of bbox height trimmed from crop bottom;
+                       legacy ``0.1`` cut off bottom corner fiducials / QR on camera scans.
+  OMR_BBOX_EXTRA_EDGE_PAD_PX Default ``8``. Extra padding (px) outside corner-centroid bbox on each side.
+  OMR_BBOX_RIGHT_COL_X_NUDGE_PX Default ``0``. When template nx ≥ OMR_BBOX_RIGHT_COL_NX_MIN,
+                       subtract this from mapped X (shift expected blue dot **left**, e.g. column 3).
+  OMR_BBOX_RIGHT_COL_NX_MIN Default ``0.62``. Template-normalized X (0–1) threshold for that nudge.
   OMR_BUBBLE_CLAHE    Default ``1``: apply CLAHE on BT.601 luminance before bubble ROI stats.
                        Set to ``0``/``false``/``off`` to disable (compare stability on tinted scans).
+  OMR_BUBBLE_MASK_PAD_SCALE Default ``1``. Multiplier for the per-bubble margin when building the
+                       scoring mask (smaller ⇒ smaller bright “unmasked” patches in the debug tint).
+                       Clamped to ``0.5``–``1.25``; values below ``1`` also tighten real scoring mask.
 """
 
 import base64
@@ -36,6 +53,7 @@ from app.omr_layout_v1 import (
     CANONICAL_H,
     CANONICAL_W,
     annotate_warped_layout,
+    merge_layout_geometry_for_mapping,
     reproduce_warped_after_rotation,
     rotate_input,
 )
@@ -73,6 +91,7 @@ def _warped_for_debug_overlay(
     img: Any,
     scan_result: dict[str, Any],
     warped_v2: Any | None,
+    template: dict[str, Any] | None = None,
 ) -> Any | None:
     if warped_v2 is not None:
         return warped_v2
@@ -80,7 +99,7 @@ def _warped_for_debug_overlay(
     wd = br.get("warpDebug") or {}
     rot_deg = int(wd.get("inputRotationDeg", 0))
     warped_fb, _ = reproduce_warped_after_rotation(
-        img, rot_deg, detect_corner_fiducials, compute_homography
+        img, rot_deg, detect_corner_fiducials, compute_homography, template
     )
     return warped_fb
 
@@ -109,7 +128,7 @@ def _try_geometry_debug_overlay(
     scan_result: dict[str, Any],
     warped_v2: Any | None,
 ) -> Any | None:
-    """Gateway-stored layout first; then layoutDebug; client template.geometry only without gateway ballot."""
+    """Gateway-stored layout first; then client template.geometry; then layoutDebug rows."""
     tpl = template or {}
     geom = tpl.get("geometry") if isinstance(tpl.get("geometry"), dict) else None
     br = scan_result.get("bubbleRead") or {}
@@ -117,7 +136,7 @@ def _try_geometry_debug_overlay(
     ballot_id = _extract_ballot_id(scan_result)
     gw = _gateway_url()
 
-    warped = _warped_for_debug_overlay(img, scan_result, warped_v2)
+    warped = _warped_for_debug_overlay(img, scan_result, warped_v2, tpl)
     if warped is None:
         warped = _synthesize_canonical_warp_for_debug(img, scan_result)
 
@@ -144,7 +163,8 @@ def _try_geometry_debug_overlay(
             warped = _synthesize_canonical_warp_for_debug(img, scan_result)
         if warped is not None:
             print("OVERLAY: geometry-based (gateway layout)")
-            return _debug_annotate_v2(warped, gateway_layout, scan_result)
+            layout_draw = merge_layout_geometry_for_mapping(gateway_layout, tpl)
+            return _debug_annotate_v2(warped, layout_draw, scan_result)
         print("OVERLAY: gateway layout present but no warped canvas")
 
     print(
@@ -154,18 +174,13 @@ def _try_geometry_debug_overlay(
         len(layout_dbg) if isinstance(layout_dbg, list) else None,
     )
 
+    if isinstance(geom, dict) and geom.get("contests") and warped is not None:
+        print("OVERLAY: geometry-based (client template)")
+        return _debug_annotate_v2(warped, geom, scan_result)
+
     if isinstance(layout_dbg, list) and len(layout_dbg) > 0 and warped is not None:
         print("OVERLAY: geometry-based (layoutDebug rows)")
         return annotate_warped_layout(warped, layout_dbg, sel)
-
-    if isinstance(geom, dict) and geom.get("contests") and warped is not None:
-        if not (gw and ballot_id):
-            print("OVERLAY: geometry-based (client template, no gateway ballot id)")
-            return _debug_annotate_v2(warped, geom, scan_result)
-        print(
-            "OVERLAY: skipping client template geometry — use GET /api/omr-layout for ballot",
-            ballot_id,
-        )
 
     return None
 
@@ -207,7 +222,6 @@ def scan(req: ScanRequest) -> dict[str, Any]:
 
 @app.post("/debug-json")
 def debug_json(req: ScanRequest) -> dict[str, Any]:
-    print("ENTERED debug_json")
     """
     Returns annotated ballot image (base64 PNG) + selections for inline display.
     Uses the same rotation and warp as the final scan result.
@@ -218,6 +232,26 @@ def debug_json(req: ScanRequest) -> dict[str, Any]:
         scan_result, warped_v2 = scan_ballot_image_with_warp(
             req.image_base64, req.template
         )
+
+        # TEMPORARY DEBUG — dump all bubble scores
+        _br_dbg = scan_result.get("bubbleRead") or {}
+        _ov_dbg = _br_dbg.get("bubbleOverlay") or _br_dbg.get("contestsRead") or []
+        if not _ov_dbg:
+            # Try deeper nesting
+            print(f"DEBUG-JSON: bubbleRead keys={list(_br_dbg.keys())[:15]}")
+            # Check contestsRead for per-bubble data
+            _cr = _br_dbg.get("contestsRead") or []
+            if _cr:
+                print(f"DEBUG-JSON: contestsRead has {len(_cr)} contests")
+            # Dump raw scores
+            _rs = scan_result.get("rawBubbleScores") or _br_dbg.get("rawBubbleScores") or {}
+            for _pid, _scores in _rs.items():
+                for _oid, _sv in _scores.items():
+                    if not str(_oid).startswith("_"):
+                        print(f"SCORE {str(_pid)[:20]:20s} {str(_oid)[:25]:25s} score={float(_sv):.3f}")
+        else:
+            for _ov in _ov_dbg:
+                print(f"BUBBLE {str(_ov.get('positionId',''))[:20]:20s} {str(_ov.get('optionId',''))[:25]:25s} idr={float(_ov.get('innerDarkRatio',0)):.3f} cc={float(_ov.get('innerCcRatio',0)):.3f} cmd={float(_ov.get('coreMeanDark',0)):.3f} sc={float(_ov.get('score',0)):.3f} cls={str(_ov.get('fillClassification',''))}")
 
         annotated = _try_geometry_debug_overlay(
             img=img,
@@ -248,10 +282,24 @@ def debug_json(req: ScanRequest) -> dict[str, Any]:
             else:
                 print("OVERLAY: legacy fallback")
                 bubble_result = scan_result.get("bubbleRead") or {}
+                # TEMPORARY DEBUG
+                for _ov in (bubble_result.get("bubbleOverlay") or []):
+                    _pid = str(_ov.get("positionId",""))[:20]
+                    _oid = str(_ov.get("optionId",""))[:25]
+                    _idr = float(_ov.get("innerDarkRatio", 0))
+                    _ccr = float(_ov.get("innerCcRatio", 0))
+                    _cmd = float(_ov.get("coreMeanDark", 0))
+                    _sc = float(_ov.get("score", 0))
+                    _cls = str(_ov.get("fillClassification", ""))
+                    print(f"BUBBLE {_pid:20s} {_oid:25s} idr={_idr:.3f} cc={_ccr:.3f} cmd={_cmd:.3f} sc={_sc:.3f} cls={_cls}")
                 warp_dbg = bubble_result.get("warpDebug") or {}
                 rot_deg = int(warp_dbg.get("inputRotationDeg", 0))
                 warped_fb, _ = reproduce_warped_after_rotation(
-                    img, rot_deg, detect_corner_fiducials, compute_homography
+                    img,
+                    rot_deg,
+                    detect_corner_fiducials,
+                    compute_homography,
+                    req.template,
                 )
                 src = warped_fb if warped_fb is not None else img
                 annotated = debug_annotate_ballot(src, req.template or {}, bubble_result)
@@ -260,6 +308,16 @@ def debug_json(req: ScanRequest) -> dict[str, Any]:
         img_b64 = base64.b64encode(buf.tobytes()).decode()
 
         bubble_result = scan_result.get("bubbleRead") or {}
+        # TEMPORARY DEBUG — print bubble scores
+        for _ov in (bubble_result.get("bubbleOverlay") or []):
+            _pid = str(_ov.get('positionId',''))[:20]
+            _oid = str(_ov.get('optionId',''))[:25]
+            _idr = float(_ov.get('innerDarkRatio', 0))
+            _ccr = float(_ov.get('innerCcRatio', 0))
+            _cmd = float(_ov.get('coreMeanDark', 0))
+            _sc = float(_ov.get('score', 0))
+            _cls = str(_ov.get('fillClassification', ''))
+            print(f"BUBBLE {_pid:20s} {_oid:25s} idr={_idr:.3f} cc={_ccr:.3f} cmd={_cmd:.3f} sc={_sc:.3f} cls={_cls}")
         return {
             "image_base64": img_b64,
             "contestsDetected": bubble_result.get("contestsDetected"),
@@ -316,9 +374,23 @@ def debug(req: ScanRequest) -> HTMLResponse:
             else:
                 print("OVERLAY: legacy fallback")
                 bubble_result = scan_result.get("bubbleRead") or {}
+                # TEMPORARY DEBUG
+                for _ov in (bubble_result.get("bubbleOverlay") or []):
+                    _pid = str(_ov.get("positionId",""))[:20]
+                    _oid = str(_ov.get("optionId",""))[:25]
+                    _idr = float(_ov.get("innerDarkRatio", 0))
+                    _ccr = float(_ov.get("innerCcRatio", 0))
+                    _cmd = float(_ov.get("coreMeanDark", 0))
+                    _sc = float(_ov.get("score", 0))
+                    _cls = str(_ov.get("fillClassification", ""))
+                    print(f"BUBBLE {_pid:20s} {_oid:25s} idr={_idr:.3f} cc={_ccr:.3f} cmd={_cmd:.3f} sc={_sc:.3f} cls={_cls}")
                 rot_deg = int((bubble_result.get("warpDebug") or {}).get("inputRotationDeg", 0))
                 warped_fb, _ = reproduce_warped_after_rotation(
-                    img, rot_deg, detect_corner_fiducials, compute_homography
+                    img,
+                    rot_deg,
+                    detect_corner_fiducials,
+                    compute_homography,
+                    req.template,
                 )
                 src = warped_fb if warped_fb is not None else img
                 annotated = debug_annotate_ballot(src, req.template or {}, bubble_result)
@@ -328,6 +400,16 @@ def debug(req: ScanRequest) -> HTMLResponse:
 
         selections = scan_result.get("selectionsByPosition") or {}
         bubble_result = scan_result.get("bubbleRead") or {}
+        # TEMPORARY DEBUG
+        for _ov in (bubble_result.get("bubbleOverlay") or []):
+            _pid = str(_ov.get("positionId",""))[:20]
+            _oid = str(_ov.get("optionId",""))[:25]
+            _idr = float(_ov.get("innerDarkRatio", 0))
+            _ccr = float(_ov.get("innerCcRatio", 0))
+            _cmd = float(_ov.get("coreMeanDark", 0))
+            _sc = float(_ov.get("score", 0))
+            _cls = str(_ov.get("fillClassification", ""))
+            print(f"BUBBLE {_pid:20s} {_oid:25s} idr={_idr:.3f} cc={_ccr:.3f} cmd={_cmd:.3f} sc={_sc:.3f} cls={_cls}")
         detected = bubble_result.get("contestsDetected", len(selections))
         in_tpl = bubble_result.get("contestsInTemplate", "?")
         ballot_id_disp = scan_result.get("ballotId") or "—"
