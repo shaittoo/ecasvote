@@ -42,6 +42,7 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
   const [drafts, setDrafts] = useState<CandidateDraft[]>([emptyDraft()]);
   const [candidatesPublished, setCandidatesPublished] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [showPublishModal, setShowPublishModal] = useState(false);
 
   const loadPositionsForElection = useCallback(async (eid: string) => {
     try {
@@ -215,16 +216,13 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
     }
   };
 
-  const handlePublishCandidates = async () => {
+  const confirmPublishCandidates = async () => {
     if (!electionId) return;
-    const confirmed = window.confirm(
-      `Publish candidate list for ${electionTitle || electionId}? Candidates will be visible to students and validators.`
-    );
-    if (!confirmed) return;
     setPublishing(true);
     try {
       await publishCandidates(electionId);
       setCandidatesPublished(true);
+      setShowPublishModal(false);
       notify.success({ title: "Candidates published successfully" });
     } catch (err) {
       notify.error({
@@ -293,7 +291,7 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
               ) : candidates.length > 0 ? (
                 <Button
                   className="text-white bg-[#0C8C3F] hover:bg-[#0a7a36]"
-                  onClick={handlePublishCandidates}
+                  onClick={() => setShowPublishModal(true)}
                   disabled={publishing}
                 >
                   {publishing ? "Publishing..." : "Publish Candidates"}
@@ -413,6 +411,44 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
         onUpdateDraft={updateDraft}
         onSave={() => void saveDrafts()}
       />
+
+      {/* Publish candidates confirmation modal */}
+      {showPublishModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => !publishing && setShowPublishModal(false)}
+          />
+          <div className="relative z-10 w-full max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">
+              Publish Candidates
+            </h3>
+            <p className="text-sm text-gray-600 mb-6">
+              Publish candidate list for{" "}
+              <span className="font-medium text-gray-900">{electionTitle || electionId}</span>?
+              Candidates will be visible to students and validators.
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="outline"
+                className="bg-white"
+                onClick={() => setShowPublishModal(false)}
+                disabled={publishing}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="text-white"
+                style={{ backgroundColor: "#7A0019" }}
+                onClick={confirmPublishCandidates}
+                disabled={publishing}
+              >
+                {publishing ? "Publishing..." : "Publish Candidates"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -769,7 +769,7 @@ app.post('/elections', async (req, res) => {
   try {
     const contract = await getContract();
 
-    await contract.submit('CreateElection', {
+    const createCommit = await contract.submitAsync('CreateElection', {
       arguments: [
         String(electionId),
         String(name),
@@ -780,6 +780,7 @@ app.post('/elections', async (req, res) => {
       ],
       endorsingOrganizations: ALL_ENDORSING_ORGS,
     });
+    const createTxId = createCommit.getTransactionId();
 
     // DB sync
     try {
@@ -861,6 +862,7 @@ app.post('/elections', async (req, res) => {
         data: {
           electionId: String(electionId),
           action: 'CREATE_ELECTION',
+          txId: createTxId,
           details: { name: String(name), createdBy: String(createdBy ?? 'admin') },
         },
       });
@@ -1715,7 +1717,7 @@ app.post('/scanner/confirm-vote', async (req, res) => {
             throw regErr;
           }
         }
-        await contract.submit('CastVoteEncrypted', {
+        const voteCommit = await contract.submitAsync('CastVoteEncrypted', {
           arguments: [
             electionId,
             result.studentNumber,
@@ -1724,6 +1726,7 @@ app.post('/scanner/confirm-vote', async (req, res) => {
           ],
           endorsingOrganizations: ['Org1MSP'],
         });
+        const voteTxId = voteCommit.getTransactionId();
 
         // Save anonymized vote records to DB (one per selection, no voter linkage)
         const castAt = new Date();
@@ -1756,6 +1759,7 @@ app.post('/scanner/confirm-vote', async (req, res) => {
             data: {
               electionId,
               action: 'CAST_VOTE',
+              txId: voteTxId,
               details: { ballotToken, channel: 'paper-scanner' },
             },
           });
@@ -2030,6 +2034,7 @@ app.post('/elections/:id/candidates', async (req, res) => {
       });
 
       // Also register on blockchain (only if election is in DRAFT status)
+      let candTxId: string | undefined;
       try {
         // Check election status first
         const electionBytes = await contract.evaluateTransaction('GetElection', id);
@@ -2037,7 +2042,7 @@ app.post('/elections/:id/candidates', async (req, res) => {
         if (electionText) {
           const election = JSON.parse(electionText);
           if (election.status === 'DRAFT') {
-            await contract.submit('RegisterCandidate', {
+            const regCandCommit = await contract.submitAsync('RegisterCandidate', {
               arguments: [
                 id,
                 position.id,
@@ -2048,9 +2053,9 @@ app.post('/elections/:id/candidates', async (req, res) => {
                 yearLevel || '',
               ],
               endorsingOrganizations: ALL_ENDORSING_ORGS,
-            }
-            );
-            console.log(`✅ Candidate ${candidateId} registered on blockchain`);
+            });
+            candTxId = regCandCommit.getTransactionId();
+            console.log(`✅ Candidate ${candidateId} registered on blockchain (txId: ${candTxId})`);
           } else {
             console.warn(`⚠️ Skipping blockchain registration: Election ${id} is ${election.status} (must be DRAFT)`);
           }
@@ -2068,6 +2073,7 @@ app.post('/elections/:id/candidates', async (req, res) => {
           data: {
             electionId: id,
             action: 'REGISTER_CANDIDATE',
+            txId: candTxId ?? null,
             details: { candidateId, name, position: positionName },
           },
         });
@@ -2267,14 +2273,15 @@ app.post('/elections/:id/open', async (req, res) => {
 
   try {
     const contract = await getContract();
-    await contract.submit('OpenElection', {
+    const openCommit = await contract.submitAsync('OpenElection', {
       arguments: [id],
       endorsingOrganizations: ALL_ENDORSING_ORGS,
     });
+    const openTxId = openCommit.getTransactionId();
 
     try {
       await prisma.auditLog.create({
-        data: { electionId: id, action: 'OPEN_ELECTION' },
+        data: { electionId: id, action: 'OPEN_ELECTION', txId: openTxId },
       });
     } catch (logErr: any) {
       console.warn('⚠️ Audit log for OPEN_ELECTION failed:', logErr.message);
@@ -2296,14 +2303,15 @@ app.post('/elections/:id/close', async (req, res) => {
 
   try {
     const contract = await getContract();
-    await contract.submit('CloseElection', {
+    const closeCommit = await contract.submitAsync('CloseElection', {
       arguments: [id],
       endorsingOrganizations: ALL_ENDORSING_ORGS,
     });
+    const closeTxId = closeCommit.getTransactionId();
 
     try {
       await prisma.auditLog.create({
-        data: { electionId: id, action: 'CLOSE_ELECTION' },
+        data: { electionId: id, action: 'CLOSE_ELECTION', txId: closeTxId },
       });
     } catch (logErr: any) {
       console.warn('⚠️ Audit log for CLOSE_ELECTION failed:', logErr.message);
@@ -3048,6 +3056,32 @@ app.get('/elections/:id/audit-logs', async (req, res) => {
 res.status(400).json({
       error: err.message || 'GetAuditLogs failed',
     });
+  }
+});
+
+// Global audit logs (all elections)
+app.get('/audit-logs', async (_req, res) => {
+  try {
+    const auditLogs = await prisma.auditLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 1000,
+    });
+    res.json({
+      ok: true,
+      logs: auditLogs.map((log) => ({
+        id: log.id,
+        electionId: log.electionId,
+        voterId: log.voterId,
+        action: log.action,
+        txId: log.txId,
+        details: log.details,
+        createdAt: log.createdAt,
+      })),
+      count: auditLogs.length,
+    });
+  } catch (err: any) {
+    console.error('GetAllAuditLogs error:', err);
+    res.status(400).json({ error: err.message || 'GetAllAuditLogs failed' });
   }
 });
 

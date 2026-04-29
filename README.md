@@ -55,6 +55,51 @@ A hybrid electronic and paper ballot voting system built on Hyperledger Fabric, 
 | Authentication | bcrypt, cookie-based sessions |
 | Infrastructure | Docker, WSL2/Ubuntu |
 
+## Quick Deploy (Ubuntu/Debian)
+
+### Prerequisites
+
+```bash
+# Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+
+# Node.js 18
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# Go 1.21
+sudo snap install go --classic
+
+# Python 3.10+ (for OMR worker)
+sudo apt-get install -y python3 python3-pip python3-venv
+
+# Hyperledger Fabric 2.5 binaries
+curl -sSLO https://raw.githubusercontent.com/hyperledger/fabric/main/scripts/install-fabric.sh
+chmod +x install-fabric.sh
+./install-fabric.sh --fabric-version 2.5.0 binary
+```
+
+### Setup
+
+```bash
+git clone https://github.com/shaittoo/ecasvote.git
+cd ecasvote
+cp gateway-api/.env.example gateway-api/.env
+# Edit gateway-api/.env — set CRYPTO_PATH to your Fabric network crypto material
+./start.sh
+```
+
+### Access
+
+| URL | Credentials |
+|-----|-------------|
+| http://localhost:3000 | Landing page (public) |
+| http://localhost:3000/login | Admin: `admin@up.edu.ph` / `admin123` |
+| http://localhost:3000/login | Validator: `validator@up.edu.ph` / `validator123` |
+
+See [SETUP.md](SETUP.md) for the full setup guide.
+
 ## Organizations
 
 The Fabric network models the real stakeholders in CAS SC elections:

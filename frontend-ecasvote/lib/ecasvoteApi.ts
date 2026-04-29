@@ -446,6 +446,13 @@ export async function fetchAuditLogs(
   return handleResponse(res);
 }
 
+export async function fetchAllAuditLogs(): Promise<AuditLogsResponse> {
+  const res = await fetch(`${getGatewayBase()}/audit-logs`, {
+    cache: "no-store",
+  });
+  return handleResponse(res);
+}
+
 export interface IntegrityCheckData {
   blockchainResults: ResultsJson;
   databaseResults: ResultsJson;

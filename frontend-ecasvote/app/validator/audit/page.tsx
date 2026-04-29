@@ -177,7 +177,11 @@ export default function ValidatorAuditLogsPage() {
                             <td className="py-3 px-4 text-sm font-mono text-gray-600">
                               {log.txId ? `${log.txId.substring(0, 20)}...` : "N/A"}
                             </td>
-                            <td className="py-3 px-4 text-sm text-gray-600">
+                            <td
+                              className="py-3 px-4 text-sm text-gray-600 cursor-pointer hover:text-blue-600 hover:underline"
+                              title="Click to view full details"
+                              onClick={() => setSelectedLog(log)}
+                            >
                               {log.details ? JSON.stringify(log.details).substring(0, 50) + "..." : "N/A"}
                             </td>
                           </tr>
@@ -235,23 +239,15 @@ export default function ValidatorAuditLogsPage() {
                         </div>
 
                         <div className="mt-4 space-y-2 text-sm text-gray-700">
-                          <p><strong>TxID:</strong> {selectedLog.txId}</p>
-                          <p><strong>Block:</strong> {selectedLog.details?.blockNumber || "-"}</p>
-                          <p><strong>Function:</strong> {selectedLog.details?.function || selectedLog.action}</p>
-                          <p><strong>Validation:</strong> {selectedLog.details?.validation || "-"}</p>
-                          <p><strong>Time:</strong> {new Date(selectedLog.createdAt).toLocaleString()}</p>
-                          <p><strong>Positions:</strong></p>
-                          {selectedLog.details?.selections?.length ? (
-                            <ul className="list-disc pl-5">
-                              {selectedLog.details.selections.map((sel: any, idx: number) => (
-                                <li key={idx}>
-                                  {sel.positionId} → {sel.candidateId}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p>-</p>
-                          )}
+                          <p><strong>Action:</strong> {selectedLog.action}</p>
+                          <p><strong>Election:</strong> {selectedLog.electionId || "-"}</p>
+                          <p><strong>TxID:</strong> <span className="font-mono break-all">{selectedLog.txId || "-"}</span></p>
+                          <p><strong>Voter ID:</strong> {selectedLog.voterId || "-"}</p>
+                          <p><strong>Time:</strong> {new Date(selectedLog.createdAt).toLocaleString("en-US", { timeZone: "Asia/Manila" })}</p>
+                          <p className="mt-3"><strong>Full Details:</strong></p>
+                          <pre className="mt-1 rounded-md bg-gray-100 p-3 text-xs font-mono overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-all">
+                            {selectedLog.details ? JSON.stringify(selectedLog.details, null, 2) : "No details"}
+                          </pre>
                         </div>
                       </div>
                     </div>

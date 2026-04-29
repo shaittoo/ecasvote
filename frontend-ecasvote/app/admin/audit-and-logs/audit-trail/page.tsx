@@ -9,7 +9,7 @@ import { Search, Download, Printer } from "lucide-react";
 import StatCard from "../../components/statcard";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../../components/header";
-import { fetchAuditLogs } from "@/lib/ecasvoteApi";
+import { fetchAllAuditLogs } from "@/lib/ecasvoteApi";
 import type { AuditLog } from "@/lib/ecasvoteApi";
 import { exportAuditLogsCSV, printAuditTable } from "./export";
 
@@ -20,14 +20,13 @@ export default function AuditTrailViewer() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-  const [selectedElection] = useState("election-2025"); // change later
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
 
-  // Fetch logs on mount
+  // Fetch all logs on mount
   useEffect(() => {
     const loadLogs = async () => {
       try {
-        const res = await fetchAuditLogs(selectedElection);
+        const res = await fetchAllAuditLogs();
         if (res.ok) setAuditLogs(res.logs);
       } catch (err) {
         console.error("Failed to load audit logs", err);
@@ -36,7 +35,7 @@ export default function AuditTrailViewer() {
       }
     };
     loadLogs();
-  }, [selectedElection]);
+  }, []);
 
   const stats = {
     totalTransactions: auditLogs.length,
@@ -87,13 +86,13 @@ export default function AuditTrailViewer() {
               {/* Stats Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <StatCard
-                  title="Total Vote Transactions"
+                  title="Total Audit Entries"
                   value={stats.totalTransactions}
                   color="text-gray-700"
                 />
                 <StatCard
-                  title="Total Blocks"
-                  value={stats.totalBlocks}
+                  title="Total Elections"
+                  value={new Set(auditLogs.map((l) => l.electionId).filter(Boolean)).size}
                   color="text-gray-700"
                 />
               </div>
@@ -125,7 +124,7 @@ export default function AuditTrailViewer() {
                       </button>
                       <button
                         className="flex items-center px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer"
-                        onClick={() => printAuditTable("audit-table", `Audit Trail - ${selectedElection}`)}
+                        onClick={() => printAuditTable("audit-table", "Audit Trail - All Elections")}
                       >
                         <Printer className="h-4 w-4 mr-2" />
                         Print
@@ -140,6 +139,7 @@ export default function AuditTrailViewer() {
                       <thead>
                         <tr className="border-b text-gray-600">
                           <th className="text-center py-2">Transaction ID</th>
+                          <th className="text-center py-2">Election</th>
                           <th className="text-center py-2">Action</th>
                           <th className="text-center py-2">Voter ID</th>
                           <th className="text-center py-2">Validation</th>
@@ -170,6 +170,7 @@ export default function AuditTrailViewer() {
                               <td className="py-2 font-mono">
                                 {log.txId ? `${log.txId.slice(0, 10)}...` : "-"}
                               </td>
+                              <td className="py-2 text-xs">{log.electionId ?? "-"}</td>
                               <td className="py-2">{log.details?.function ?? log.action}</td>
                               <td className="py-2">{log.voterId ?? "-"}</td>
                               <td className="py-2">
