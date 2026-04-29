@@ -228,38 +228,40 @@ export default function ResultsPage() {
               <CardDescription>{error}</CardDescription>
             </CardHeader>
           </Card>
-        ) : election && election.status !== 'CLOSED' ? (
-          // Show "Results Not Available Yet" when election is not closed
+        ) : election && (election.status !== 'CLOSED' || !election.resultsPublished) ? (
+          // Show "Results Not Available Yet" when election is not closed or results not published
           <div className="space-y-6">
-            {/* Election Status Card */}
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-4">
-                      <span className="bg-[#0C8C3F] text-white px-3 py-1 rounded-full text-sm font-medium">
-                        Ongoing Elections
-                      </span>
+            {election.status !== 'CLOSED' && (
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-4">
+                        <span className="bg-[#0C8C3F] text-white px-3 py-1 rounded-full text-sm font-medium">
+                          Ongoing Elections
+                        </span>
+                      </div>
+                      <h3 className="text-2xl font-bold mb-4">
+                        {election?.name || "CAS Student Council Elections 2026"}
+                      </h3>
                     </div>
-                    <h3 className="text-2xl font-bold mb-4">
-                      {election?.name || "CAS Student Council Elections 2026"}
-                    </h3>
+                    <div className="text-right">
+                      <p className="text-sm text-[#7A0019] mb-2">Election Countdown</p>
+                      <CountdownTimer endTime={election?.endTime} />
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm text-[#7A0019] mb-2">Election Countdown</p>
-                    <CountdownTimer endTime={election?.endTime} />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            )}
 
-            {/* Results Not Available Message */}
             <div className="text-center py-16">
               <h2 className="text-3xl font-bold text-[#7A0019] mb-4">
                 Results Not Available Yet!
               </h2>
               <p className="text-gray-600 text-lg">
-                The {election?.name || "CAS SC Elections 2026"} is still ongoing. Final tallies will be available after the election period.
+                {election.status !== 'CLOSED'
+                  ? `The ${election?.name || "CAS SC Elections 2026"} is still ongoing. Final tallies will be available after the election period.`
+                  : "The election has ended. Results will be published by the election board shortly."}
               </p>
             </div>
           </div>

@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { fetchPositions, fetchResults } from "@/lib/ecasvoteApi";
-import type { Position, ResultsJson } from "@/lib/ecasvoteApi";
+import { fetchElection, fetchElections, fetchPositions, fetchResults } from "@/lib/ecasvoteApi";
+import type { Election, Position, ResultsJson } from "@/lib/ecasvoteApi";
 import { ValidatorSidebar } from "@/components/Sidebar";
 import ValidatorHeader from "../components/header";
 import { Button } from "@/components/ui/button";
@@ -21,37 +21,50 @@ import {
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend);
 
-const ELECTION_ID = "election-2025";
-
 export default function ValidatorResultsPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [elections, setElections] = useState<Election[]>([]);
+  const [electionId, setElectionId] = useState("");
+  const [electionsLoading, setElectionsLoading] = useState(true);
+  const [election, setElection] = useState<any>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [results, setResults] = useState<ResultsJson | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function loadData() {
-      try {
-        const [positionsData, resultsData] = await Promise.all([
-          fetchPositions(ELECTION_ID),
-          fetchResults(ELECTION_ID),
-        ]);
+    setElectionsLoading(true);
+    fetchElections()
+      .then((list) => {
+        setElections(list);
+        const open = list.find((e) => e.status === "OPEN");
+        const closed = list.find((e) => e.status === "CLOSED");
+        setElectionId(open?.id ?? closed?.id ?? list[0]?.id ?? "");
+      })
+      .catch(() => setElections([]))
+      .finally(() => setElectionsLoading(false));
+  }, []);
 
+  useEffect(() => {
+    if (!electionId || electionsLoading) return;
+    setLoading(true);
+    Promise.all([
+      fetchElection(electionId).catch(() => null),
+      fetchPositions(electionId).catch(() => []),
+      fetchResults(electionId).catch(() => null),
+    ])
+      .then(([electionData, positionsData, resultsData]) => {
+        setElection(electionData);
         setPositions(positionsData || []);
         setResults(resultsData || null);
-      } catch (error) {
-        console.error("Failed to load results:", error);
+      })
+      .catch(() => {
         setPositions([]);
         setResults(null);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadData();
-  }, []);
+      })
+      .finally(() => setLoading(false));
+  }, [electionId, electionsLoading]);
 
   const handleLogout = () => {
     router.push("/login");
@@ -102,9 +115,36 @@ export default function ValidatorResultsPage() {
         <main className={`flex-1 p-6 space-y-6 overflow-y-auto transition-all duration-300 ${
           sidebarOpen ? "ml-64" : "ml-20"
         }`}>
+          <select
+            className="h-10 w-full sm:max-w-md rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer"
+            value={electionId}
+            disabled={electionsLoading || elections.length === 0}
+            onChange={(e) => setElectionId(e.target.value)}
+          >
+            {electionsLoading ? (
+              <option value="">Loading elections...</option>
+            ) : elections.length === 0 ? (
+              <option value="">No elections found</option>
+            ) : (
+              elections.map((e) => (
+                <option key={e.id} value={e.id}>{e.name || e.id}</option>
+              ))
+            )}
+          </select>
           {loading ? (
             <div className="text-center py-12 text-gray-500">
               Loading results...
+            </div>
+          ) : election && !election.resultsPublished ? (
+            <div className="py-12 text-center text-gray-500 space-y-4">
+              <p className="text-lg font-semibold">
+                Results Not Available Yet
+              </p>
+              <p className="text-sm">
+                {election.status !== 'CLOSED'
+                  ? "The election is still ongoing. Results will be available after the election is closed and results are published."
+                  : "The election has ended. Results will be published by the election board shortly."}
+              </p>
             </div>
           ) : resultsCharts.length > 0 ? (
             <div className="space-y-6">

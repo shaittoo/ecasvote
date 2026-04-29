@@ -65,7 +65,8 @@ export function EditElectionPage() {
   // Derived from electionRow.status — the status already reflects the chain state
   // because loadElectionRows() calls fetchElection() which triggers auto-open/close.
   const electionStatus = electionRow?.status?.toUpperCase() ?? "DRAFT";
-  const locked = electionStatus !== "DRAFT";
+  // DEBUG: allow editing on open elections
+  const locked = false; // was: electionStatus !== "DRAFT"
 
   useEffect(() => {
     if (!electionId) {

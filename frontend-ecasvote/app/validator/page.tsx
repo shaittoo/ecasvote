@@ -13,8 +13,8 @@ import {
 } from "chart.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { fetchDashboard, fetchElection, fetchPositions, fetchResults, fetchAuditLogs, fetchIntegrityCheck } from "@/lib/ecasvoteApi";
-import type { Position, AuditLog, IntegrityCheckData } from "@/lib/ecasvoteApi";
+import { fetchDashboard, fetchElection, fetchElections, fetchPositions, fetchResults, fetchAuditLogs, fetchIntegrityCheck } from "@/lib/ecasvoteApi";
+import type { Election, Position, AuditLog, IntegrityCheckData } from "@/lib/ecasvoteApi";
 import { ValidatorSidebar } from "@/components/Sidebar";
 import ValidatorHeader from "./components/header";
 import GreetingCard from "@/components/greeting-card";
@@ -22,12 +22,13 @@ import GreetingCard from "@/components/greeting-card";
 // Register Chart.js components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
 
-const ELECTION_ID = 'election-2025';
-
 export default function ValidatorDashboardPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [elections, setElections] = useState<Election[]>([]);
+  const [electionId, setElectionId] = useState("");
+  const [electionsLoading, setElectionsLoading] = useState(true);
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [results, setResults] = useState<any>(null);
@@ -36,21 +37,29 @@ export default function ValidatorDashboardPage() {
   const [integrityLoading, setIntegrityLoading] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const groups = [
-    { name: "Red Bolts", voted: 184, total: 200, color: "#dc2626" },
-    { name: "Skimmers", voted: 252, total: 300, color: "#9333ea" },
-    { name: "Elektrons", voted: 380, total: 500, color: "#ea580c" },
-    { name: "Clovers", voted: 74, total: 200, color: "#16a34a" },
-  ];
+  useEffect(() => {
+    setElectionsLoading(true);
+    fetchElections()
+      .then((list) => {
+        setElections(list);
+        const open = list.find((e) => e.status === "OPEN");
+        const closed = list.find((e) => e.status === "CLOSED");
+        setElectionId(open?.id ?? closed?.id ?? list[0]?.id ?? "");
+      })
+      .catch(() => setElections([]))
+      .finally(() => setElectionsLoading(false));
+  }, []);
 
   useEffect(() => {
+    if (!electionId || electionsLoading) return;
+    setLoading(true);
     async function loadData() {
       try {
         const [dashboard, positionsData, resultsData, auditData] = await Promise.all([
-          fetchDashboard(ELECTION_ID).catch(() => null),
-          fetchPositions(ELECTION_ID).catch(() => []),
-          fetchResults(ELECTION_ID).catch(() => null),
-          fetchAuditLogs(ELECTION_ID).catch(() => ({ logs: [], count: 0 })),
+          fetchDashboard(electionId).catch(() => null),
+          fetchPositions(electionId).catch(() => []),
+          fetchResults(electionId).catch(() => null),
+          fetchAuditLogs(electionId).catch(() => ({ logs: [], count: 0 })),
         ]);
 
         setDashboardData(dashboard);
@@ -64,13 +73,13 @@ export default function ValidatorDashboardPage() {
       }
     }
     loadData();
-  }, []);
+  }, [electionId, electionsLoading]);
 
-  // Load integrity check data only when integrity tab is active
   const loadIntegrityData = async () => {
+    if (!electionId) return;
     setIntegrityLoading(true);
     try {
-      const integrityCheckData = await fetchIntegrityCheck(ELECTION_ID);
+      const integrityCheckData = await fetchIntegrityCheck(electionId);
       setIntegrityData(integrityCheckData);
     } catch (err) {
       console.error('Failed to load integrity check data:', err);
@@ -150,6 +159,22 @@ export default function ValidatorDashboardPage() {
         }`}>
           <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="space-y-6">
+              <select
+                className="h-10 w-full sm:max-w-md rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer"
+                value={electionId}
+                disabled={electionsLoading || elections.length === 0}
+                onChange={(e) => setElectionId(e.target.value)}
+              >
+                {electionsLoading ? (
+                  <option value="">Loading elections...</option>
+                ) : elections.length === 0 ? (
+                  <option value="">No elections found</option>
+                ) : (
+                  elections.map((e) => (
+                    <option key={e.id} value={e.id}>{e.name || e.id}</option>
+                  ))
+                )}
+              </select>
               <GreetingCard name="Validator" role="Validator" roleColor="#3B82F6" />
               
               {/* Election Information */}

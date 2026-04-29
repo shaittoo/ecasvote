@@ -17,8 +17,10 @@ import {
   fetchElections,
   fetchPositions,
   fetchIntegrityCheck,
+  overrideIntegrity,
 } from "@/lib/ecasvoteApi";
 import type { Election, Position, IntegrityCheckData } from "@/lib/ecasvoteApi";
+import { notify } from "@/lib/notify";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../../components/header";
 
@@ -35,6 +37,8 @@ export default function AdminIntegrityCheckPage() {
   const [integrityLoading, setIntegrityLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [adminInfo, setAdminInfo] = useState<any>(null);
+  const [overriding, setOverriding] = useState(false);
+  const [showOverrideModal, setShowOverrideModal] = useState(false);
 
   useEffect(() => {
     // Load admin info from localStorage
@@ -116,6 +120,27 @@ export default function AdminIntegrityCheckPage() {
       setIntegrityData(null);
     } finally {
       setIntegrityLoading(false);
+    }
+  };
+
+  const confirmOverride = async () => {
+    if (!electionId) return;
+    setOverriding(true);
+    try {
+      const result = await overrideIntegrity(electionId);
+      notify.success({
+        title: "Database synced to blockchain",
+        description: `Created ${result.created} vote record(s) to match blockchain tally.`,
+      });
+      setShowOverrideModal(false);
+      await loadIntegrityData();
+    } catch (err) {
+      notify.error({
+        title: "Override failed",
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setOverriding(false);
     }
   };
 
@@ -403,6 +428,19 @@ export default function AdminIntegrityCheckPage() {
                     <p className="text-red-800 mt-4 font-semibold">
                       Please investigate immediately. The blockchain record is the source of truth.
                     </p>
+                    <div className="mt-4 pt-4 border-t border-red-200">
+                      <Button
+                        variant="destructive"
+                        onClick={() => setShowOverrideModal(true)}
+                        disabled={overriding}
+                        className="bg-red-700 hover:bg-red-800 text-white"
+                      >
+                        {overriding ? "Syncing..." : "Override: Sync DB to Blockchain"}
+                      </Button>
+                      <p className="text-xs text-red-600 mt-2">
+                        This will delete all database vote records and recreate them to match the blockchain tally.
+                      </p>
+                    </div>
                   </CardContent>
                 </Card>
               )}
@@ -411,6 +449,48 @@ export default function AdminIntegrityCheckPage() {
           </div>
         </main>
       </div>
+
+      {/* Override confirmation modal */}
+      {showOverrideModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => !overriding && setShowOverrideModal(false)}
+          />
+          <div className="relative bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
+            <div className="flex flex-col items-center text-center">
+              <div className="h-12 w-12 rounded-full bg-red-100 flex items-center justify-center mb-4">
+                <AlertTriangle className="h-6 w-6 text-red-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                Sync Database to Blockchain
+              </h3>
+              <p className="text-sm text-gray-600 mb-6">
+                This will update the database to match the blockchain records.
+                This action cannot be undone. Are you sure you want to proceed?
+              </p>
+              <div className="flex gap-3 w-full">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setShowOverrideModal(false)}
+                  disabled={overriding}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  className="flex-1 bg-red-700 hover:bg-red-800 text-white"
+                  onClick={confirmOverride}
+                  disabled={overriding}
+                >
+                  {overriding ? "Syncing..." : "Sync to Blockchain"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

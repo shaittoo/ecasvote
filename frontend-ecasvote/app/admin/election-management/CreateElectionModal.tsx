@@ -113,7 +113,7 @@ export function CreateElectionModal({
       setNewStartDate(`${startDatePart}T${startTime}`);
       setNewEndDate(`${endDatePart}T${endTime}`);
       const result = await createElectionApi({
-        electionId: crypto.randomUUID(),
+        electionId: newTitle.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
         name: newTitle,
         description: `${newAcademicYear} - ${newSemester}`,
         startTime: validation.startTimeIso,

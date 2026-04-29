@@ -1,0 +1,154 @@
+# eCASVote
+
+**Blockchain-Based Electronic Voting System for the UP Visayas College of Arts and Sciences Student Council Elections**
+
+A hybrid electronic and paper ballot voting system built on Hyperledger Fabric, designed to ensure transparency, immutability, and ballot secrecy for student council elections at the University of the Philippines Visayas, College of Arts and Sciences.
+
+## System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Frontend (Next.js 16)                        │
+│  ┌───────────┐  ┌──────────────┐  ┌───────────────┐  ┌──────────┐ │
+│  │  Landing   │  │  Admin Panel │  │ Student Pages │  │Validator │ │
+│  │  Page (/)  │  │  /admin/*    │  │/studentvoter/*│  │/validator│ │
+│  └───────────┘  └──────────────┘  └───────────────┘  └──────────┘ │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │ HTTP (port 3000 → 4000)
+┌──────────────────────────▼──────────────────────────────────────────┐
+│                    Gateway API (Express + Prisma)                    │
+│  ┌──────────┐  ┌──────────────┐  ┌────────────┐  ┌──────────────┐ │
+│  │   Auth    │  │  Election    │  │   Ballot   │  │  Integrity   │ │
+│  │ Endpoints │  │  Management  │  │  Scanning  │  │    Check     │ │
+│  └──────────┘  └──────────────┘  └─────┬──────┘  └──────────────┘ │
+│                                        │                            │
+│  ┌─────────────────┐    ┌──────────────▼──────────────────┐        │
+│  │ SQLite (Prisma)  │    │   OMR Worker (FastAPI/OpenCV)   │        │
+│  │   Off-chain DB   │    │   Paper ballot bubble reading   │        │
+│  └─────────────────┘    └─────────────────────────────────┘        │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │ gRPC (ports 7051, 9051, 11051)
+┌──────────────────────────▼──────────────────────────────────────────┐
+│               Hyperledger Fabric 2.5 Network                        │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │
+│  │  Org1 (SEB)  │  │ Org2 (Dept)  │  │  Org3 (PMB)  │             │
+│  │  peer0:7051  │  │ peer0:9051   │  │ peer0:11051  │             │
+│  └──────────────┘  └──────────────┘  └──────────────┘             │
+│  ┌──────────────────────────────────────────────────┐             │
+│  │  Orderer (etcdraft) :7050                        │             │
+│  └──────────────────────────────────────────────────┘             │
+│  ┌──────────────────────────────────────────────────┐             │
+│  │  Channel: mychannel | Chaincode: ecasvote (Node) │             │
+│  │  PDC: pdcVoters, pdcBallots (Org1 only)          │             │
+│  └──────────────────────────────────────────────────┘             │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Blockchain | Hyperledger Fabric 2.5, Node.js Chaincode |
+| Backend API | Express 5, TypeScript, Prisma ORM, SQLite |
+| Frontend | Next.js 16, React 19, Tailwind CSS, Chart.js |
+| OMR Worker | Python FastAPI, OpenCV (paper ballot bubble detection) |
+| Authentication | bcrypt, cookie-based sessions |
+| Infrastructure | Docker, WSL2/Ubuntu |
+
+## Organizations
+
+The Fabric network models the real stakeholders in CAS SC elections:
+
+| Org | MSP ID | Role | Peers |
+|-----|--------|------|-------|
+| **Org1** (SEB) | Org1MSP | Supreme Electoral Board — administers elections, registers voters, submits votes | peer0:7051 |
+| **Org2** (Dept) | Org2MSP | Department/Adviser — co-endorses transactions, validates results | peer0:9051 |
+| **Org3** (PMB) | Org3MSP | Party/Independent observer — co-endorses for transparency | peer0:11051 |
+
+Private Data Collections (`pdcVoters`, `pdcBallots`) are accessible only to Org1, preserving ballot secrecy while maintaining an auditable on-chain hash.
+
+## Key Features
+
+- **Blockchain-backed voting** — every vote is recorded on Hyperledger Fabric with multi-org endorsement
+- **Hybrid paper + digital ballots** — supports both digital voting and OMR-scanned paper ballots
+- **Ballot secrecy** — voter identity is never linked to vote selections in public records
+- **Private Data Collections** — voter registration and encrypted ballots stored in Org1-only PDC
+- **Integrity verification** — real-time comparison of blockchain tally vs. database records
+- **Per-election voter roster** — voters are enrolled per election with per-election vote tracking
+- **Candidate and results publishing** — admin controls when candidates and results become publicly visible
+- **Audit trail** — all chaincode transactions logged with timestamps
+- **Paper ballot scanning** — OpenCV-based OMR with QR code identification
+- **Role-based access** — separate dashboards for Admin (SEB), Validator (Adviser), and public viewing
+
+## Quick Start
+
+See [SETUP.md](SETUP.md) for detailed startup instructions.
+
+```bash
+# 1. Start Fabric network
+cd fabric-network-ecasvote
+./network.sh up createChannel -c mychannel -ca
+
+# 2. Deploy chaincode
+cd chaincode-ecasvote
+./deploy-chaincode.sh
+
+# 3. Start gateway API
+cd gateway-api
+cp .env.example .env
+npx prisma db push
+npm run dev
+
+# 4. Seed default users
+curl -X POST http://localhost:4000/seed-users
+
+# 5. Start frontend
+cd frontend-ecasvote
+npm run dev
+```
+
+## Project Structure
+
+```
+ecasvote/
+├── fabric-network-ecasvote/   # Fabric network config, docker-compose, crypto
+├── chaincode-ecasvote/        # Hyperledger Fabric chaincode (TypeScript)
+│   └── src/ecasVote.ts        # Smart contract with all chaincode functions
+├── gateway-api/               # Express REST API + Prisma ORM
+│   ├── src/server.ts          # All API endpoints
+│   ├── src/fabricClient.ts    # Fabric Gateway SDK connection
+│   └── prisma/schema.prisma  # Database schema
+├── frontend-ecasvote/         # Next.js frontend
+│   ├── app/admin/             # SEB admin dashboard
+│   ├── app/validator/         # Validator/adviser dashboard
+│   ├── app/studentvoter/      # Public candidate and results pages
+│   └── app/login/             # Authentication
+├── SETUP.md                   # Startup instructions
+├── CONNECT.md                 # Component connection guide
+├── SECURITY_ANALYSIS.md       # Security design documentation
+└── SYSTEM_INVENTORY.md        # Complete API and schema reference
+```
+
+## Screenshots
+
+*Screenshots to be added.*
+
+## Thesis Context
+
+This system was developed as a thesis project for the **University of the Philippines Visayas, College of Arts and Sciences**. It addresses the need for a transparent, verifiable, and tamper-resistant electronic voting system for CAS Student Council elections.
+
+The system demonstrates how permissioned blockchain technology (Hyperledger Fabric) can be applied to small-scale institutional elections, providing:
+- Cryptographic proof of vote integrity
+- Multi-stakeholder endorsement of transactions
+- Separation of voter identity from ballot content
+- Auditability without compromising ballot secrecy
+
+## Authors
+
+- Shaina Talisay
+- University of the Philippines Visayas
+- College of Arts and Sciences
+
+## License
+
+This project is developed for academic purposes.

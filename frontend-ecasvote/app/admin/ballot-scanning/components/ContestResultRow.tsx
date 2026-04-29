@@ -66,74 +66,58 @@ export function ContestResultRow({
         </div>
       </div>
 
-      {/* Candidates */}
+      {/* Selected candidates only (preserves ballot secrecy) */}
       <div className="space-y-1">
-        {position.candidates.map((cand) => {
-          const isSelected = detectedSelections.includes(cand.id);
-
-          return (
-            <div
-              key={cand.id}
-              className={`flex items-center gap-3 rounded-md px-3 py-2 ${
-                isSelected
-                  ? "bg-[#7A0019]/5 border border-[#7A0019]/20"
-                  : "border border-transparent"
-              }`}
-            >
-              {/* Selection indicator */}
-              <div className={`h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center ${
-                isSelected
-                  ? "border-[#7A0019] bg-[#7A0019]"
-                  : "border-gray-300"
-              }`}>
-                {isSelected && (
-                  <svg className="h-2.5 w-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
-                )}
-              </div>
-
-              {/* Candidate info */}
-              <div className="flex-1 min-w-0">
-                <span
-                  className={`text-sm ${
-                    isSelected
-                      ? "font-medium text-gray-900"
-                      : "text-gray-500"
-                  }`}
-                >
-                  {cand.name}
-                </span>
-                {cand.party && (
-                  <span className="ml-1.5 text-xs text-gray-400">
-                    ({cand.party})
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })}
-
-        {/* Abstain */}
         {(() => {
           const abstainId = `abstain:${position.id}`;
-          const isSelected = detectedSelections.includes(abstainId);
+          const hasAbstain = detectedSelections.includes(abstainId);
+          const selectedCandidates = position.candidates.filter((cand) =>
+            detectedSelections.includes(cand.id)
+          );
 
-          if (!isSelected) return null;
+          if (selectedCandidates.length === 0 && !hasAbstain) {
+            return (
+              <div className="flex items-center gap-3 rounded-md px-3 py-2 border border-transparent">
+                <span className="text-sm italic text-gray-400">No selection</span>
+              </div>
+            );
+          }
 
           return (
-            <div
-              className={`flex items-center gap-3 rounded-md px-3 py-2 border-t mt-1 pt-2 bg-gray-100 border border-gray-300`}
-            >
-              <div className="h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center border-gray-500 bg-gray-500">
-                <svg className="h-2.5 w-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                </svg>
-              </div>
-              <span className="text-sm italic text-gray-700">
-                Abstain
-              </span>
-            </div>
+            <>
+              {selectedCandidates.map((cand) => (
+                <div
+                  key={cand.id}
+                  className="flex items-center gap-3 rounded-md px-3 py-2 bg-[#7A0019]/5 border border-[#7A0019]/20"
+                >
+                  <div className="h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center border-[#7A0019] bg-[#7A0019]">
+                    <svg className="h-2.5 w-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm font-medium text-gray-900">
+                      {cand.name}
+                    </span>
+                    {cand.party && (
+                      <span className="ml-1.5 text-xs text-gray-400">
+                        ({cand.party})
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {hasAbstain && (
+                <div className="flex items-center gap-3 rounded-md px-3 py-2 bg-gray-100 border border-gray-300">
+                  <div className="h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center border-gray-500 bg-gray-500">
+                    <svg className="h-2.5 w-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <span className="text-sm italic text-gray-700">Abstain</span>
+                </div>
+              )}
+            </>
           );
         })()}
       </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import { getGatewayBase } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -58,7 +58,9 @@ function formatPartyLabel(party: string | undefined, kind: ReturnType<typeof par
 export function CandidateCard({ candidate }: CandidateCardProps) {
   const kind = partyKind(candidate.party);
   const imageSrc = candidate.imageUrl?.trim()
-    ? candidate.imageUrl
+    ? candidate.imageUrl.startsWith('http')
+      ? candidate.imageUrl
+      : `${getGatewayBase()}${candidate.imageUrl}`
     : "/default-img.png";
 
   const partyLabel = formatPartyLabel(candidate.party, kind);
@@ -80,12 +82,10 @@ export function CandidateCard({ candidate }: CandidateCardProps) {
             "ring-2 ring-border/60"
           )}
         >
-          <Image
+          <img
             src={imageSrc}
             alt={`Portrait of ${candidate.name}`}
-            fill
-            className="object-cover"
-            sizes="112px"
+            style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
           />
         </div>
       </div>

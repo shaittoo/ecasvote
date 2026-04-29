@@ -37,6 +37,8 @@ export interface Election {
   status: ElectionStatus;
   createdBy: string;
   createdAt: string;
+  resultsPublished?: boolean;
+  candidatesPublished?: boolean;
 }
 
 export type ResultsJson = Record<string, Record<string, number>>;
@@ -62,6 +64,10 @@ export interface LoginResponse {
     program: string;
     yearLevel: number;
     department: string;
+    hasVoted: boolean;
+    electionId: string | null;
+    electionName: string | null;
+    onRoster: boolean;
   };
 }
 
@@ -146,6 +152,36 @@ export async function fetchResults(
     return null;
   }
   
+  return handleResponse(res);
+}
+
+export async function publishCandidates(
+  electionId: string,
+  publish = true
+): Promise<{ ok: boolean; candidatesPublished: boolean }> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/publish-candidates`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ publish }),
+    }
+  );
+  return handleResponse(res);
+}
+
+export async function publishResults(
+  electionId: string,
+  publish = true
+): Promise<{ ok: boolean; resultsPublished: boolean }> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/publish-results`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ publish }),
+    }
+  );
   return handleResponse(res);
 }
 
@@ -318,6 +354,24 @@ export async function fetchPositions(
   return handleResponse(res);
 }
 
+export interface CreatePositionPayload {
+  name: string;
+  maxVotes?: number;
+  order?: number;
+}
+
+export async function createPositions(
+  electionId: string,
+  positions: CreatePositionPayload[]
+): Promise<{ ok: boolean; positions: Position[]; count: number }> {
+  const res = await fetch(`${getGatewayBase()}/elections/${electionId}/positions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ positions }),
+  });
+  return handleResponse(res);
+}
+
 export interface CreateCandidatePayload {
   positionName: string;
   name: string;
@@ -417,6 +471,16 @@ export async function fetchIntegrityCheck(
   const res = await fetch(`${getGatewayBase()}/elections/${electionId}/integrity-check`, {
     cache: "no-store",
   });
+  return handleResponse(res);
+}
+
+export async function overrideIntegrity(
+  electionId: string
+): Promise<{ ok: boolean; created: number; message: string }> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/integrity/override`,
+    { method: "POST" }
+  );
   return handleResponse(res);
 }
 

@@ -239,7 +239,7 @@ export class ECASVoteContract extends Contract {
       endTime,
       status: 'DRAFT',
       createdBy,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date(ctx.stub.getTxTimestamp().seconds.toNumber() * 1000).toISOString(),
     };
 
     await ctx.stub.putState(this.electionKey(electionId), new Uint8Array(Buffer.from(JSON.stringify(election))));
@@ -454,7 +454,7 @@ export class ECASVoteContract extends Contract {
     const election = await this.getElection(ctx, electionId);
 
     // Auto-close election if end time has passed
-    const nowIso = new Date().toISOString();
+    const nowIso = new Date(ctx.stub.getTxTimestamp().seconds.toNumber() * 1000).toISOString();
     if (election.status === 'OPEN' && nowIso > election.endTime) {
       election.status = 'CLOSED';
       await ctx.stub.putState(

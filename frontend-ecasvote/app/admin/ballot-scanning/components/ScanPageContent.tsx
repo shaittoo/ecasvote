@@ -222,6 +222,7 @@ export function ScanPageContent() {
 
   // Scan state
   const [scanState, setScanState] = useState<ScanState>("idle");
+  const [omrOffline, setOmrOffline] = useState(false);
   const [debugImageSrc, setDebugImageSrc] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [showResultsModal, setShowResultsModal] = useState(false);
@@ -306,9 +307,10 @@ export function ScanPageContent() {
         });
 
         if (r.mode === "worker_unavailable") {
-          notify.error({
-            title: "OMR worker unavailable",
-            description: "Start the worker: cd omr-worker && uvicorn app.main:app --port 8090",
+          setOmrOffline(true);
+          notify.warning({
+            title: "OMR scanner is currently unavailable",
+            description: "The system will attempt to read the QR code using the browser. For best results, ensure the QR code is clearly visible in the image.",
           });
           setScanState("idle");
           return;
@@ -409,7 +411,17 @@ export function ScanPageContent() {
         setShowResultsModal(false);
         notify.success({ title: "Vote recorded successfully" });
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Submit failed";
+        const raw = err instanceof Error ? err.message : "Submit failed";
+        let msg = "An error occurred. Please try again or contact the SEB.";
+        if (raw.includes("TOKEN_USED")) {
+          msg = "This ballot token has already been used. Each voter can only cast one ballot. If you believe this is an error, please contact the SEB.";
+        } else if (raw.includes("UNKNOWN_TOKEN")) {
+          msg = "Invalid ballot token. Please verify the token and try again.";
+        } else if (raw.includes("TEMPLATE_MISMATCH")) {
+          msg = "Ballot template does not match. Please reprint the ballot.";
+        } else {
+          console.error("Vote submission error:", raw);
+        }
         notify.error({ title: msg });
         setScanState("results");
       }
@@ -496,6 +508,12 @@ export function ScanPageContent() {
             </div>
           )}
 
+          {omrOffline && (
+            <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-center gap-2">
+              <span className="text-lg">&#9888;&#65039;</span>
+              <span><strong>OMR Worker Offline</strong> — Paper ballot bubble detection is unavailable. QR code scanning only.</span>
+            </div>
+          )}
           {loading ? (
             <div className="py-16 text-center text-gray-500">Loading…</div>
           ) : (

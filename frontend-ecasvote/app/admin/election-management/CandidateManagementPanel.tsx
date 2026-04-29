@@ -5,11 +5,13 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Plus, Edit2, Trash2, Printer } from "lucide-react";
+import { CheckCircle2, Plus, Edit2, Trash2, Printer } from "lucide-react";
 import {
   fetchElection,
   fetchPositions,
   createCandidates,
+  createPositions,
+  publishCandidates,
   getGatewayBase,
 } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
@@ -38,6 +40,8 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
   const [candidates, setCandidates] = useState<CandidateRow[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [drafts, setDrafts] = useState<CandidateDraft[]>([emptyDraft()]);
+  const [candidatesPublished, setCandidatesPublished] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   const loadPositionsForElection = useCallback(async (eid: string) => {
     try {
@@ -69,6 +73,10 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
   useEffect(() => {
     if (!electionId) return;
     loadPositionsForElection(electionId);
+    // Load candidatesPublished status
+    fetchElection(electionId)
+      .then((e) => { if (e) setCandidatesPublished(!!e.candidatesPublished); })
+      .catch(() => {});
   }, [electionId, loadPositionsForElection]);
 
   const addDraftRow = () => setDrafts((prev) => [...prev, emptyDraft()]);
@@ -100,6 +108,13 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
       return;
     }
     try {
+      // Ensure positions exist in the database before adding candidates
+      const uniquePositionNames = [...new Set(toAdd.map((c) => c.position.trim()))];
+      await createPositions(
+        electionId,
+        uniquePositionNames.map((name, i) => ({ name, maxVotes: 1, order: i + 1 }))
+      );
+
       const candidatesToSave = toAdd.map((c) => ({
         positionName: c.position,
         name: c.name,
@@ -200,6 +215,27 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
     }
   };
 
+  const handlePublishCandidates = async () => {
+    if (!electionId) return;
+    const confirmed = window.confirm(
+      `Publish candidate list for ${electionTitle || electionId}? Candidates will be visible to students and validators.`
+    );
+    if (!confirmed) return;
+    setPublishing(true);
+    try {
+      await publishCandidates(electionId);
+      setCandidatesPublished(true);
+      notify.success({ title: "Candidates published successfully" });
+    } catch (err) {
+      notify.error({
+        title: "Failed to publish candidates",
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setPublishing(false);
+    }
+  };
+
   return (
     <>
       <Card>
@@ -249,6 +285,20 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
               >
                 Save Draft
               </Button>
+              {candidatesPublished ? (
+                <Button variant="outline" disabled className="text-green-700 border-green-300 bg-green-50">
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  Candidates Published
+                </Button>
+              ) : candidates.length > 0 ? (
+                <Button
+                  className="text-white bg-[#0C8C3F] hover:bg-[#0a7a36]"
+                  onClick={handlePublishCandidates}
+                  disabled={publishing}
+                >
+                  {publishing ? "Publishing..." : "Publish Candidates"}
+                </Button>
+              ) : null}
               {/* <Link
                 href={`/admin/ballot-print?electionId=${encodeURIComponent(electionId)}`}
                 target="_blank"

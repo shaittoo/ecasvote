@@ -3,8 +3,8 @@
 
 set -e
 
-CHAINCODE_DIR="/home/shaina/dev/eCASVote/chaincode-ecasvote"
-NETWORK_DIR="/home/shaina/go/src/github.com/shaittoo/fabric-samples/test-network"
+CHAINCODE_DIR="/home/sdtal/go/src/github.com/shaittoo/ecasvote/chaincode-ecasvote"
+NETWORK_DIR="/home/sdtal/go/src/github.com/shaittoo/fabric-network-ecasvote"
 CHAINCODE_NAME="ecasvote"
 CHANNEL_NAME="mychannel"
 VERSION="1.0"

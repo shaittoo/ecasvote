@@ -15,6 +15,7 @@ import {
   fetchElections,
   fetchElectionVoters,
   importVoters,
+  syncCasEligibleToElectionRoster,
   updateVoter,
   type Election,
   type VoterRecord,
@@ -188,6 +189,15 @@ export default function VoterRosterPage() {
           title: "Import successful",
           description: `Created ${result.created}, updated ${result.updated} (${result.total} total).`,
         });
+      }
+      // Sync imported voters to the selected election's roster
+      if (printElectionId) {
+        try {
+          const sync = await syncCasEligibleToElectionRoster(printElectionId);
+          console.log(`Roster sync: added ${sync.added}, total ${sync.totalOnRoster}`);
+        } catch (syncErr) {
+          console.warn("Roster sync after import failed:", syncErr);
+        }
       }
       await loadVoters();
     } catch (err: unknown) {

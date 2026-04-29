@@ -41,14 +41,16 @@ model User {
 }
 
 model Election {
-  id          String          @id
-  name        String
-  description String?
-  startTime   DateTime
-  endTime     DateTime
-  status      ElectionStatus
-  createdBy   String
-  createdAt   DateTime        @default(now())
+  id               String          @id
+  name             String
+  description      String?
+  startTime        DateTime
+  endTime          DateTime
+  status           ElectionStatus
+  createdBy        String
+  createdAt        DateTime        @default(now())
+  resultsPublished    Boolean         @default(false)
+  candidatesPublished Boolean         @default(false)
   /** Which registered voters may participate in this election (roster is per election). */
   electionVoters ElectionVoter[]
 }
@@ -94,10 +96,12 @@ model Voter {
 
 /** Student voter roster for a specific election (who may vote / appear in admin lists for that election). */
 model ElectionVoter {
-  id         Int      @id @default(autoincrement())
+  id         Int       @id @default(autoincrement())
   electionId String
   voterId    Int
-  createdAt  DateTime @default(now())
+  hasVoted   Boolean   @default(false)
+  votedAt    DateTime?
+  createdAt  DateTime  @default(now())
 
   election Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
   voter    Voter    @relation(fields: [voterId], references: [id], onDelete: Cascade)
@@ -143,13 +147,14 @@ model Ballot {
 }
 
 model Vote {
-  id         String   @id @default(uuid())
-  electionId String
-  voterId    String
-  // JSON array like: [{ positionId: "chairperson", candidateId: "cand-chair-1" }]
-  selections Json
-  txId       String?  // blockchain transaction ID
-  castAt     DateTime @default(now())
+  id          String   @id @default(uuid())
+  electionId  String
+  positionId  String
+  candidateId String
+  voteHash    String   @unique  // SHA-256 hash for deduplication (no voter linkage)
+  castAt      DateTime @default(now())
+
+  @@index([electionId, positionId, candidateId])
 }
 
 // ----------------- AUDIT / LOGS -----------------

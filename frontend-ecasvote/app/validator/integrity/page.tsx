@@ -472,7 +472,7 @@ export default function ValidatorIntegrityPage() {
                 </ul>
 
                 <p className="text-red-800 mt-4 font-semibold">
-                  Please investigate immediately.
+                  The blockchain record is the source of truth. Contact SEB admin to resolve mismatches.
                 </p>
               </CardContent>
             </Card>

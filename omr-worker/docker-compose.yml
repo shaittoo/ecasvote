@@ -1,10 +1,10 @@
-# Ballot OMR API — no local Python venv required
-# Run: docker compose up --build
-# Gateway .env: OMR_WORKER_URL=http://127.0.0.1:8090
-
 services:
   omr-worker:
     build: .
     ports:
       - "8090:8090"
     restart: unless-stopped
+    environment:
+      - OMR_FIDUCIAL_WARP=homography
+      - OMR_BBOX_EXTRA_EDGE_PAD_PX=12
+      - OMR_AUTO_HOMOGRAPHY_SKEW_DEG=5

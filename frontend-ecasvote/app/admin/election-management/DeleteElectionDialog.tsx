@@ -1,12 +1,14 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, Trash2 } from "lucide-react";
+import { AlertTriangle, ShieldAlert, Trash2 } from "lucide-react";
 
 type Props = {
   open: boolean;
   title: string;
   submitting: boolean;
+  /** If set, shows a "cannot delete" message instead of the confirm flow. */
+  blockedReason?: string | null;
   onCancel: () => void;
   onConfirm: () => void | Promise<void>;
 };
@@ -15,10 +17,13 @@ export function DeleteElectionDialog({
   open,
   title,
   submitting,
+  blockedReason,
   onCancel,
   onConfirm,
 }: Props) {
   if (!open) return null;
+
+  const isBlocked = !!blockedReason;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -35,46 +40,69 @@ export function DeleteElectionDialog({
       >
         <div className="flex gap-3">
           <div
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-700"
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
+              isBlocked ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"
+            }`}
             aria-hidden
           >
-            <AlertTriangle className="h-5 w-5" />
+            {isBlocked ? (
+              <ShieldAlert className="h-5 w-5" />
+            ) : (
+              <AlertTriangle className="h-5 w-5" />
+            )}
           </div>
           <div className="min-w-0 flex-1">
             <h3
               id="delete-election-title"
               className="text-lg font-semibold text-gray-900"
             >
-              Delete this election?
+              {isBlocked ? "Cannot delete this election" : "Delete this election?"}
             </h3>
             <p className="mt-2 text-sm text-gray-600">
-              This will permanently remove{" "}
-              <span className="font-medium text-gray-900">{title}</span> from the
-              database, including roster links, positions, candidates, and related
-              votes for this election. This cannot be undone.
+              {isBlocked ? (
+                <>
+                  <span className="font-medium text-gray-900">{title}</span> cannot
+                  be deleted. {blockedReason}
+                </>
+              ) : (
+                <>
+                  This will permanently remove{" "}
+                  <span className="font-medium text-gray-900">{title}</span> from the
+                  database, including roster links, positions, candidates, and related
+                  votes for this election. This cannot be undone.
+                </>
+              )}
             </p>
           </div>
         </div>
         <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4">
-          <Button
-            type="button"
-            variant="outline"
-            className="bg-white"
-            disabled={submitting}
-            onClick={onCancel}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            className="gap-1.5"
-            disabled={submitting}
-            onClick={() => void onConfirm()}
-          >
-            <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
-            {submitting ? "Deleting…" : "Delete"}
-          </Button>
+          {isBlocked ? (
+            <Button type="button" variant="outline" onClick={onCancel}>
+              Close
+            </Button>
+          ) : (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                className="bg-white"
+                disabled={submitting}
+                onClick={onCancel}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="gap-1.5"
+                disabled={submitting}
+                onClick={() => void onConfirm()}
+              >
+                <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                {submitting ? "Deleting…" : "Delete"}
+              </Button>
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -37,16 +37,29 @@ export default function VoterTurnoutBreakdown({ groups }: { groups: Group[] }) {
     ],
   };
 
+  // Build "x out of y" labels shown to the right of each bar
+  const barLabels = groups.map((g) => `${g.voted} out of ${g.total}`);
+
   const options = {
     indexAxis: "y" as const,
     responsive: true,
     maintainAspectRatio: false,
+    layout: {
+      padding: { right: 100 },
+    },
     scales: {
       x: {
         stacked: true,
         max: 100,
         ticks: {
-          callback: (value: string | number) => `${value}%`,
+          stepSize: 10,
+          callback: (value: string | number) => `${value}`,
+        },
+        title: {
+          display: true,
+          text: "%",
+          font: { size: 12 },
+          color: "#6b7280",
         },
         grid: { color: "rgba(0,0,0,0.06)" },
       },
@@ -72,34 +85,32 @@ export default function VoterTurnoutBreakdown({ groups }: { groups: Group[] }) {
     },
   };
 
-  return (
-    <div className="space-y-4">
-      <div className="relative h-56 w-full">
-        <Bar data={data} options={options} />
-      </div>
+  // Chart.js plugin to draw "x out of y" labels to the right of each bar
+  const barLabelPlugin = {
+    id: "barLabels",
+    afterDraw(chart: any) {
+      const { ctx, scales } = chart;
+      const yScale = scales.y;
+      const xScale = scales.x;
+      ctx.save();
+      ctx.font = "12px sans-serif";
+      ctx.fillStyle = "#6b7280";
+      ctx.textAlign = "left" as const;
+      ctx.textBaseline = "middle" as const;
+      barLabels.forEach((label: string, i: number) => {
+        const y = yScale.getPixelForValue(i);
+        const x = xScale.getPixelForValue(100);
+        ctx.fillText(label, x + 8, y);
+      });
+      ctx.restore();
+    },
+  };
 
-      <ul className="space-y-2 max-h-48 overflow-y-auto pr-1">
-        {groups.map((group) => (
-          <li
-            key={group.name}
-            className="flex justify-between items-center gap-3 rounded-lg border border-border/80 bg-card px-3 py-2.5 shadow-sm"
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <span
-                className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white"
-                style={{ backgroundColor: group.color }}
-              />
-              <span className="font-medium text-sm text-foreground truncate">{group.name}</span>
-            </div>
-            <span className="text-sm tabular-nums text-muted-foreground shrink-0">
-              {group.voted} / {group.total}
-              <span className="text-xs ml-1 text-muted-foreground/80">
-                ({pct(group.voted, group.total).toFixed(0)}%)
-              </span>
-            </span>
-          </li>
-        ))}
-      </ul>
+  return (
+    <div>
+      <div className="relative h-56 w-full">
+        <Bar data={data} options={options} plugins={[barLabelPlugin]} />
+      </div>
     </div>
   );
 }

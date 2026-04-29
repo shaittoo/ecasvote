@@ -20,6 +20,7 @@ export default function ElectionManagementPage() {
     title: string;
   } | null>(null);
   const [deleteElectionSubmitting, setDeleteElectionSubmitting] = useState(false);
+  const [deleteBlockedReason, setDeleteBlockedReason] = useState<string | null>(null);
 
   const [newTitle, setNewTitle] = useState("");
   const [newAcademicYear, setNewAcademicYear] = useState(defaultAcademicYear);
@@ -48,12 +49,21 @@ export default function ElectionManagementPage() {
       await deleteElection(electionPendingDelete.id);
       notify.success({ title: "Election deleted" });
       setElectionPendingDelete(null);
+      setDeleteBlockedReason(null);
       await refreshElections();
-    } catch (err) {
-      notify.error({
-        title: "Failed to delete election",
-        description: err instanceof Error ? err.message : String(err),
-      });
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Detect ELECTION_HAS_VOTES from 409 response
+      if (msg.includes("ELECTION_HAS_VOTES") || msg.includes("recorded votes")) {
+        setDeleteBlockedReason(
+          "Votes have been recorded on the blockchain and cannot be removed. Blockchain records are permanent and immutable."
+        );
+      } else {
+        notify.error({
+          title: "Failed to delete election",
+          description: msg,
+        });
+      }
     } finally {
       setDeleteElectionSubmitting(false);
     }
@@ -99,7 +109,8 @@ export default function ElectionManagementPage() {
           open={!!electionPendingDelete}
           title={electionPendingDelete?.title ?? ""}
           submitting={deleteElectionSubmitting}
-          onCancel={() => setElectionPendingDelete(null)}
+          blockedReason={deleteBlockedReason}
+          onCancel={() => { setElectionPendingDelete(null); setDeleteBlockedReason(null); }}
           onConfirm={handleDeleteConfirm}
         />
       </div>

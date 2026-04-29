@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { getGatewayBase, login } from "@/lib/ecasvoteApi";
@@ -12,6 +12,17 @@ export default function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+
+  // Clear auth state when visiting login page (acts as logout)
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("voter");
+      localStorage.removeItem("studentNumber");
+      localStorage.removeItem("admin");
+      localStorage.removeItem("validator");
+      document.cookie = "ecasvote_role=; path=/; max-age=0";
+    }
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -39,6 +50,7 @@ export default function LoginPage() {
         if (typeof window !== "undefined") {
           localStorage.setItem("voter", JSON.stringify(response.voter));
           localStorage.setItem("studentNumber", response.voter.studentNumber);
+          document.cookie = "ecasvote_role=student; path=/; max-age=28800; SameSite=Lax";
         }
         router.push("/studentvoter");
         return;
@@ -46,7 +58,7 @@ export default function LoginPage() {
         // fall through to admin/validator
       }
 
-        const adminResponse = await fetch(`${getGatewayBase()}/login/admin`, {
+      const adminResponse = await fetch(`${getGatewayBase()}/login/admin`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: upMail.trim(), password: username.trim() }),
@@ -56,12 +68,13 @@ export default function LoginPage() {
         const data = await adminResponse.json();
         if (typeof window !== "undefined") {
           localStorage.setItem("admin", JSON.stringify(data.admin || { role: "ADMIN" }));
+          document.cookie = "ecasvote_role=admin; path=/; max-age=28800; SameSite=Lax";
         }
         router.push("/admin");
         return;
       }
 
-        const validatorResponse = await fetch(`${getGatewayBase()}/login/validator`, {
+      const validatorResponse = await fetch(`${getGatewayBase()}/login/validator`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: upMail.trim(), password: username.trim() }),
@@ -75,6 +88,7 @@ export default function LoginPage() {
       const data = await validatorResponse.json();
       if (typeof window !== "undefined") {
         localStorage.setItem("validator", JSON.stringify(data.validator || { role: "VALIDATOR" }));
+        document.cookie = "ecasvote_role=validator; path=/; max-age=28800; SameSite=Lax";
       }
       router.push("/validator");
     } catch (err: any) {

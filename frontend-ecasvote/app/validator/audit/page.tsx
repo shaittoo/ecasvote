@@ -6,38 +6,45 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Search, Download, Printer } from "lucide-react";
-import { fetchAuditLogs } from "@/lib/ecasvoteApi";
-import type { AuditLog } from "@/lib/ecasvoteApi";
+import { fetchAuditLogs, fetchElections } from "@/lib/ecasvoteApi";
+import type { AuditLog, Election } from "@/lib/ecasvoteApi";
 import { ValidatorSidebar } from "@/components/Sidebar";
 import ValidatorHeader from "../components/header";
 import { exportAuditLogsCSV, printAuditTable } from "../../admin/audit-and-logs/audit-trail/export";
-
-const ELECTION_ID = "election-2025";
 
 export default function ValidatorAuditLogsPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [elections, setElections] = useState<Election[]>([]);
+  const [electionId, setElectionId] = useState("");
+  const [electionsLoading, setElectionsLoading] = useState(true);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
 
   useEffect(() => {
-    async function loadLogs() {
-      try {
-        const response = await fetchAuditLogs(ELECTION_ID);
-        setAuditLogs(response.logs || []);
-      } catch (error) {
-        console.error("Failed to load audit logs:", error);
-        setAuditLogs([]);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadLogs();
+    setElectionsLoading(true);
+    fetchElections()
+      .then((list) => {
+        setElections(list);
+        const open = list.find((e) => e.status === "OPEN");
+        const closed = list.find((e) => e.status === "CLOSED");
+        setElectionId(open?.id ?? closed?.id ?? list[0]?.id ?? "");
+      })
+      .catch(() => setElections([]))
+      .finally(() => setElectionsLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!electionId || electionsLoading) return;
+    setLoading(true);
+    fetchAuditLogs(electionId)
+      .then((response) => setAuditLogs(response.logs || []))
+      .catch(() => setAuditLogs([]))
+      .finally(() => setLoading(false));
+  }, [electionId, electionsLoading]);
 
   const handleLogout = () => {
     router.push("/login");
@@ -82,6 +89,24 @@ export default function ValidatorAuditLogsPage() {
         />
 
         <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-20"}`}>
+          <div className="mb-4">
+            <select
+              className="h-10 w-full sm:max-w-md rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer"
+              value={electionId}
+              disabled={electionsLoading || elections.length === 0}
+              onChange={(e) => setElectionId(e.target.value)}
+            >
+              {electionsLoading ? (
+                <option value="">Loading elections...</option>
+              ) : elections.length === 0 ? (
+                <option value="">No elections found</option>
+              ) : (
+                elections.map((e) => (
+                  <option key={e.id} value={e.id}>{e.name || e.id}</option>
+                ))
+              )}
+            </select>
+          </div>
           <div className="flex flex-col space-y-4 mb-4 max-w-7xl">
             {/* Search + Export */}
             <div className="flex flex-wrap items-center gap-4 pl-90">

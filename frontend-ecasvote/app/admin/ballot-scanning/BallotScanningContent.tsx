@@ -114,13 +114,13 @@ const EXAM_GRADER_URL =
 function friendlyValidateError(code: string): string {
   switch (code) {
     case "UNKNOWN_TOKEN":
-      return "Ballot token not issued for this election (or typo in QR).";
+      return "Invalid ballot token. Please verify the token and try again.";
     case "TOKEN_USED":
-      return "This ballot was already scanned — token is marked used.";
+      return "This ballot token has already been used. Each voter can only cast one ballot. If you believe this is an error, please contact the SEB.";
     case "TEMPLATE_MISMATCH":
-      return "Ballot template version does not match the issued ballot.";
+      return "Ballot template does not match. Please reprint the ballot.";
     default:
-      return code.length < 120 ? code : `${code.slice(0, 117)}…`;
+      return code.length < 120 ? code : "An error occurred. Please try again or contact the SEB.";
   }
 }
 
@@ -243,6 +243,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
   const [showResultsModal, setShowResultsModal] = useState(false);
   const [latestScanResult, setLatestScanResult] = useState<ScanResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [omrOffline, setOmrOffline] = useState(false);
 
   const handleLogout = () => router.push("/login");
 
@@ -1299,10 +1300,10 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
               useOmr = false;
               if (!warnedWorkerOff) {
                 warnedWorkerOff = true;
+                setOmrOffline(true);
                 notify.warning({
-                  title: "OMR worker unavailable — QR only",
-                  description:
-                    "gateway .env: OMR_WORKER_URL=http://127.0.0.1:8090 · restart gateway · docker compose up in omr-worker",
+                  title: "OMR scanner is currently unavailable",
+                  description: "The system will attempt to read the QR code using the browser. For best results, ensure the QR code is clearly visible in the image.",
                 });
               }
               await scanClientQrOnly(file);
@@ -1479,9 +1480,10 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
             useOmr = false;
             if (!warnedWorkerOff) {
               warnedWorkerOff = true;
+              setOmrOffline(true);
               notify.warning({
-                title: "OMR request failed",
-                description: "Falling back to browser QR for remaining files.",
+                title: "OMR scanner is currently unavailable",
+                description: "The system will attempt to read the QR code using the browser. For best results, ensure the QR code is clearly visible in the image.",
               });
             }
             await scanClientQrOnly(file);
@@ -1646,7 +1648,14 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
         notify.success({ title: "Vote recorded successfully" });
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Submit failed";
+      const raw = err instanceof Error ? err.message : "Submit failed";
+      const msg = friendlyValidateError(
+        raw.includes("TOKEN_USED") ? "TOKEN_USED"
+        : raw.includes("UNKNOWN_TOKEN") ? "UNKNOWN_TOKEN"
+        : raw.includes("TEMPLATE_MISMATCH") ? "TEMPLATE_MISMATCH"
+        : raw
+      );
+      console.error("Vote submission error:", raw);
       notify.error({ title: msg });
     } finally {
       setIsSubmitting(false);
@@ -1682,6 +1691,12 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
             sidebarOpen ? "ml-64" : "ml-20"
           }`}
         >
+          {omrOffline && (
+            <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-center gap-2">
+              <span className="text-lg">&#9888;&#65039;</span>
+              <span><strong>OMR Worker Offline</strong> — Paper ballot bubble detection is unavailable. QR code scanning only.</span>
+            </div>
+          )}
           {loading ? (
             <div className="py-12 text-center text-gray-500">Loading elections…</div>
           ) : (
