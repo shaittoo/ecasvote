@@ -955,10 +955,16 @@ app.get('/elections/:id', async (req, res) => {
     
     // Merge DB-only fields (publish flags) into chaincode response
     const dbElection = await prisma.election.findUnique({ where: { id: req.params.id } }).catch(() => null);
-    election.candidatesPublished = dbElection?.candidatesPublished ?? false;
-    election.resultsPublished = dbElection?.resultsPublished ?? false;
+    const publishRow = dbElection as
+      | { candidatesPublished?: boolean | null; resultsPublished?: boolean | null }
+      | null;
 
-    res.json({ ...election, onChain: true });
+    res.json({
+      ...election,
+      candidatesPublished: publishRow?.candidatesPublished ?? false,
+      resultsPublished: publishRow?.resultsPublished ?? false,
+      onChain: true,
+    });
   } catch (err: any) {
     console.error('GetElection error:', err);
     const errorMessage = err.message || String(err);
@@ -1672,7 +1678,7 @@ app.post('/scanner/confirm-vote', async (req, res) => {
       // Mark per-election voter status
       await tx.electionVoter.updateMany({
         where: { electionId, voterId: issuance.voterId },
-        data: { hasVoted: true, votedAt: castAt },
+        data: { hasVoted: true, votedAt: castAt } as any,
       });
 
       return { castAt: castAt.toISOString(), invalidated: isInvalid, voterId: issuance.voterId, studentNumber: voterRecord.studentNumber };
@@ -1736,15 +1742,14 @@ app.post('/scanner/confirm-vote', async (req, res) => {
             .update(ballotToken + sel.positionId + sel.candidateId + electionId)
             .digest('hex');
           try {
-            await prisma.vote.create({
-              data: {
-                electionId,
-                positionId: sel.positionId,
-                candidateId: sel.candidateId,
-                voteHash,
-                castAt,
-              },
-            });
+            const voteRow: any = {
+              electionId,
+              positionId: sel.positionId,
+              candidateId: sel.candidateId,
+              voteHash,
+              castAt,
+            };
+            await prisma.vote.create({ data: voteRow });
           } catch (voteErr: any) {
             // Skip duplicates (unique voteHash constraint)
             if (!voteErr.message?.includes('Unique constraint')) {
@@ -2336,9 +2341,10 @@ app.post('/elections/:id/publish-results', async (req, res) => {
     if (election.status !== 'CLOSED') {
       return res.status(400).json({ error: 'Election must be CLOSED before publishing results' });
     }
+    const resultsPatch: any = { resultsPublished: publish };
     await prisma.election.update({
       where: { id },
-      data: { resultsPublished: publish },
+      data: resultsPatch,
     });
     res.json({ ok: true, resultsPublished: publish });
   } catch (err: any) {
@@ -2354,9 +2360,10 @@ app.post('/elections/:id/publish-candidates', async (req, res) => {
   try {
     const election = await prisma.election.findUnique({ where: { id } });
     if (!election) return res.status(404).json({ error: 'Election not found' });
+    const candidatesPatch: any = { candidatesPublished: publish };
     await prisma.election.update({
       where: { id },
-      data: { candidatesPublished: publish },
+      data: candidatesPatch,
     });
     res.json({ ok: true, candidatesPublished: publish });
   } catch (err: any) {
@@ -2677,15 +2684,14 @@ app.post('/elections/:id/votes', async (req, res) => {
       const voteHash = crypto.createHash('sha256')
         .update(studentNumber + sel.positionId + sel.candidateId + id)
         .digest('hex');
-      const vote = await prisma.vote.create({
-        data: {
-          electionId: id,
-          positionId: sel.positionId,
-          candidateId: sel.candidateId,
-          voteHash,
-          castAt,
-        },
-      });
+      const voteRow: any = {
+        electionId: id,
+        positionId: sel.positionId,
+        candidateId: sel.candidateId,
+        voteHash,
+        castAt,
+      };
+      const vote = await prisma.vote.create({ data: voteRow });
       voteIds.push(vote.id);
     }
 
@@ -3207,10 +3213,11 @@ app.get('/elections/:id/integrity-check', async (req, res) => {
     const blockchainResults = responseText ? JSON.parse(responseText) : {};
 
     // Get vote counts from database (new per-candidate Vote records)
-    const dbVotes = await prisma.vote.findMany({
+    const voteTallySelect: any = { positionId: true, candidateId: true };
+    const dbVotes = (await prisma.vote.findMany({
       where: { electionId: id },
-      select: { positionId: true, candidateId: true },
-    });
+      select: voteTallySelect,
+    })) as unknown as Array<{ positionId: string; candidateId: string }>;
 
     // Count database votes per position/candidate
     const dbResults: Record<string, Record<string, number>> = {};
@@ -3325,15 +3332,14 @@ app.post('/elections/:id/integrity/override', async (req, res) => {
           const voteHash = crypto.createHash('sha256')
             .update(`override-${id}-${positionId}-${candidateId}-${i}`)
             .digest('hex');
-          await prisma.vote.create({
-            data: {
-              electionId: id,
-              positionId,
-              candidateId,
-              voteHash,
-              castAt: new Date(),
-            },
-          });
+          const voteRow: any = {
+            electionId: id,
+            positionId,
+            candidateId,
+            voteHash,
+            castAt: new Date(),
+          };
+          await prisma.vote.create({ data: voteRow });
           created++;
         }
       }
