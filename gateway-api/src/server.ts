@@ -879,7 +879,8 @@ app.post('/elections', async (req, res) => {
       try {
         await prisma.position.upsert({
           where: { id: pos.id },
-          update: { electionId: String(electionId), name: pos.name, maxVotes: pos.maxVotes, order: pos.order },
+          // Avoid reassigning a shared position row to a newer election.
+          update: { name: pos.name, maxVotes: pos.maxVotes, order: pos.order },
           create: { id: pos.id, electionId: String(electionId), name: pos.name, maxVotes: pos.maxVotes, order: pos.order },
         });
       } catch (dbErr: any) {
@@ -1023,15 +1024,121 @@ app.get('/elections/:id', async (req, res) => {
 app.get('/elections/:id/positions', async (req, res) => {
   const { id } = req.params;
   try {
-    // Get positions from database
-    const positions = await prisma.position.findMany({
+    const contract = await getContract();
+    const electionBytes = await contract.evaluateTransaction('GetElection', id);
+    const electionText = Buffer.from(electionBytes).toString('utf8').trim();
+    const election = electionText ? JSON.parse(electionText) : null;
+    const chainPositions = Array.isArray(election?.positions) ? election.positions : [];
+
+    // Source positions from chaincode (authoritative), then join DB candidates by electionId+positionId.
+    if (chainPositions.length > 0) {
+      const positionsWithCandidates = await Promise.all(
+        chainPositions.map(async (position: any, idx: number) => {
+          const positionId = String(position?.id ?? '').trim();
+          const candidateBytes = await contract.evaluateTransaction('GetCandidatesByPosition', id, positionId);
+          const candidateText = Buffer.from(candidateBytes).toString('utf8').trim();
+          const chainCandidates = candidateText ? JSON.parse(candidateText) : [];
+
+          // Preserve optional DB metadata (e.g. imageUrl) if present, without trusting DB IDs.
+          const dbCandidates = await prisma.candidate.findMany({
+            where: { electionId: id, positionId },
+            orderBy: { name: 'asc' },
+          });
+          const dbByName = new Map<string, (typeof dbCandidates)[number]>(
+            dbCandidates.map((c) => [c.name.trim().toLowerCase(), c])
+          );
+          const candidates = Array.isArray(chainCandidates) && chainCandidates.length > 0
+            ? chainCandidates.map((c: any) => {
+                const name = String(c?.name ?? '').trim();
+                const db = dbByName.get(name.toLowerCase());
+                return {
+                  id: String(c?.id ?? ''),
+                  electionId: id,
+                  positionId,
+                  name,
+                  party: c?.party ?? null,
+                  program: c?.program ?? null,
+                  yearLevel: c?.yearLevel ?? null,
+                  imageUrl: db?.imageUrl ?? null,
+                };
+              })
+            : dbCandidates;
+          return {
+            id: positionId,
+            electionId: id,
+            name: String(position?.name ?? positionId),
+            maxVotes: Number(position?.maxVotes ?? 1),
+            order: Number(position?.order ?? idx + 1),
+            candidates,
+          };
+        })
+      );
+      return res.json(positionsWithCandidates);
+    }
+
+    // Fallback #1: derive positions from chaincode candidates when election.positions is empty
+    const allCandidateBytes = await contract.evaluateTransaction('GetCandidatesByElection', id);
+    const allCandidateText = Buffer.from(allCandidateBytes).toString('utf8').trim();
+    const chainCandidatesAll = allCandidateText ? JSON.parse(allCandidateText) : [];
+    if (Array.isArray(chainCandidatesAll) && chainCandidatesAll.length > 0) {
+      const byPosition = new Map<string, any[]>();
+      for (const c of chainCandidatesAll) {
+        const pid = String(c?.positionId ?? '').trim();
+        if (!pid) continue;
+        if (!byPosition.has(pid)) byPosition.set(pid, []);
+        byPosition.get(pid)!.push(c);
+      }
+
+      // Try to hydrate names/maxVotes/order from DB position metadata (global ids).
+      const dbPosById = new Map<string, any>(
+        (await prisma.position.findMany()).map((p) => [p.id, p])
+      );
+      const dbCandidatesAll = await prisma.candidate.findMany({
+        where: { electionId: id },
+      });
+      const dbCandidateByPosAndName = new Map<string, (typeof dbCandidatesAll)[number]>(
+        dbCandidatesAll.map((c) => [`${c.positionId}::${c.name.trim().toLowerCase()}`, c])
+      );
+
+      const positionsWithCandidates = [...byPosition.entries()].map(([positionId, group], idx) => {
+        const dbPos = dbPosById.get(positionId);
+        const dbCandidates = (group.length > 0
+          ? [] // chain candidates already available for this position
+          : []);
+        const candidates = group.map((c: any) => {
+          const name = String(c?.name ?? '').trim();
+          return {
+            id: String(c?.id ?? ''),
+            electionId: id,
+            positionId,
+            name,
+            party: c?.party ?? null,
+            program: c?.program ?? null,
+            yearLevel: c?.yearLevel ?? null,
+            imageUrl: dbCandidateByPosAndName.get(`${positionId}::${name.toLowerCase()}`)?.imageUrl ?? null,
+          };
+        });
+        return {
+          id: positionId,
+          electionId: id,
+          name: String(dbPos?.name ?? positionId),
+          maxVotes: Number(dbPos?.maxVotes ?? 1),
+          order: Number(dbPos?.order ?? idx + 1),
+          candidates: candidates.length > 0 ? candidates : dbCandidates,
+        };
+      });
+      return res.json(
+        positionsWithCandidates.sort((a, b) => a.order - b.order || a.name.localeCompare(b.name))
+      );
+    }
+
+    // Fallback #2: legacy/local-only DB data
+    const dbPositions = await prisma.position.findMany({
       where: { electionId: id },
       orderBy: { order: 'asc' },
     });
-
-    // Get candidates from database for each position
     const positionsWithCandidates = await Promise.all(
-      positions.map(async (position) => {
+      dbPositions.map(async (position) => {
         const candidates = await prisma.candidate.findMany({
           where: {
             electionId: id,
@@ -1039,14 +1146,10 @@ app.get('/elections/:id/positions', async (req, res) => {
           },
           orderBy: { name: 'asc' },
         });
-        return {
-          ...position,
-          candidates,
-        };
+        return { ...position, candidates };
       })
     );
-
-    res.json(positionsWithCandidates);
+    return res.json(positionsWithCandidates);
   } catch (err: any) {
     console.error('GetPositions error:', err);
     res.status(400).json({ error: err.message || 'GetPositions failed' });
@@ -1087,7 +1190,6 @@ app.post('/elections/:id/positions', async (req, res) => {
           name: name.trim(),
           maxVotes: typeof maxVotes === 'number' ? maxVotes : 1,
           order: typeof order === 'number' ? order : i + 1,
-          electionId: id,
         },
         create: {
           id: positionId,
@@ -1744,7 +1846,10 @@ app.post('/scanner/confirm-vote', async (req, res) => {
       // Convert selections map { positionId: candidateId | candidateId[] } to chaincode format
       const chaincodeSelections: { positionId: string; candidateId: string }[] = [];
       for (const [positionId, value] of Object.entries(selections as Record<string, string | string[]>)) {
-        const candidateIds = Array.isArray(value) ? value : [value];
+        const rawIds = Array.isArray(value) ? value : [value];
+        const candidateIds = rawIds.flatMap((id) =>
+          typeof id === 'string' && id.includes(',') ? id.split(',').map((s) => s.trim()) : [id]
+        );
         for (const candidateId of candidateIds) {
           // Convert abstentions to chaincode "ABSTAIN" format; skip empty strings
           if (!candidateId || candidateId === '') continue;
@@ -2031,13 +2136,16 @@ app.post('/elections/:id/candidates', async (req, res) => {
   }
 
   try {
-    // Get all positions to map position names to IDs
-    const positions = await prisma.position.findMany({
-      where: { electionId: id },
-    });
-    const positionMap = new Map<string, typeof positions[number]>(positions.map(p => [p.name, p]));
-
+    // Get positions from chaincode to avoid DB cross-election ID collisions.
     const contract = await getContract();
+    const electionBytes = await contract.evaluateTransaction('GetElection', id);
+    const electionText = Buffer.from(electionBytes).toString('utf8').trim();
+    const election = electionText ? JSON.parse(electionText) : null;
+    const chainPositions = Array.isArray(election?.positions) ? election.positions : [];
+    const positionMap = new Map<string, { id: string; name: string }>(
+      chainPositions.map((p: any) => [String(p?.name ?? ''), { id: String(p?.id ?? ''), name: String(p?.name ?? '') }])
+    );
+
     const createdCandidates: any[] = [];
 
     for (const candidateData of candidates) {
@@ -2064,7 +2172,7 @@ app.post('/elections/:id/candidates', async (req, res) => {
           positionId: position.id,
         },
       });
-      const candidateId = `cand-${position.id}-${existingCount + 1}`;
+      const candidateId = `cand-${id}-${position.id}-${existingCount + 1}`;
 
       // Save to database
       const candidate = await prisma.candidate.upsert({
@@ -2562,7 +2670,13 @@ app.post('/elections/:id/voters/roster/sync-cas-eligible', async (req, res) => {
       }
     }
     const count = await prisma.electionVoter.count({ where: { electionId } });
-    res.json({ ok: true, electionId, added, totalOnRoster: count });
+    res.json({
+      ok: true,
+      electionId,
+      added,
+      totalOnRoster: count,
+      warning: 'This synced ALL eligible CAS voters to the roster, not just imported ones. To add only specific voters, use POST /voters/import with an electionId field instead.',
+    });
   } catch (err: any) {
     console.error('POST sync-cas-eligible error:', err);
     res.status(500).json({ error: err.message || 'sync failed' });

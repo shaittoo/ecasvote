@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { getGatewayBase } from "@/lib/ecasvoteApi";
 import type { Position } from "@/lib/ecasvoteApi";
 import { Badge } from "@/components/ui/badge";
@@ -57,11 +58,14 @@ function formatPartyLabel(party: string | undefined, kind: ReturnType<typeof par
 
 export function CandidateCard({ candidate }: CandidateCardProps) {
   const kind = partyKind(candidate.party);
+  const fallbackImage = "/default-img.png";
   const imageSrc = candidate.imageUrl?.trim()
     ? candidate.imageUrl.startsWith('http')
       ? candidate.imageUrl
       : `${getGatewayBase()}${candidate.imageUrl}`
-    : "/default-img.png";
+    : fallbackImage;
+  const [currentImage, setCurrentImage] = useState(imageSrc);
+  const [imageBroken, setImageBroken] = useState(false);
 
   const partyLabel = formatPartyLabel(candidate.party, kind);
 
@@ -82,11 +86,21 @@ export function CandidateCard({ candidate }: CandidateCardProps) {
             "ring-2 ring-border/60"
           )}
         >
-          <img
-            src={imageSrc}
-            alt={`Portrait of ${candidate.name}`}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
-          />
+          {imageBroken ? (
+            <div className="flex h-full w-full items-center justify-center bg-muted text-muted-foreground">
+              <User className="h-10 w-10" aria-hidden />
+            </div>
+          ) : (
+            <img
+              src={currentImage}
+              alt={`Portrait of ${candidate.name}`}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+              onError={() => {
+                if (currentImage !== fallbackImage) setCurrentImage(fallbackImage);
+                else setImageBroken(true);
+              }}
+            />
+          )}
         </div>
       </div>
 

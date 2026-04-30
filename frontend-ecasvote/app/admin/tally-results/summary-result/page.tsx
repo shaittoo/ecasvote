@@ -19,6 +19,7 @@ import { CheckCircle2, Download, Lock, Printer } from "lucide-react";
 import {
   fetchElection,
   fetchElections,
+  fetchPositions,
   fetchResults,
   publishResults,
 } from "@/lib/ecasvoteApi";
@@ -38,9 +39,11 @@ export default function ResultsSummaryPage() {
   const [electionId, setElectionId] = useState("");
   const [election, setElection] = useState<any>(null);
   const [results, setResults] = useState<any>(null);
+  const [candidateNameMap, setCandidateNameMap] = useState<Record<string, Record<string, string>>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [showPublishConfirm, setShowPublishConfirm] = useState(false);
 
   // Load elections list
   useEffect(() => {
@@ -69,12 +72,25 @@ export default function ResultsSummaryPage() {
     setLoading(true);
     setError(null);
     try {
-      const [electionData, resultsData] = await Promise.all([
+      const [electionData, resultsData, positionsData] = await Promise.all([
         fetchElection(electionId),
         fetchResults(electionId),
+        fetchPositions(electionId).catch(() => []),
       ]);
       setElection(electionData);
       setResults(resultsData);
+      const nextMap: Record<string, Record<string, string>> = {};
+      (positionsData || []).forEach((p: any) => {
+        const pid = String(p?.id ?? "");
+        if (!pid) return;
+        nextMap[pid] = {};
+        (p?.candidates || []).forEach((c: any) => {
+          const cid = String(c?.id ?? "");
+          const name = String(c?.name ?? "").trim();
+          if (cid && name) nextMap[pid][cid] = name;
+        });
+      });
+      setCandidateNameMap(nextMap);
     } catch (err: any) {
       setError(err.message || "Failed to load election results");
       console.error("Error loading results:", err);
@@ -89,10 +105,12 @@ export default function ResultsSummaryPage() {
 
   const handlePublish = async () => {
     if (!electionId) return;
-    const confirmed = window.confirm(
-      `Publish results for ${election?.name || electionId}? This will make results visible to students and validators. This action cannot be undone.`
-    );
-    if (!confirmed) return;
+    setShowPublishConfirm(true);
+  };
+
+  const confirmPublish = async () => {
+    if (!electionId) return;
+    setShowPublishConfirm(false);
     setPublishing(true);
     try {
       await publishResults(electionId, true);
@@ -121,11 +139,15 @@ export default function ResultsSummaryPage() {
 
     positions.forEach((positionId) => {
       const candidates = results[positionId];
-      const candidateNames = Object.keys(candidates);
+      const candidateIds = Object.keys(candidates);
       const votes = Object.values(candidates) as number[];
+      const candidateNames = candidateIds.map(
+        (candidateId) => candidateNameMap[positionId]?.[candidateId] || candidateId
+      );
 
       chartData[positionId] = {
         labels: candidateNames,
+        candidateIds,
         datasets: [
           {
             label: "Votes",
@@ -149,6 +171,9 @@ export default function ResultsSummaryPage() {
   };
 
   const chartData = getChartData();
+
+  const candidateLabelFor = (positionId: string, candidateId: string): string =>
+    candidateNameMap[positionId]?.[candidateId] || candidateId;
 
   // Calculate total votes across all positions
   const getTotalVotes = () => {
@@ -187,12 +212,12 @@ export default function ResultsSummaryPage() {
     Object.keys(results).forEach((positionId) => {
       const positionName = positionId.replace(/-/g, " ");
       const candidates = results[positionId];
-      const candidateNames = Object.keys(candidates);
+      const candidateIds = Object.keys(candidates);
       const votes = Object.values(candidates) as number[];
       const totalVotesForPosition = votes.reduce((a, b) => a + b, 0);
       const maxVotes = Math.max(...votes);
 
-      candidateNames.forEach((candidateName, index) => {
+      candidateIds.forEach((candidateId, index) => {
         const voteCount = votes[index];
         const percentage = totalVotesForPosition > 0
           ? ((voteCount / totalVotesForPosition) * 100).toFixed(2)
@@ -200,7 +225,7 @@ export default function ResultsSummaryPage() {
         const isWinner = voteCount === maxVotes && voteCount > 0;
         const status = isWinner ? 'Winner' : '-';
 
-        csvContent += `"${positionName}","${candidateName}","${voteCount}","${percentage}%","${status}"\n`;
+        csvContent += `"${positionName}","${candidateLabelFor(positionId, candidateId)}","${voteCount}","${percentage}%","${status}"\n`;
       });
       csvContent += '\n';
     });
@@ -294,6 +319,38 @@ export default function ResultsSummaryPage() {
         <main className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
           sidebarOpen ? "ml-64" : "ml-20"
         }`}>
+          {showPublishConfirm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="w-full max-w-lg rounded-lg border border-gray-200 bg-white p-6 shadow-2xl">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Publish Results
+                </h3>
+                <p className="mt-3 text-sm text-gray-700">
+                  Publish results for <span className="font-medium text-gray-900">{election?.name || electionId}</span>?
+                  This will make results visible to students and validators, and this action cannot be undone.
+                </p>
+                <div className="mt-6 flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowPublishConfirm(false)}
+                    disabled={publishing}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    className="bg-[#7A0019] hover:bg-[#5a0013] text-white"
+                    onClick={confirmPublish}
+                    disabled={publishing}
+                  >
+                    {publishing ? "Publishing..." : "Publish Results"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="w-full max-w-7xl mx-auto space-y-6">
             {/* Election Selector */}
             <div className="flex items-center gap-3 no-print">

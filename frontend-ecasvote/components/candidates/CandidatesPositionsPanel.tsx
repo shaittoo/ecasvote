@@ -25,6 +25,8 @@ export function CandidatesPositionsPanel({
   emptyCandidatesHint = "No candidates for this position yet.",
   skipPublishCheck = false,
 }: CandidatesPositionsPanelProps) {
+  const [elections, setElections] = useState<Election[]>([]);
+  const [loadingElections, setLoadingElections] = useState(false);
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [published, setPublished] = useState(true);
@@ -36,14 +38,20 @@ export function CandidatesPositionsPanel({
       setResolvedElectionId(electionIdProp);
       return;
     }
+    setLoadingElections(true);
     fetchElections()
       .then((list) => {
+        setElections(list);
         const open = list.find((e: Election) => e.status === "OPEN");
         const closed = list.find((e: Election) => e.status === "CLOSED");
         const best = open ?? closed ?? list[0] ?? null;
         setResolvedElectionId(best?.id ?? null);
       })
-      .catch(() => setResolvedElectionId(null));
+      .catch(() => {
+        setElections([]);
+        setResolvedElectionId(null);
+      })
+      .finally(() => setLoadingElections(false));
   }, [electionIdProp]);
 
   const loadPositions = useCallback(async () => {
@@ -70,6 +78,33 @@ export function CandidatesPositionsPanel({
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
+      {!electionIdProp ? (
+        <div className="max-w-md">
+          <label htmlFor="candidates-election-select" className="mb-1.5 block text-sm font-medium text-gray-700">
+            Election
+          </label>
+          <select
+            id="candidates-election-select"
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={resolvedElectionId ?? ""}
+            disabled={loadingElections || elections.length === 0}
+            onChange={(e) => setResolvedElectionId(e.target.value || null)}
+          >
+            {elections.length === 0 ? (
+              <option value="">
+                {loadingElections ? "Loading elections..." : "No elections"}
+              </option>
+            ) : (
+              elections.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name || e.id}
+                </option>
+              ))
+            )}
+          </select>
+        </div>
+      ) : null}
+
       {loading ? (
         <div className="rounded-xl border border-dashed bg-muted/30 py-16 text-center text-sm text-muted-foreground">
           Loading candidates...

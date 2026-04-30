@@ -89,7 +89,16 @@ export default function ValidatorResultsPage() {
             {
               label: "Votes",
               data: dataValues,
-              backgroundColor: "#7A0019",
+              backgroundColor: [
+                "#7A0019",
+                "#0C8C3F",
+                "#ea580c",
+                "#9333ea",
+                "#16a34a",
+                "#2563eb",
+                "#dc2626",
+              ],
+              borderRadius: 4,
             },
           ],
         },

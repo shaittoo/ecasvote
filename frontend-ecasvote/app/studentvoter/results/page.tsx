@@ -16,14 +16,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Bell, Settings, HelpCircle } from "lucide-react";
-import { fetchElection, fetchResults } from "@/lib/ecasvoteApi";
+import { fetchElection, fetchElections, fetchPositions, fetchResults } from "@/lib/ecasvoteApi";
+import type { Election, Position } from "@/lib/ecasvoteApi";
 import { StudentVoterSidebar } from "@/components/Sidebar";
 import StudentVoterHeader from "../components/header";
 
 // Register Chart.js components
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
-
-const ELECTION_ID = "election-2025";
 
 // const DashboardIcon = Home;
 // const BookIcon = BookOpen;
@@ -107,7 +106,11 @@ function CountdownTimer({ endTime }: { endTime?: string }) {
 export default function ResultsPage() {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [elections, setElections] = useState<Election[]>([]);
+  const [electionId, setElectionId] = useState("");
+  const [electionsLoading, setElectionsLoading] = useState(true);
   const [election, setElection] = useState<any>(null);
+  const [positions, setPositions] = useState<Position[]>([]);
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -126,23 +129,40 @@ export default function ResultsPage() {
       }
     }
 
-    async function loadData() {
-      try {
-        const [electionData, resultsData] = await Promise.all([
-          fetchElection(ELECTION_ID),
-          fetchResults(ELECTION_ID),
-        ]);
+    setElectionsLoading(true);
+    fetchElections()
+      .then((list) => {
+        setElections(list);
+        const open = list.find((e) => e.status === "OPEN");
+        const closed = list.find((e) => e.status === "CLOSED");
+        setElectionId(open?.id ?? closed?.id ?? list[0]?.id ?? "");
+      })
+      .catch(() => setElections([]))
+      .finally(() => setElectionsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!electionId || electionsLoading) return;
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      fetchElection(electionId),
+      fetchPositions(electionId).catch(() => []),
+      fetchResults(electionId),
+    ])
+      .then(([electionData, positionsData, resultsData]) => {
         setElection(electionData);
+        setPositions(positionsData || []);
         setResults(resultsData);
-      } catch (err: any) {
+      })
+      .catch((err: any) => {
         setError(err.message || "Failed to load election results");
         console.error("Error loading results:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, []);
+        setPositions([]);
+        setResults(null);
+      })
+      .finally(() => setLoading(false));
+  }, [electionId, electionsLoading]);
 
   const handleLogout = () => {
     router.push("/login");
@@ -162,16 +182,22 @@ export default function ResultsPage() {
   const getChartData = () => {
     if (!results) return null;
 
-    const positions = Object.keys(results);
+    const positionIds = Object.keys(results);
     const chartData: any = {};
 
-    positions.forEach((positionId) => {
+    positionIds.forEach((positionId) => {
       const candidates = results[positionId];
-      const candidateNames = Object.keys(candidates);
+      const candidateIds = Object.keys(candidates);
       const votes = Object.values(candidates) as number[];
+      const byId = new Map<string, string>();
+      (positions || [])
+        .find((p) => p.id === positionId)
+        ?.candidates?.forEach((c) => byId.set(c.id, c.name));
+      const candidateNames = candidateIds.map((id) => byId.get(id) || id);
 
       chartData[positionId] = {
         labels: candidateNames,
+        candidateIds,
         datasets: [
           {
             label: "Votes",
@@ -217,9 +243,32 @@ export default function ResultsPage() {
         {/* Main Content Area */}
         <main className="flex-1 p-2 overflow-y-auto">
           <div className="w-full max-w-8xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {loading ? (
+        <div className="mb-6">
+          <select
+            className="h-10 w-full sm:max-w-md rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer"
+            value={electionId}
+            disabled={electionsLoading || elections.length === 0}
+            onChange={(e) => setElectionId(e.target.value)}
+          >
+            {electionsLoading ? (
+              <option value="">Loading elections...</option>
+            ) : elections.length === 0 ? (
+              <option value="">No elections found</option>
+            ) : (
+              elections.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name || e.id}
+                </option>
+              ))
+            )}
+          </select>
+        </div>
+
+        {electionsLoading || loading ? (
           <div className="text-center py-12">
-            <p className="text-muted-foreground">Loading results...</p>
+            <p className="text-muted-foreground">
+              {electionsLoading ? "Loading elections..." : "Loading results..."}
+            </p>
           </div>
         ) : error ? (
           <Card>
