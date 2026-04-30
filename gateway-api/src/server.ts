@@ -264,14 +264,16 @@ type VoterImportInput = {
 };
 
 app.post('/voters/import', async (req, res) => {
-  const body = req.body as { voters?: VoterImportInput[] };
+  const body = req.body as { voters?: VoterImportInput[]; electionId?: string };
   const voters = body?.voters;
+  const electionId = body?.electionId ? String(body.electionId).trim() : undefined;
   if (!Array.isArray(voters) || voters.length === 0) {
     return res.status(400).json({ error: 'Body must include non-empty voters array' });
   }
 
   let created = 0;
   let updated = 0;
+  let rostered = 0;
   const errors: Array<{ index: number; studentNumber?: string; message: string }> = [];
 
   for (let i = 0; i < voters.length; i++) {
@@ -307,8 +309,12 @@ app.post('/voters/import', async (req, res) => {
       const isEligible =
         raw?.isEligible === undefined || raw?.isEligible === null ? true : Boolean(raw.isEligible);
 
+      // Check if another voter already has this email with a different studentNumber
+      const emailOwner = await prisma.voter.findFirst({ where: { upEmail, NOT: { studentNumber } } });
+      const safeUpEmail = emailOwner ? undefined : upEmail;
+
       const existing = await prisma.voter.findUnique({ where: { studentNumber } });
-      await prisma.voter.upsert({
+      const voter = await prisma.voter.upsert({
         where: { studentNumber },
         create: {
           studentNumber,
@@ -322,7 +328,7 @@ app.post('/voters/import', async (req, res) => {
           isEligible,
         },
         update: {
-          upEmail,
+          ...(safeUpEmail !== undefined ? { upEmail: safeUpEmail } : {}),
           fullName,
           college,
           department,
@@ -334,6 +340,20 @@ app.post('/voters/import', async (req, res) => {
       });
       if (existing) updated += 1;
       else created += 1;
+
+      // Add voter to election roster if electionId is provided
+      if (electionId) {
+        try {
+          await prisma.electionVoter.upsert({
+            where: { electionId_voterId: { electionId, voterId: voter.id } },
+            create: { electionId, voterId: voter.id },
+            update: {},
+          });
+          rostered++;
+        } catch (rosterErr: any) {
+          console.warn(`⚠️ Failed to add voter ${studentNumber} to election ${electionId} roster:`, rosterErr.message);
+        }
+      }
     } catch (err: any) {
       errors.push({
         index: i,
@@ -347,6 +367,7 @@ app.post('/voters/import', async (req, res) => {
     ok: true,
     created,
     updated,
+    rostered,
     total: created + updated,
     failed: errors.length,
     errors,
@@ -820,20 +841,40 @@ app.post('/elections', async (req, res) => {
       { id: 'redbolts-governor', name: 'Redbolts Governor', maxVotes: 1, order: 6 },
       { id: 'skimmers-governor', name: 'Skimmers Governor', maxVotes: 1, order: 6 },
     ];
+
+    // Wait for CreateElection transaction to be fully processed before adding positions
+    console.log('⏳ Waiting 2s for CreateElection to be processed on-chain...');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    let positionsSucceeded = 0;
     for (const pos of defaultPositions) {
-      try {
-        await contract.submit('AddPosition', {
-          arguments: [
-            String(electionId),
-            pos.id,
-            pos.name,
-            String(pos.maxVotes),
-            String(pos.order),
-          ],
-          endorsingOrganizations: ALL_ENDORSING_ORGS,
-        });
-      } catch (ccErr: any) {
-        console.warn(`⚠️ Failed to add position ${pos.id} to chaincode:`, ccErr.message);
+      let positionAdded = false;
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+          await contract.submit('AddPosition', {
+            arguments: [
+              String(electionId),
+              pos.id,
+              pos.name,
+              String(pos.maxVotes),
+              String(pos.order),
+            ],
+            endorsingOrganizations: ALL_ENDORSING_ORGS,
+          });
+          console.log(`✅ Position ${pos.id} added to chaincode (attempt ${attempt})`);
+          positionAdded = true;
+          break;
+        } catch (ccErr: any) {
+          console.warn(`⚠️ AddPosition ${pos.id} attempt ${attempt}/5 failed:`, ccErr.message);
+          if (attempt < 5) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+      }
+      if (positionAdded) {
+        positionsSucceeded++;
+      } else {
+        console.warn(`❌ All 5 retries failed for position ${pos.id} — skipping chaincode registration`);
       }
       try {
         await prisma.position.upsert({
@@ -845,6 +886,7 @@ app.post('/elections', async (req, res) => {
         console.warn(`⚠️ Failed to seed position ${pos.id} to database:`, dbErr.message);
       }
     }
+    console.log(`📊 Position seeding complete: ${positionsSucceeded}/${defaultPositions.length} positions added to chaincode`);
 
     const election = {
       id: electionId,
@@ -1185,9 +1227,13 @@ app.post('/elections/:id/paper-ballots/issue', async (req, res) => {
       return res.status(400).json({ error: 'This voter has already cast a paper ballot' });
     }
 
-    if (voter.hasVoted && !existing) {
+    const electionVoterRow = await prisma.electionVoter.findUnique({
+      where: { electionId_voterId: { electionId, voterId: voter.id } },
+      select: { hasVoted: true },
+    });
+    if (electionVoterRow?.hasVoted && !existing) {
       return res.status(400).json({
-        error: 'Voter has already voted (digital). Cannot issue paper ballot.',
+        error: 'Voter has already voted (digital) in this election. Cannot issue paper ballot.',
       });
     }
 
@@ -1342,7 +1388,11 @@ app.post('/elections/:id/paper-tokens/generate-all', async (req, res) => {
 
     for (const v of eligible) {
       if (alreadyIssued.has(v.id)) continue;
-      if (isTruthy(v.hasVoted)) continue;
+      const electionVoterRow = await prisma.electionVoter.findUnique({
+        where: { electionId_voterId: { electionId, voterId: v.id } },
+        select: { hasVoted: true },
+      });
+      if (electionVoterRow?.hasVoted) continue;
 
       let ballotToken = generateBallotToken();
       for (let a = 0; a < 10; a++) {
@@ -2041,26 +2091,41 @@ app.post('/elections/:id/candidates', async (req, res) => {
       // Also register on blockchain (only if election is in DRAFT status)
       let candTxId: string | undefined;
       try {
-        // Check election status first
+        // Verify election and position exist on-chain first
         const electionBytes = await contract.evaluateTransaction('GetElection', id);
         const electionText = Buffer.from(electionBytes).toString('utf8').trim();
         if (electionText) {
           const election = JSON.parse(electionText);
           if (election.status === 'DRAFT') {
-            const regCandCommit = await contract.submitAsync('RegisterCandidate', {
-              arguments: [
-                id,
-                position.id,
-                candidateId,
-                name,
-                party || 'Independent',
-                program || '',
-                yearLevel || '',
-              ],
-              endorsingOrganizations: ALL_ENDORSING_ORGS,
-            });
-            candTxId = regCandCommit.getTransactionId();
-            console.log(`✅ Candidate ${candidateId} registered on blockchain (txId: ${candTxId})`);
+            let registered = false;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                const regCandCommit = await contract.submitAsync('RegisterCandidate', {
+                  arguments: [
+                    id,
+                    position.id,
+                    candidateId,
+                    name,
+                    party || 'Independent',
+                    program || '',
+                    yearLevel || '',
+                  ],
+                  endorsingOrganizations: ALL_ENDORSING_ORGS,
+                });
+                candTxId = regCandCommit.getTransactionId();
+                console.log(`✅ Candidate ${candidateId} registered on blockchain (txId: ${candTxId}, attempt ${attempt})`);
+                registered = true;
+                break;
+              } catch (retryErr: any) {
+                console.warn(`⚠️ RegisterCandidate ${candidateId} attempt ${attempt}/3 failed:`, retryErr.message);
+                if (attempt < 3) {
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                }
+              }
+            }
+            if (!registered) {
+              console.warn(`❌ All 3 retries failed for candidate ${candidateId} — saved to DB only, blockchain registration failed`);
+            }
           } else {
             console.warn(`⚠️ Skipping blockchain registration: Election ${id} is ${election.status} (must be DRAFT)`);
           }
