@@ -147,18 +147,48 @@ On success:
 ## 6. Vote Submission Flow (Paper Ballot)
 
 ```
-1. Admin scans ballot image
-2. Frontend sends base64 image to POST /scanner/scan-image
-3. Gateway forwards to OMR worker for bubble detection
-4. OMR returns detected selections
-5. Admin reviews and confirms
-6. Frontend calls POST /scanner/confirm-vote
+1. Admin issues ballot token → PaperBallotIssuance row created (voterId + ballotToken)
+2. Student fills physical paper ballot (bubbles + QR code printed on sheet)
+3. Admin scans ballot image → POST /scanner/scan-image → OMR Worker :8090
+4. OMR detects filled bubbles + decodes QR code → returns candidate selections + token
+5. Review modal shown → student verifies selections with admin (face-to-face)
+6. Admin confirms → POST /scanner/confirm-vote
 7. Gateway:
-   a. Validates ballot token in PaperBallotIssuance table
-   b. Creates PaperAnonymousVote record (DB)
-   c. Marks token as used
-   d. Calls RegisterVoter on chaincode (Org1 only)
-   e. Calls CastVoteEncrypted on chaincode (Org1 only)
-   f. Creates anonymized Vote records (DB)
-   g. If chaincode fails, rolls back DB changes
+   a. Validates ballot token exists in PaperBallotIssuance table and is unused
+   b. Marks token as used (usedAt timestamp)
+   c. Creates PaperAnonymousVote record (ciphertextB64 + selectionsJson)
+   d. Calls RegisterVoter on chaincode (Org1 PDC — pdcVoters)
+   e. Calls CastVoteEncrypted on chaincode (Org1 PDC — pdcBallots + public tally)
+   f. Creates anonymized Vote records in DB (no voter linkage)
+   g. Updates ElectionVoter.hasVoted for this election
+   h. If chaincode fails: FULL DB ROLLBACK — token unmarked, voter status reset,
+      vote records deleted, PaperAnonymousVote removed
+```
+
+## 7. Election Setup Sequence
+
+The following steps must be followed in order:
+
+1. Create election (DRAFT) via UI or `POST /elections`
+2. Verify positions seeded on-chain (gateway has retry logic — confirm with `GetElection`)
+3. Add candidates via UI while election is in DRAFT status
+4. Verify all candidates on-chain: `GetCandidatesByElection` query
+5. Import voter CSV (Voter Roster page — **select the election first** in the dropdown)
+6. Generate tokens (Token Status page — "Generate tokens for all")
+7. Open election via UI or `POST /elections/:id/open`
+8. Only THEN scan and vote
+
+**Note**: Voter import MUST have the election selected in the dropdown before clicking Import. The frontend passes `electionId` so only the imported voters are added to that election's roster (not all CAS-eligible voters).
+
+## 8. Gateway API .env Reference
+
+```env
+PORT=4000
+DATABASE_URL=file:./prisma/dev.db
+CHANNEL_NAME=mychannel
+CHAINCODE_NAME=ecasvote
+MSP_ID=Org1MSP
+PEER_ENDPOINT=localhost:7051
+PEER_HOST_ALIAS=peer0.org1.example.com
+OMR_WORKER_URL=http://127.0.0.1:8090
 ```

@@ -231,6 +231,86 @@ Common issues and solutions.
 
 3. The election must be CLOSED before results can be published.
 
+## Org3 Not Running After Restart
+
+**Symptom**: Org3 peer is missing from `docker ps` after restarting the Fabric network.
+
+Org3 does NOT start automatically with `./network.sh up`.
+
+**Fix**:
+```bash
+docker start peer0.org3.example.com
+```
+
+**Verify**:
+```bash
+docker ps | grep org3
+```
+
+## Candidates Missing from UI After Restart
+
+**Symptom**: Positions exist in the database but not on-chain. Adding candidates fails with "Position does not exist for election".
+
+This happens when `AddPosition` calls fail silently during election creation (timing issue after `CreateElection`).
+
+**Fix**: Use the `peer` CLI to re-add all 9 positions on-chain, then re-register candidates via the UI (election must be in DRAFT status) or via terminal `RegisterCandidate` invocations.
+
+## Voter Roster Shows Wrong Count After Import
+
+**Symptom**: More voters appear on the roster than were imported from the CSV.
+
+**Cause**: The old code called `syncCasEligibleToElectionRoster` after every import, which added ALL CAS-eligible voters to the roster.
+
+**Fix applied** in `voter-roster/page.tsx` and `server.ts` — import now passes `electionId` to the gateway which scopes the roster to only imported voters.
+
+If the count is still wrong, clear the `ElectionVoter` table for that election and re-import:
+```bash
+cd gateway-api
+npx prisma db execute --stdin <<EOF
+DELETE FROM "ElectionVoter" WHERE "electionId" = 'YOUR-ELECTION-ID';
+EOF
+```
+
+## Token Generation Skips Voters Who Voted in Other Elections
+
+**Symptom**: `generate-all` skips voters even though they haven't voted in the current election.
+
+**Cause**: The global `hasVoted` flag on the `Voter` table was blocking token generation for new elections.
+
+**Fix applied** in `server.ts` `generate-all` endpoint — now checks `ElectionVoter.hasVoted` (per-election) instead of `Voter.hasVoted` (global).
+
+## Multi-Candidate Position Vote Fails (e.g. CAS Councilor)
+
+**Symptom**: Votes for positions with `maxVotes > 1` fail or record incorrectly.
+
+**Cause**: Comma-separated `candidateIds` were sent as a single string to chaincode.
+
+**Fix applied** in `/scanner/confirm-vote` — `flatMap` split ensures each `candidateId` becomes a separate `{ positionId, candidateId }` entry.
+
+## Election Auto-Closes When Admin Opens Election Management Page
+
+**Symptom**: Elections auto-close unexpectedly when navigating to the Election Management page.
+
+**Cause**: Each election row called `fetchElection()` individually, triggering auto-close logic for every election on every page load.
+
+**Fix applied** in `election-management/utils.ts` — removed per-election `fetchElection` calls from `loadElectionRows()`.
+
+## AddPosition Fails After CreateElection
+
+**Symptom**: `AddPosition` calls fail with "10 ABORTED: failed to collect enough transaction endorsements" immediately after creating an election.
+
+**Cause**: Chaincode needs time to process the `CreateElection` transaction before it can accept `AddPosition` calls.
+
+**Fix applied** in `POST /elections` in `server.ts` — 2000ms wait after `CreateElection` + up to 5 retries with 1000ms delay for each `AddPosition` call.
+
+## Candidate Registration Fails with Endorsement Error
+
+**Symptom**: `RegisterCandidate` fails with endorsement errors.
+
+**Cause**: Positions not yet on-chain when candidates are being registered.
+
+**Fix**: Verify positions on-chain first with a `GetElection` query, then register candidates. The election must be in DRAFT status. The gateway now retries `RegisterCandidate` up to 3 times with 500ms delay.
+
 ## WSL2-Specific Issues
 
 ### Slow Performance

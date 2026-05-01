@@ -57,24 +57,30 @@ else
 fi
 
 # ------------------------------------------------------------------
-# 4. Stop Fabric Network
+# 4. Stop Fabric Network Containers
 # ------------------------------------------------------------------
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'peer0.org1'; then
-  info "Stopping Fabric network..."
+FABRIC_CONTAINERS="peer0.org1.example.com peer0.org2.example.com peer0.org3.example.com orderer.example.com"
+STOPPED_ANY=false
 
-  # Stop Org3 peer first (not managed by network.sh)
-  if docker ps --format '{{.Names}}' | grep -q 'peer0.org3'; then
-    docker stop peer0.org3.example.com 2>/dev/null
-    docker rm peer0.org3.example.com 2>/dev/null
-    info "Org3 peer stopped and removed."
+for CONTAINER in $FABRIC_CONTAINERS; do
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "$CONTAINER"; then
+    info "Stopping $CONTAINER..."
+    docker stop "$CONTAINER" 2>/dev/null
+    STOPPED_ANY=true
   fi
+done
 
-  cd "$NETWORK_DIR"
-  ./network.sh down
-  cd "$REPO_DIR"
-  info "Fabric network stopped."
-else
+# Also stop CA containers
+for CA in $(docker ps --format '{{.Names}}' 2>/dev/null | grep 'ca[._]'); do
+  info "Stopping $CA..."
+  docker stop "$CA" 2>/dev/null
+  STOPPED_ANY=true
+done
+
+if [ "$STOPPED_ANY" = false ]; then
   info "Fabric network is not running."
+else
+  info "Fabric containers stopped."
 fi
 
 # ------------------------------------------------------------------

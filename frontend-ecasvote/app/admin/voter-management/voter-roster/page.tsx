@@ -15,7 +15,6 @@ import {
   fetchElections,
   fetchElectionVoters,
   importVoters,
-  syncCasEligibleToElectionRoster,
   updateVoter,
   type Election,
   type VoterRecord,
@@ -162,7 +161,7 @@ export default function VoterRosterPage() {
     try {
       const text = await file.text();
       const { rows, skipped } = parseVoterCsv(text);
-      const result = await importVoters(rows);
+      const result = await importVoters(rows, printElectionId);
 
       const parseNote =
         skipped.length > 0
@@ -190,15 +189,7 @@ export default function VoterRosterPage() {
           description: `Created ${result.created}, updated ${result.updated} (${result.total} total).`,
         });
       }
-      // Sync imported voters to the selected election's roster
-      if (printElectionId) {
-        try {
-          const sync = await syncCasEligibleToElectionRoster(printElectionId);
-          console.log(`Roster sync: added ${sync.added}, total ${sync.totalOnRoster}`);
-        } catch (syncErr) {
-          console.warn("Roster sync after import failed:", syncErr);
-        }
-      }
+      // Roster sync is now handled by the import endpoint via electionId
       await loadVoters();
     } catch (err: unknown) {
       const raw = err instanceof Error ? err.message : String(err);

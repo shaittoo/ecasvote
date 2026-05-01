@@ -588,12 +588,13 @@ export interface ImportVotersResult {
 }
 
 export async function importVoters(
-  voters: VoterImportPayload[]
+  voters: VoterImportPayload[],
+  electionId?: string
 ): Promise<ImportVotersResult> {
   const res = await fetch(`${getGatewayBase()}/voters/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ voters }),
+    body: JSON.stringify({ voters, ...(electionId ? { electionId } : {}) }),
   });
   return handleResponse(res);
 }

@@ -2,6 +2,18 @@
 
 Complete setup instructions for running eCASVote on WSL2/Ubuntu.
 
+## WSL2 on Windows
+
+This project is developed on **WSL2 (Ubuntu) on Windows**. Critical notes:
+
+- **All repos must live in the WSL2 home directory**, NOT under `/mnt/c/`. Docker volume mounts break on the Windows filesystem due to the 9P bridge.
+  ```
+  CORRECT:  ~/go/src/github.com/shaittoo/ecasvote
+  WRONG:    /mnt/c/Users/.../ecasvote
+  ```
+- Docker Desktop must have WSL2 backend integration enabled for your distro.
+- The `fabric-network-ecasvote/` subdirectory contains the Fabric network config and must also be on the Linux filesystem.
+
 ## Prerequisites
 
 | Requirement | Version | Notes |
@@ -42,9 +54,9 @@ docker ps
 # You should see: peer0.org1, peer0.org2, orderer, ca containers
 ```
 
-### Org3 (PMB) -- Manual Docker Start
+### Org3 (PMB) -- Manual Start Required
 
-Org3 is not part of the default `network.sh`. Start it manually:
+**Important**: Org3 does NOT start with `./network.sh up`. After the network is up, you must start Org3 manually. If the container already exists from a previous run, just use `docker start peer0.org3.example.com`. Otherwise, create it:
 
 ```bash
 docker run -d \
@@ -65,6 +77,24 @@ docker run -d \
   hyperledger/fabric-peer:2.5
 ```
 
+### Peer CLI Environment Variables
+
+To interact with the Fabric network from the terminal (e.g., querying chaincode), set these environment variables:
+
+```bash
+export PATH=$PATH:$HOME/go/src/github.com/shaittoo/fabric-samples/bin
+export FABRIC_CFG_PATH=$HOME/go/src/github.com/shaittoo/fabric-network-ecasvote/config
+export FABRIC_NET=$HOME/go/src/github.com/shaittoo/fabric-network-ecasvote
+export CORE_PEER_TLS_ENABLED=true
+export CORE_PEER_LOCALMSPID=Org1MSP
+export CORE_PEER_TLS_ROOTCERT_FILE=$FABRIC_NET/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+export CORE_PEER_MSPCONFIGPATH=$FABRIC_NET/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp
+export CORE_PEER_ADDRESS=localhost:7051
+export ORDERER_CA=$FABRIC_NET/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem
+export ORG1_TLS=$FABRIC_NET/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+export ORG2_TLS=$FABRIC_NET/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt
+```
+
 ## 2. Chaincode Deployment
 
 ```bash
@@ -73,8 +103,11 @@ cd chaincode-ecasvote
 # Build the chaincode
 npm install
 npm run build
-npm run package    # Creates npm-shrinkwrap.json
+```
 
+**Note**: Always use `peer lifecycle chaincode package` for packaging, NOT `npm run package`. The npm script only creates `npm-shrinkwrap.json`.
+
+```bash
 # Deploy using the deployment script
 ./deploy-chaincode.sh
 ```
@@ -173,11 +206,25 @@ Set `OMR_WORKER_URL=http://127.0.0.1:8090` in gateway-api/.env.
 
 1. Log in as admin at http://localhost:3000/login
 2. Navigate to Voter Management > Voter Roster
-3. Click "Import roster" and upload a CSV/TSV file with columns:
+3. **Select the target election from the dropdown first**
+4. Click "Import roster" and upload a CSV/TSV file with columns:
    ```
    student_id  full_name  up_mail  college  program  year_level  academic_org  enrollment_status
    ```
-4. After import, voters are automatically synced to the active election roster.
+5. Imported voters are automatically added to the selected election's roster (the frontend passes `electionId` to the import endpoint).
+
+## 7. Election Setup Sequence
+
+The following steps MUST be followed in order for a complete election setup:
+
+1. **Create election** (DRAFT status) via the UI or `POST /elections`
+2. **Verify positions seeded on-chain** — the gateway has retry logic, but confirm with a `GetElection` chaincode query that positions exist
+3. **Add candidates** via the UI while the election is in DRAFT status
+4. **Verify 27 candidates on-chain**: run `GetCandidatesByElection` query to confirm all candidates registered
+5. **Import voter CSV** — on the Voter Roster page, select the election first, then click Import
+6. **Generate tokens** — on the Token Status page, click "Generate tokens for all"
+7. **Open election** via the UI or `POST /elections/:id/open`
+8. **Only THEN** can you scan and vote
 
 ## Startup Order
 

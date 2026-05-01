@@ -153,11 +153,26 @@ Smart contract: `chaincode-ecasvote/src/ecasVote.ts`
 | `GetEncryptedBallot` | electionId, voterId | SEB | pdcBallots |
 | `GetBallotHash` | electionId, voterId | Any | Hash only |
 
+### Voting
+
+| Function | Parameters | Access | Description |
+|----------|-----------|--------|-------------|
+| `CastVote` | electionId, voterId, positionId, candidateId | SEB | Cast a single plaintext vote (legacy) |
+
 ### Results
 
 | Function | Parameters | Access | Description |
 |----------|-----------|--------|-------------|
 | `GetElectionResults` | electionId | Any | Aggregate vote tallies per position per candidate |
+
+---
+
+## 2.5. Private Data Collections (PDC)
+
+| Collection | Policy | Purpose |
+|------------|--------|---------|
+| `pdcVoters` | `OR('Org1MSP.member')` | Stores voter registration hashes (voterId, electionId, hasVoted). Only Org1 (SEB) can read/write. On-chain hash committed for verification. |
+| `pdcBallots` | `OR('Org1MSP.member')` | Stores encrypted ballot data (ciphertextB64, castAt, encryption method). Only Org1 can read/write. On-chain hash committed for verification. |
 
 ---
 
@@ -243,7 +258,8 @@ Database: SQLite via Prisma ORM (`gateway-api/prisma/schema.prisma`)
 | voterId | Int | |
 | hasVoted | Boolean | Per-election vote status |
 | votedAt | DateTime? | |
-| Unique | [electionId, voterId] | |
+| createdAt | DateTime | When voter was added to roster |
+| Unique | [electionId, voterId] | Compound key: `electionId_voterId` |
 
 #### Vote (Anonymized)
 | Field | Type | Notes |
@@ -264,7 +280,9 @@ Database: SQLite via Prisma ORM (`gateway-api/prisma/schema.prisma`)
 | electionId | String | |
 | voterId | Int | Links voter to token |
 | used | Boolean | default false |
-| templateVersion | String | default "ballot-template-v1" |
+| usedAt | DateTime? | When the token was consumed |
+| issuedAt | DateTime | When the token was created |
+| templateVersion | String | default "ballot-template-v2" |
 
 #### PaperAnonymousVote (Public)
 | Field | Type | Notes |

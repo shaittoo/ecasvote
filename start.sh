@@ -163,15 +163,28 @@ else
 fi
 
 # ------------------------------------------------------------------
+# 9. Verify all peer containers are running
+# ------------------------------------------------------------------
+echo ""
+for PEER in peer0.org1.example.com peer0.org2.example.com peer0.org3.example.com orderer.example.com; do
+  if docker ps --format '{{.Names}}' | grep -q "$PEER"; then
+    info "  $PEER is running"
+  else
+    warn "  WARNING: $PEER is NOT running!"
+  fi
+done
+
+# ------------------------------------------------------------------
 # Done
 # ------------------------------------------------------------------
 echo ""
 info "============================================"
-info "  eCASVote is running at http://localhost:3000"
+info "  eCASVote is running"
 info "============================================"
 echo ""
-info "  Gateway API:  http://localhost:4000"
 info "  Frontend:     http://localhost:3000"
+info "  Gateway API:  http://localhost:4000"
+info "  Health check: http://localhost:4000/health"
 info "  OMR Worker:   http://localhost:8090 (if available)"
 echo ""
 info "  Admin login:     admin@up.edu.ph / admin123"

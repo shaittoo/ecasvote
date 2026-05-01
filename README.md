@@ -8,7 +8,7 @@ A hybrid electronic and paper ballot voting system built on Hyperledger Fabric, 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Frontend (Next.js 16)                        │
+│                    Tier 1: Frontend (Next.js :3000)                  │
 │  ┌───────────┐  ┌──────────────┐  ┌───────────────┐  ┌──────────┐ │
 │  │  Landing   │  │  Admin Panel │  │ Student Pages │  │Validator │ │
 │  │  Page (/)  │  │  /admin/*    │  │/studentvoter/*│  │/validator│ │
@@ -16,23 +16,23 @@ A hybrid electronic and paper ballot voting system built on Hyperledger Fabric, 
 └──────────────────────────┬──────────────────────────────────────────┘
                            │ HTTP (port 3000 → 4000)
 ┌──────────────────────────▼──────────────────────────────────────────┐
-│                    Gateway API (Express + Prisma)                    │
+│          Tier 2: Gateway API (Express :4000) + Services             │
 │  ┌──────────┐  ┌──────────────┐  ┌────────────┐  ┌──────────────┐ │
 │  │   Auth    │  │  Election    │  │   Ballot   │  │  Integrity   │ │
 │  │ Endpoints │  │  Management  │  │  Scanning  │  │    Check     │ │
 │  └──────────┘  └──────────────┘  └─────┬──────┘  └──────────────┘ │
 │                                        │                            │
 │  ┌─────────────────┐    ┌──────────────▼──────────────────┐        │
-│  │ SQLite (Prisma)  │    │   OMR Worker (FastAPI/OpenCV)   │        │
-│  │   Off-chain DB   │    │   Paper ballot bubble reading   │        │
+│  │ SQLite (Prisma)  │    │   OMR Worker (FastAPI :8090)    │        │
+│  │   Off-chain DB   │    │   OpenCV bubble + QR detection  │        │
 │  └─────────────────┘    └─────────────────────────────────┘        │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │ gRPC (ports 7051, 9051, 11051)
 ┌──────────────────────────▼──────────────────────────────────────────┐
-│               Hyperledger Fabric 2.5 Network                        │
+│            Tier 3: Hyperledger Fabric 2.5 Network                   │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │
 │  │  Org1 (SEB)  │  │ Org2 (Dept)  │  │  Org3 (PMB)  │             │
-│  │  peer0:7051  │  │ peer0:9051   │  │ peer0:11051  │             │
+│  │ Org1MSP:7051 │  │ Org2MSP:9051 │  │Org3MSP:11051 │             │
 │  └──────────────┘  └──────────────┘  └──────────────┘             │
 │  ┌──────────────────────────────────────────────────┐             │
 │  │  Orderer (etcdraft) :7050                        │             │
@@ -115,12 +115,13 @@ Private Data Collections (`pdcVoters`, `pdcBallots`) are accessible only to Org1
 ## Key Features
 
 - **Blockchain-backed voting** — every vote is recorded on Hyperledger Fabric with multi-org endorsement
-- **Hybrid paper + digital ballots** — supports both digital voting and OMR-scanned paper ballots
+- **Hybrid paper + digital ballots** — supports both digital voting and OMR-scanned paper ballots with hybrid OMR+blockchain vote flow
 - **Ballot secrecy** — voter identity is never linked to vote selections in public records
 - **Private Data Collections** — voter registration and encrypted ballots stored in Org1-only PDC
-- **Integrity verification** — real-time comparison of blockchain tally vs. database records
-- **Per-election voter roster** — voters are enrolled per election with per-election vote tracking
-- **Candidate and results publishing** — admin controls when candidates and results become publicly visible
+- **Integrity verification** — real-time comparison of blockchain tally vs. database records with admin override to sync DB to blockchain
+- **Per-election voter roster** — voters are enrolled per election with per-election `hasVoted` tracking via `ElectionVoter`
+- **Paper ballot token generation** — per-election token issuance for paper ballot flow, respects per-election vote status
+- **Candidate and results publishing** — admin controls when candidates and results become publicly visible via `candidatesPublished` / `resultsPublished` flags
 - **Audit trail** — all chaincode transactions logged with timestamps
 - **Paper ballot scanning** — OpenCV-based OMR with QR code identification
 - **Role-based access** — separate dashboards for Admin (SEB), Validator (Adviser), and public viewing
@@ -157,19 +158,28 @@ npm run dev
 ```
 ecasvote/
 ├── fabric-network-ecasvote/   # Fabric network config, docker-compose, crypto
+│   ├── organizations/         # Crypto material for all orgs
+│   ├── network.sh             # Network lifecycle (up/down/createChannel)
+│   └── docker/                # Docker compose files
 ├── chaincode-ecasvote/        # Hyperledger Fabric chaincode (TypeScript)
-│   └── src/ecasVote.ts        # Smart contract with all chaincode functions
+│   ├── src/ecasVote.ts        # Smart contract with all chaincode functions
+│   ├── collections_config.json # PDC definitions (pdcVoters, pdcBallots)
+│   └── deploy-chaincode.sh   # Chaincode packaging and deployment
 ├── gateway-api/               # Express REST API + Prisma ORM
 │   ├── src/server.ts          # All API endpoints
 │   ├── src/fabricClient.ts    # Fabric Gateway SDK connection
-│   └── prisma/schema.prisma  # Database schema
+│   └── prisma/schema.prisma  # Database schema (SQLite)
 ├── frontend-ecasvote/         # Next.js frontend
 │   ├── app/admin/             # SEB admin dashboard
 │   ├── app/validator/         # Validator/adviser dashboard
 │   ├── app/studentvoter/      # Public candidate and results pages
-│   └── app/login/             # Authentication
+│   └── lib/ecasvoteApi.ts     # API client functions
+├── omr-worker/                # Python FastAPI OMR service (OpenCV)
+├── start.sh                   # Start all services
+├── stop.sh                    # Stop all services
 ├── SETUP.md                   # Startup instructions
 ├── CONNECT.md                 # Component connection guide
+├── TROUBLESHOOTING.md         # Known issues and fixes
 ├── SECURITY_ANALYSIS.md       # Security design documentation
 └── SYSTEM_INVENTORY.md        # Complete API and schema reference
 ```
