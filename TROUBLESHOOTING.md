@@ -130,10 +130,11 @@ Common issues and solutions.
    ```
    If unavailable, start it:
    ```bash
-   cd omr-worker && docker run -d -p 8090:8090 --name omr-worker omr-worker
+   cd omr-worker && docker compose up --build
    ```
+   (or build/run a single container per `omr-worker/README.md`)
 
-3. **Ballot geometry not saved**: The OMR system needs measured bubble positions. Print a ballot first, then scan it. The geometry is saved on first successful scan.
+3. **Ballot geometry not saved**: The OMR system needs measured bubble positions. Printing a ballot persists geometry via **`POST /api/omr-layout`** (see gateway); the worker can also pull **`GET /api/omr-layout/:ballotId`** when scanning if configured.
 
 4. **Ballot alignment**: The physical ballot must match the template. Reprinting with different margins or scaling will break detection.
 
@@ -148,6 +149,28 @@ Common issues and solutions.
 1. Ensure the QR code is clearly visible and not obscured by folds or marks.
 2. Try improving lighting and contrast in the scanned image.
 3. The QR code contains only the ballot token (e.g., `{"e":"election-id","b":"TKN-ABC123","v":"ballot-template-v2"}`).
+
+### Paper `confirm-vote` shows generic error but election is closed
+
+**Symptom**: Toast says *An error occurred. Please try again or contact the SEB* after **Confirm & Submit Vote** on a closed or non-OPEN election.
+
+**Cause**: Chaincode rejects with *Election … is not OPEN for voting* (or similar). The gateway maps that to **409** `ELECTION_CLOSED` when the message indicates closed / not open; the frontend maps that to a clear string.
+
+**Fix**: Ensure gateway and frontend are rebuilt/deployed together. If you still see only a long `Blockchain rejected vote: …` string, upgrade gateway error handling and `lib/ecasvoteApi.ts` `confirmPaperVote` error parsing.
+
+### Legacy `Position` / `Candidate` IDs across elections
+
+**Symptom**: Cannot add candidates for a new election, or wrong election’s positions appear.
+
+**Cause**: Old DB rows used a **global** short `Position.id` (e.g. `usc-councilor`) shared across elections.
+
+**Fix**: Run the migration helper (SQLite, from `gateway-api/`):
+
+```bash
+npx ts-node scripts/migrateLegacyPositionIds.ts
+```
+
+New elections created via the gateway use **`{electionId}__{slug}`** for Prisma `Position.id` / `Candidate.positionId` while chaincode keeps the short slug.
 
 ## Gateway API
 

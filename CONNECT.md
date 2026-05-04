@@ -71,9 +71,11 @@ Exceptions (Org1 only, due to PDC access):
 The OMR worker is an optional FastAPI service that performs paper ballot bubble detection using OpenCV.
 
 ```
-Gateway API  ──POST /process──>  OMR Worker (:8090)
+Gateway API  ──POST /scanner/scan-image──>  OMR Worker POST /scan (:8090)
              <──JSON response──
 ```
+
+The worker may call back to the gateway **`GET /api/omr-layout/:ballotId`** (when configured) to load stored bubble geometry for a token without sending full template in the scan request.
 
 Set in `gateway-api/.env`:
 ```
@@ -155,14 +157,11 @@ On success:
 6. Admin confirms → POST /scanner/confirm-vote
 7. Gateway:
    a. Validates ballot token exists in PaperBallotIssuance table and is unused
-   b. Marks token as used (usedAt timestamp)
-   c. Creates PaperAnonymousVote record (ciphertextB64 + selectionsJson)
-   d. Calls RegisterVoter on chaincode (Org1 PDC — pdcVoters)
-   e. Calls CastVoteEncrypted on chaincode (Org1 PDC — pdcBallots + public tally)
-   f. Creates anonymized Vote records in DB (no voter linkage)
-   g. Updates ElectionVoter.hasVoted for this election
-   h. If chaincode fails: FULL DB ROLLBACK — token unmarked, voter status reset,
-      vote records deleted, PaperAnonymousVote removed
+   b. In a **Prisma transaction**: creates `PaperAnonymousVote`, marks issuance **used**, sets voter `hasVoted` / `ElectionVoter.hasVoted` (so the row commits before chain submission)
+   c. Calls `RegisterVoter` then `CastVoteEncrypted` on chaincode (Org1-only endorsement; PDC + public tallies)
+   d. On chain **success**: creates anonymized `Vote` rows (short `positionId` keys aligned with chain) and audit log
+   e. If **CastVoteEncrypted** (or prior chain step) **fails**: a **best-effort follow-up** deletes the anonymous vote row, un-marks the token, and clears voter flags so the voter can retry. This is not the same transaction as (b)—the gateway compensates after commit.
+   f. If the election is **not OPEN** (e.g. CLOSED), chaincode rejects with a message such as *not OPEN for voting*; the API may respond with **HTTP 409** and body `{ error: "ELECTION_CLOSED", message: "..." }` for the client to show a clear toast (see gateway `server.ts` and `confirmPaperVote` in the frontend API client).
 ```
 
 ## 7. Election Setup Sequence
@@ -179,16 +178,3 @@ The following steps must be followed in order:
 8. Only THEN scan and vote
 
 **Note**: Voter import MUST have the election selected in the dropdown before clicking Import. The frontend passes `electionId` so only the imported voters are added to that election's roster (not all CAS-eligible voters).
-
-## 8. Gateway API .env Reference
-
-```env
-PORT=4000
-DATABASE_URL=file:./prisma/dev.db
-CHANNEL_NAME=mychannel
-CHAINCODE_NAME=ecasvote
-MSP_ID=Org1MSP
-PEER_ENDPOINT=localhost:7051
-PEER_HOST_ALIAS=peer0.org1.example.com
-OMR_WORKER_URL=http://127.0.0.1:8090
-```

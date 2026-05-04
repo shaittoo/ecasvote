@@ -77,10 +77,10 @@ docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "peer|orderer"
 **Steps**:
 1. Navigate to Ballot Scanning
 2. Select the election
-3. Upload a scanned ballot image (or use the camera)
-4. Show the OMR detection results:
+3. Capture with the **document camera** (primary path today) — ensure `OMR_WORKER_URL` is set and the worker is running for bubble detection; otherwise the UI can still decode QR-only flows depending on build
+4. Show the OMR / scan pipeline results:
    - QR code decoded (ballot token)
-   - Bubble detection (selected candidates per position)
+   - Bubble detection (selected candidates per position) when the worker is available
 5. Show the review modal with only selected candidates visible
 
 **Explain**: The OMR worker (OpenCV/FastAPI) detects filled bubbles. The review modal shows only selected candidates to preserve ballot secrecy during the scanning process.
@@ -99,7 +99,9 @@ docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "peer|orderer"
 5. Anonymized `Vote` records created in database (no voter linkage)
 6. Audit log entry created
 
-**If blockchain fails**: Database changes are rolled back. The token is unmarked. The voter can retry.
+**If blockchain fails** (`CastVoteEncrypted` / register): the gateway runs a **compensating** DB update (token unused, anonymous row removed, voter flags cleared) so the voter can retry—see `CONNECT.md` paper flow.
+
+**If the election is closed**: the client should show **“This election is closed…”** when the API returns **409** `ELECTION_CLOSED` (or the chaincode “not OPEN for voting” message is mapped in the UI).
 
 ### 8. Blockchain Tally
 
@@ -166,9 +168,10 @@ docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "peer|orderer"
 
 **Student/Public View**:
 1. Open http://localhost:3000 in a new browser/incognito
-2. Click "View Candidates" (shows published candidates)
-3. Click "View Results" (shows published results with charts)
-4. Show that unpublished data is hidden ("Not yet published" messages)
+2. Use **Choose election** on the landing page (defaults to the most recently started **OPEN** election); links include `?election=<id>` for deep links
+3. Click "View Candidates" (shows published candidates)
+4. Click "View Results" (shows published results with charts)
+5. Show that unpublished data is hidden ("Not yet published" messages)
 
 **Validator View**:
 1. Log in as validator: `validator@up.edu.ph` / `validator123`

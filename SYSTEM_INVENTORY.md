@@ -94,7 +94,7 @@ Base URL: `http://localhost:4000`
 | POST | `/scanner/scan-image` | Scan ballot image (OMR + QR) |
 | POST | `/scanner/debug-image` | Generate debug overlay image |
 | POST | `/scanner/validate` | Validate a ballot token |
-| POST | `/scanner/confirm-vote` | Submit scanned vote (DB + blockchain) |
+| POST | `/scanner/confirm-vote` | Submit scanned vote (DB + blockchain); on closed/non-OPEN election may return **409** `{ error: "ELECTION_CLOSED", message: "..." }` |
 
 ### OMR Layout
 
@@ -216,7 +216,7 @@ Database: SQLite via Prisma ORM (`gateway-api/prisma/schema.prisma`)
 #### Position
 | Field | Type | Notes |
 |-------|------|-------|
-| id | String (PK) | Slug-based (e.g., "usc-councilor") |
+| id | String (PK) | Human-readable **per-election** key: `{electionId}__{slug}` in current gateway seeding (e.g. `my-election__usc-councilor`). Chaincode / ballots still use the **short** `slug` segment (e.g. `usc-councilor`) for `AddPosition` / tallies. Legacy rows may still use the short slug alone until migrated. |
 | electionId | String | |
 | name | String | Display name |
 | maxVotes | Int | Max selections allowed |
@@ -225,9 +225,9 @@ Database: SQLite via Prisma ORM (`gateway-api/prisma/schema.prisma`)
 #### Candidate
 | Field | Type | Notes |
 |-------|------|-------|
-| id | String (PK) | e.g., "cand-usc-councilor-1" |
+| id | String (PK) | e.g., `cand-<election>-usc-councilor-1` or includes scoped position id |
 | electionId | String | |
-| positionId | String | |
+| positionId | String | Must match **`Position.id`** (scoped `{electionId}__{slug}` for new data) |
 | name | String | |
 | party | String? | |
 | program | String? | |
@@ -324,10 +324,10 @@ Database: SQLite via Prisma ORM (`gateway-api/prisma/schema.prisma`)
 
 | Path | Page | Description |
 |------|------|-------------|
-| `/` | Landing page | Active election info, candidate/results links |
+| `/` | Landing page | Election picker + details; defaults to latest **OPEN** by `startTime`; candidate/results links use `?election=<id>` |
 | `/login` | Login | Unified login (student, admin, validator auto-detect) |
-| `/studentvoter/candidates` | Candidates | Published candidate list by position |
-| `/studentvoter/results` | Results | Published election results |
+| `/studentvoter/candidates` | Candidates | Published candidate list by position; optional **`?election=<id>`** (from landing or manual) |
+| `/studentvoter/results` | Results | Published election results; optional **`?election=<id>`** |
 
 ### Admin Routes (Protected)
 
@@ -362,3 +362,12 @@ Database: SQLite via Prisma ORM (`gateway-api/prisma/schema.prisma`)
 |------|------|-------------|
 | `/studentvoter` | Dashboard | Student voter home (currently disabled) |
 | `/studentvoter/castvote` | Cast vote | Digital voting interface |
+
+---
+
+## 5. Gateway maintenance scripts (SQLite)
+
+| Script | Purpose |
+|--------|---------|
+| `gateway-api/scripts/migrateLegacyPositionIds.ts` | One-time: rewrite legacy `Position.id` / `Candidate.positionId` to `{electionId}__{slug}` where missing (run with `npx ts-node scripts/migrateLegacyPositionIds.ts` from `gateway-api/`). Does **not** alter `Vote` rows (they keep short chain/ballot position keys). |
+| `gateway-api/scripts/backfillElectionRosters.ts` | Optional roster backfill (see script header). |

@@ -94,7 +94,7 @@ A: "Multiple layers: the chaincode checks if a voter has already voted, the data
 
 ### 6. Security Test Results
 
-Run the security test suite:
+Run the security test suite (runs `ts-node src/securityTests.ts` — needs a reachable Fabric network + DB aligned with the configured test election):
 ```bash
 cd gateway-api
 npm run security:test

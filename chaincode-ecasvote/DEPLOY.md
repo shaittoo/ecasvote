@@ -22,11 +22,11 @@ NETWORK_DIR=~/go/src/github.com/shaittoo/ecasvote/fabric-network-ecasvote
 cd chaincode-ecasvote
 npm install
 npm run build
-npm run package      # Creates npm-shrinkwrap.json
+npm run package      # Creates npm-shrinkwrap.json only — NOT `peer lifecycle chaincode package`
 ./deploy-chaincode.sh
 ```
 
-The script auto-detects the current sequence number and increments it for upgrades.
+The script auto-detects the current sequence number and increments it for upgrades. **Org3** (`localhost:11051`) must be running before commit if your definition lists three peers — see root **`SETUP.md`**.
 
 ## Manual Deployment Steps
 

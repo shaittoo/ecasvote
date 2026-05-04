@@ -9,12 +9,14 @@ cd gateway-api
 npm run security:test
 ```
 
-This will output test results showing:
+This will output test results showing (exact labels depend on ledger/DB state):
 - ✅ Blockchain Immutability: PASSED
 - ✅ Integrity Check: PASSED/WARNING  
 - ✅ Transaction ID Uniqueness: PASSED
 - ✅ No Double Voting: PASSED
 - ✅ Audit Trail Completeness: PASSED
+
+Requires the gateway’s configured test election and votes to exist on-chain and in SQLite; otherwise some checks may **FAIL** until data is seeded.
 
 ## What This Proves
 

@@ -159,6 +159,9 @@ If `CastVoteEncrypted` fails on the blockchain after the database transaction co
 
 This ensures a vote only counts if it is confirmed on-chain. The blockchain is the source of truth.
 
+### Paper scanner: closed election
+When `CastVoteEncrypted` fails because the election is no longer **OPEN** (e.g. status **CLOSED**, or chaincode message *not OPEN for voting*), the gateway maps that to **HTTP 409** with `error: "ELECTION_CLOSED"` and a stable user-facing `message`. The browser client surfaces that instead of a generic “contact SEB” error so operators know voting has ended.
+
 ### Network Unavailability
 - Blockchain connection errors are sanitized before display to users
 - Technical error details are logged to console but not shown in the UI

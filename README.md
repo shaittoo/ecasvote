@@ -123,7 +123,8 @@ Private Data Collections (`pdcVoters`, `pdcBallots`) are accessible only to Org1
 - **Paper ballot token generation** — per-election token issuance for paper ballot flow, respects per-election vote status
 - **Candidate and results publishing** — admin controls when candidates and results become publicly visible via `candidatesPublished` / `resultsPublished` flags
 - **Audit trail** — all chaincode transactions logged with timestamps
-- **Paper ballot scanning** — OpenCV-based OMR with QR code identification
+- **Paper ballot scanning** — OpenCV-based OMR with QR code identification (document camera path on the admin scanner UI; gateway `POST /scanner/scan-image` forwards to the OMR worker when `OMR_WORKER_URL` is set)
+- **Public landing election picker** — students choose which election to view; defaults to the **most recently started OPEN** election (`lib/studentElectionDefaults.ts`); **View Candidates** / **View Results** pass `?election=<id>` to student pages
 - **Role-based access** — separate dashboards for Admin (SEB), Validator (Adviser), and public viewing
 
 ## Quick Start
@@ -170,6 +171,7 @@ ecasvote/
 │   ├── src/fabricClient.ts    # Fabric Gateway SDK connection
 │   └── prisma/schema.prisma  # Database schema (SQLite)
 ├── frontend-ecasvote/         # Next.js frontend
+│   ├── lib/studentElectionDefaults.ts  # Public/student: default OPEN election + select ordering
 │   ├── app/admin/             # SEB admin dashboard
 │   ├── app/validator/         # Validator/adviser dashboard
 │   ├── app/studentvoter/      # Public candidate and results pages
