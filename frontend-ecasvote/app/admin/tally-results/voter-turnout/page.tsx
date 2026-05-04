@@ -10,7 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { FileDown, RefreshCw } from "lucide-react";
+import { Printer } from "lucide-react";
 import {
   Chart as ChartJS,
   ArcElement,
@@ -160,6 +160,7 @@ export default function VoterTurnoutPage() {
   const totalVoters = turnoutStats?.totalVoters ?? 0;
   const votedCount = turnoutStats?.votedCount ?? 0;
   const notVotedCount = turnoutStats?.notVotedCount ?? 0;
+  const hasResults = totalVoters > 0 && votedCount > 0 && notVotedCount > 0;
 
   const groupsData = (turnoutStats?.byDepartment ?? []).map((dept, i) => ({
     name: dept.name,
@@ -212,15 +213,15 @@ export default function VoterTurnoutPage() {
     });
   };
 
-  const getAvailableDates = () => {
-    const dates: string[] = [];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      dates.push(date.toISOString().split("T")[0]);
-    }
-    return dates.reverse();
-  };
+  // const getAvailableDates = () => {
+  //   const dates: string[] = [];
+  //   for (let i = 0; i < 7; i++) {
+  //     const date = new Date();
+  //     date.setDate(date.getDate() - i);
+  //     dates.push(date.toISOString().split("T")[0]);
+  //   }
+  //   return dates.reverse();
+  // };
 
   const peakTicks =
     hourlyData && hourlyData.peakHour.count > 10 ? 5 : 1;
@@ -245,7 +246,7 @@ export default function VoterTurnoutPage() {
       <div className="flex-1 flex flex-col">
         <AdminHeader
           title="Voter Turnout"
-          subtitle="Eligible CAS pool vs. votes recorded for the selected election"
+          subtitle="Live participation by academic organization, program, and year level"
           sidebarOpen={sidebarOpen}
         />
 
@@ -307,24 +308,16 @@ export default function VoterTurnoutPage() {
                       </select>
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-10 gap-2"
-                        onClick={() => loadData()}
-                      >
-                        <RefreshCw className="h-4 w-4 shrink-0" aria-hidden />
-                        Refresh
-                      </Button>
-                      <Button
-                        type="button"
-                        className="h-10 gap-2 bg-[#7A0019] hover:bg-[#5c0013] text-white"
-                        onClick={exportPdf}
-                        title="Opens the print dialog — choose Save as PDF or Microsoft Print to PDF."
-                      >
-                        <FileDown className="h-4 w-4 shrink-0" aria-hidden />
-                        Export PDF
-                      </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 gap-2 bg-[#7A0019] hover:bg-[#5c0013] text-white cursor-pointer"
+                      onClick={exportPdf}
+                      disabled={!hasResults}
+                    >
+                      <Printer className="mr-2 h-4 w-4" />
+                      Print
+                    </Button>
                     </div>
                   </div>
                 </CardContent>
@@ -344,7 +337,7 @@ export default function VoterTurnoutPage() {
                   <CardHeader className="pb-2">
                     <CardTitle className="text-lg font-semibold">Overall</CardTitle>
                     <p className="text-sm text-muted-foreground font-normal leading-relaxed">
-                      {electionName || electionId}
+                      Eligible voters and current participation
                     </p>
                   </CardHeader>
                   <CardContent>
@@ -358,15 +351,15 @@ export default function VoterTurnoutPage() {
 
                 <Card className="border-border/80 shadow-sm print:break-inside-avoid print:shadow-none">
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-lg font-semibold">By department</CardTitle>
+                    <CardTitle className="text-lg font-semibold">By Academic Organization</CardTitle>
                     <p className="text-sm text-muted-foreground font-normal">
-                      Share of turnout within each department
+                      Share of turnout within each academic organization
                     </p>
                   </CardHeader>
                   <CardContent>
                     {groupsData.length === 0 ? (
                       <p className="text-sm text-muted-foreground py-8 text-center">
-                        No eligible voter rows or no departments in the registry.
+                        No eligible voter rows or no academic organizations in the registry.
                       </p>
                     ) : (
                       <>
@@ -383,35 +376,31 @@ export default function VoterTurnoutPage() {
               </div>
 
               <Card className="border-border/80 shadow-sm print:break-inside-avoid print:shadow-none">
-                <CardHeader className="flex flex-col gap-4 space-y-0 pb-2 sm:flex-row sm:items-end sm:justify-between">
+                <CardHeader className="flex flex-col gap-2 space-y-0 pb-5 sm:flex-row sm:items-end sm:justify-between">
                   <div className="space-y-1">
                     <CardTitle className="text-lg font-semibold">Hourly participation</CardTitle>
                     <p className="text-sm text-muted-foreground font-normal">
-                      Digital + paper votes by hour (local time)
+                      Votes today by hour (local time)
                     </p>
                     <p className="hidden print:block text-sm font-medium text-foreground pt-1">
                       Date: {formatDateForDisplay(selectedDate)}
                     </p>
                   </div>
-                  <div className="w-full shrink-0 space-y-1.5 sm:w-auto sm:min-w-[12rem] print:hidden">
+                  <div className="flex items-center gap-3 print:hidden">
                     <label
                       htmlFor="turnout-date"
-                      className="text-sm font-medium leading-none text-foreground"
+                      className="text-sm font-medium leading-none text-foreground shrink-0"
                     >
                       Date
                     </label>
-                    <select
+                    <input
                       id="turnout-date"
-                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      type="date"
+                      className="h-10 rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       value={selectedDate}
+                      max={new Date().toISOString().split("T")[0]}
                       onChange={(e) => setSelectedDate(e.target.value)}
-                    >
-                      {getAvailableDates().map((date) => (
-                        <option key={date} value={date}>
-                          {formatDateForDisplay(date)}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -476,7 +465,7 @@ export default function VoterTurnoutPage() {
                             <dd className="text-lg font-semibold tabular-nums text-[#7A0019] mt-0.5">
                               {hourlyData.totalVotes}
                             </dd>
-                            <p className="text-xs text-muted-foreground mt-1">Digital + paper</p>
+                            <p className="text-xs text-muted-foreground mt-1">Votes</p>
                           </div>
                         </dl>
                       </div>

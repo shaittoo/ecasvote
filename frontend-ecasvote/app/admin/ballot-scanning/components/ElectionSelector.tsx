@@ -82,7 +82,7 @@ export function ElectionSelector() {
                     </label>
                     <select
                       id="election-select"
-                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#7A0019]/30"
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#7A0019]/30 cursor-pointer"
                       value={selectedId}
                       onChange={(e) => setSelectedId(e.target.value)}
                     >
@@ -124,7 +124,7 @@ export function ElectionSelector() {
                   )}
 
                   <Button
-                    className="w-full bg-[#7A0019] hover:bg-[#5c0013] text-white"
+                    className="w-full bg-[#7A0019] hover:bg-[#5c0013] text-white cursor-pointer"
                     disabled={!selectedId}
                     onClick={() =>
                       router.push(

@@ -19,6 +19,18 @@ import { notify } from "@/lib/notify";
 import { AddCandidatesModal } from "./AddCandidatesModal";
 import type { CandidateDraft, CandidateRow } from "./types";
 
+const STANDARD_POSITIONS = [
+  "USC Councilor",
+  "CAS Rep. to the USC",
+  "CAS Chairperson",
+  "CAS Vice Chairperson",
+  "CAS Councilor",
+  "Clovers Governor",
+  "Elektrons Governor",
+  "Redbolts Governor",
+  "Skimmers Governor",
+];
+
 const emptyDraft = (): CandidateDraft => ({
   position: "",
   name: "",
@@ -47,8 +59,9 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
   const loadPositionsForElection = useCallback(async (eid: string) => {
     try {
       const positionsData = await fetchPositions(eid).catch(() => []);
+      setBallotPositions(STANDARD_POSITIONS);  
+      
       if (positionsData?.length) {
-        setBallotPositions(positionsData.map((p: Position) => p.name));
         const rows: CandidateRow[] = [];
         positionsData.forEach((position: Position) => {
           position.candidates?.forEach((candidate) => {
@@ -63,7 +76,6 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
         });
         setCandidates(rows);
       } else {
-        setBallotPositions([]);
         setCandidates([]);
       }
     } catch (err) {
@@ -110,11 +122,11 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
     }
     try {
       // Ensure positions exist in the database before adding candidates
-      const uniquePositionNames = [...new Set(toAdd.map((c) => c.position.trim()))];
-      await createPositions(
-        electionId,
-        uniquePositionNames.map((name, i) => ({ name, maxVotes: 1, order: i + 1 }))
-      );
+      // const uniquePositionNames = [...new Set(toAdd.map((c) => c.position.trim()))];
+      // await createPositions(
+      //   electionId,
+      //   uniquePositionNames.map((name, i) => ({ name, maxVotes: 1, order: i + 1 }))
+      // );
 
       const candidatesToSave = toAdd.map((c) => ({
         positionName: c.position,

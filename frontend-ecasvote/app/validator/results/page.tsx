@@ -120,76 +120,91 @@ export default function ValidatorResultsPage() {
       <div className="flex-1 flex flex-col">
         <ValidatorHeader title="Election Results" sidebarOpen={sidebarOpen} />
 
-        {/* Main */}
-        <main className={`flex-1 p-6 space-y-6 overflow-y-auto transition-all duration-300 ${
-          sidebarOpen ? "ml-64" : "ml-20"
-        }`}>
-          <select
-            className="h-10 w-full sm:max-w-md rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer"
-            value={electionId}
-            disabled={electionsLoading || elections.length === 0}
-            onChange={(e) => setElectionId(e.target.value)}
-          >
-            {electionsLoading ? (
-              <option value="">Loading elections...</option>
-            ) : elections.length === 0 ? (
-              <option value="">No elections found</option>
+        <main
+          className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
+            sidebarOpen ? "ml-64" : "ml-20"
+          }`}
+        >
+          <div className="w-full max-w-7xl mx-auto space-y-6">
+            {/* Toolbar — election dropdown wrapped in a Card matching the rest of the app */}
+            <Card>
+              <CardHeader className="space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:flex-nowrap">
+                  <div className="min-w-0 flex-1 basis-[min(100%,20rem)] sm:min-w-[12rem]">
+                    <label htmlFor="validator-results-election" className="sr-only">
+                      Election
+                    </label>
+                    <select
+                      id="validator-results-election"
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      value={electionId}
+                      disabled={electionsLoading || elections.length === 0}
+                      onChange={(e) => setElectionId(e.target.value)}
+                    >
+                      {electionsLoading ? (
+                        <option value="">Loading elections...</option>
+                      ) : elections.length === 0 ? (
+                        <option value="">No elections found</option>
+                      ) : (
+                        elections.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {e.name || e.id}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                </div>
+              </CardHeader>
+            </Card>
+
+            {loading ? (
+              <div className="text-center py-12 text-gray-500">
+                Loading results...
+              </div>
+            ) : election && !election.resultsPublished ? (
+              <div className="py-12 text-center text-gray-500 space-y-4">
+                <p className="text-lg font-semibold">Results Not Available Yet</p>
+                <p className="text-sm">
+                  {election.status !== "CLOSED"
+                    ? "The election is still ongoing. Results will be available after the election is closed and results are published."
+                    : "The election has ended. Results will be published by the election board shortly."}
+                </p>
+              </div>
+            ) : resultsCharts.length > 0 ? (
+              <div className="space-y-6">
+                {resultsCharts.map((chart: any, idx: number) => (
+                  <Card key={idx}>
+                    <CardHeader>
+                      <CardTitle>{chart.position}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-64">
+                        <Bar
+                          data={chart.data}
+                          options={{ maintainAspectRatio: false }}
+                        />
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
             ) : (
-              elections.map((e) => (
-                <option key={e.id} value={e.id}>{e.name || e.id}</option>
-              ))
+              <div className="py-12 text-center text-gray-500 space-y-4">
+                <p className="text-lg">No results available yet for this election.</p>
+                <p className="text-sm">
+                  Votes may not have been cast yet, or the election has not been closed.
+                </p>
+                <Button
+                  variant="outline"
+                  className="mt-2 cursor-pointer"
+                  onClick={() => router.push("/validator/audit")}
+                >
+                  View Audit Logs
+                </Button>
+              </div>
             )}
-          </select>
-          {loading ? (
-            <div className="text-center py-12 text-gray-500">
-              Loading results...
-            </div>
-          ) : election && !election.resultsPublished ? (
-            <div className="py-12 text-center text-gray-500 space-y-4">
-              <p className="text-lg font-semibold">
-                Results Not Available Yet
-              </p>
-              <p className="text-sm">
-                {election.status !== 'CLOSED'
-                  ? "The election is still ongoing. Results will be available after the election is closed and results are published."
-                  : "The election has ended. Results will be published by the election board shortly."}
-              </p>
-            </div>
-          ) : resultsCharts.length > 0 ? (
-            <div className="space-y-6">
-              {resultsCharts.map((chart: any, idx: number) => (
-                <Card key={idx}>
-                  <CardHeader>
-                    <CardTitle>{chart.position}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="h-64">
-                      <Bar
-                        data={chart.data}
-                        options={{ maintainAspectRatio: false }}
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="py-12 text-center text-gray-500 space-y-4">
-              <p className="text-lg">
-                No results available yet for this election.
-              </p>
-              <p className="text-sm">
-                Votes may not have been cast yet, or the election has not been closed. 
-              </p>
-              <Button
-                variant="outline"
-                className="mt-2 cursor-pointer"
-                onClick={() => router.push('/validator/audit')}
-              >
-                View Audit Logs
-              </Button>
-            </div>
-          )}
+          </div>
         </main>
       </div>
     </div>

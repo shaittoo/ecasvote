@@ -411,9 +411,18 @@ export function ScanPageContent() {
         setShowResultsModal(false);
         notify.success({ title: "Vote recorded successfully" });
       } catch (err: unknown) {
+        const error = err as Error & { code?: string; error?: string };
         const raw = err instanceof Error ? err.message : "Submit failed";
+        const rawLower = raw.toLowerCase();
         let msg = "An error occurred. Please try again or contact the SEB.";
-        if (raw.includes("TOKEN_USED")) {
+        if (
+          error?.code === "ELECTION_CLOSED" ||
+          error?.error === "ELECTION_CLOSED" ||
+          rawLower.includes("not open for voting") ||
+          (rawLower.includes("election") && rawLower.includes("closed"))
+        ) {
+          msg = "This election is closed. Votes can no longer be submitted.";
+        } else if (raw.includes("TOKEN_USED")) {
           msg = "This ballot token has already been used. Each voter can only cast one ballot. If you believe this is an error, please contact the SEB.";
         } else if (raw.includes("UNKNOWN_TOKEN")) {
           msg = "Invalid ballot token. Please verify the token and try again.";

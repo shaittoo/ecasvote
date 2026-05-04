@@ -566,6 +566,22 @@ export async function removeVoterFromElectionRoster(
   await handleResponse(res);
 }
 
+/** Bulk-add specific voters to an election's roster (idempotent). */
+export async function addVotersToRoster(
+  electionId: string,
+  voterIds: number[]
+): Promise<{ ok: boolean; added: number; totalOnRoster: number }> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/voters/roster`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voterIds }),
+    }
+  );
+  return handleResponse(res);
+}
+
 export type VoterImportPayload = {
   studentNumber: string;
   upEmail: string;
@@ -582,9 +598,11 @@ export interface ImportVotersResult {
   ok: boolean;
   created: number;
   updated: number;
+  rostered?: number;
   total: number;
   failed: number;
   errors: Array<{ index: number; studentNumber?: string; message: string }>;
+  voters?: Array<{ id: number; studentNumber: string }>;
 }
 
 export async function importVoters(
@@ -1082,7 +1100,18 @@ export async function confirmPaperVote(params: {
   });
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.error ?? `confirm-vote failed (${res.status})`);
+    const e = new Error(
+      typeof data.message === "string" && data.message.trim() !== ""
+        ? data.message
+        : String(data.error ?? `confirm-vote failed (${res.status})`)
+    ) as Error & { code?: string; error?: string };
+    if (data.error === "ELECTION_CLOSED") {
+      e.code = "ELECTION_CLOSED";
+      e.error = "ELECTION_CLOSED";
+    } else if (typeof data.error === "string") {
+      e.error = data.error;
+    }
+    throw e;
   }
   return data;
 }

@@ -45,17 +45,17 @@ export function ContestResultRow({
         <div className="flex items-center gap-1.5">
           {isOvervote && (
             <Badge className="bg-red-100 text-red-800 border-red-200 text-xs">
-              OVERVOTE
+              INVALID
             </Badge>
           )}
           {isAbstainConflict && (
             <Badge className="bg-red-100 text-red-800 border-red-200 text-xs">
-              CANDIDATE + ABSTAIN
+              INVALID
             </Badge>
           )}
           {isUndervote && (
             <Badge className="bg-red-100 text-red-800 border-red-200 text-xs">
-              NO VOTE
+              INVALID
             </Badge>
           )}
           {!isInvalid && selectedCount > 0 && (
