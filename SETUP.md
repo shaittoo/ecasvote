@@ -191,13 +191,17 @@ The OMR worker provides paper ballot bubble detection using OpenCV. It is option
 ```bash
 cd omr-worker
 
-# Using Docker (recommended)
+# Using Docker Compose (recommended — see omr-worker/README.md)
+docker compose up --build
+
+# Or: single image build + run
 docker build -t omr-worker .
 docker run -d -p 8090:8090 --name omr-worker omr-worker
 
 # Or using Python directly
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8090
+uvicorn app.main:app --host 127.0.0.1 --port 8090
 ```
 
 Set `OMR_WORKER_URL=http://127.0.0.1:8090` in gateway-api/.env.
@@ -220,7 +224,7 @@ The following steps MUST be followed in order for a complete election setup:
 1. **Create election** (DRAFT status) via the UI or `POST /elections`
 2. **Verify positions seeded on-chain** — the gateway has retry logic, but confirm with a `GetElection` chaincode query that positions exist
 3. **Add candidates** via the UI while the election is in DRAFT status
-4. **Verify 27 candidates on-chain**: run `GetCandidatesByElection` query to confirm all candidates registered
+4. **Verify candidates on-chain**: run `GetCandidatesByElection` (or the UI) to confirm all intended candidates registered
 5. **Import voter CSV** — on the Voter Roster page, select the election first, then click Import
 6. **Generate tokens** — on the Token Status page, click "Generate tokens for all"
 7. **Open election** via the UI or `POST /elections/:id/open`

@@ -49,9 +49,9 @@ Set on **gateway-api**:
 OMR_WORKER_URL=http://127.0.0.1:8090
 ```
 
-The admin **Scan ballots** page POSTs images to `POST /scanner/scan-image`, which forwards to `POST http://127.0.0.1:8090/scan` with `{ image_base64, template }`.
+The admin **Scan ballots** page POSTs images to `POST /scanner/scan-image`, which forwards to `POST http://127.0.0.1:8090/scan` with `{ image_base64, template }` (and may rely on QR-derived `ballotId` / `electionId` so the worker can call the gateway **`GET /api/omr-layout/:ballotId`** when the full template is omitted).
 
-`template` must be **`ecasvote-scanner-template/1`** JSON (same as **Download scanner template JSON** in the UI).
+`template` must be **`ecasvote-scanner-template/1`** JSON when sent (same as **Download scanner template JSON** in the UI).
 
 ## Optional ML correction
 
