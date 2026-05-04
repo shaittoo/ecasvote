@@ -1,11 +1,15 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { StudentVoterSidebar } from "@/components/Sidebar";
 import StudentVoterHeader from "../components/header";
 import { RoleCandidatesPage } from "@/components/candidates/RoleCandidatesPage";
 import { CandidatesPositionsPanel } from "@/components/candidates/CandidatesPositionsPanel";
 
 export default function StudentVoterCandidatesPage() {
+  const searchParams = useSearchParams();
+  const electionFromQuery = searchParams.get("election")?.trim() || undefined;
+
   return (
     <RoleCandidatesPage
       sidebar={({ open, onToggle, pathname, onLogout }) => (
@@ -31,7 +35,7 @@ export default function StudentVoterCandidatesPage() {
         </div>
       )}
     >
-      <CandidatesPositionsPanel />
+      <CandidatesPositionsPanel electionId={electionFromQuery} />
     </RoleCandidatesPage>
   );
 }

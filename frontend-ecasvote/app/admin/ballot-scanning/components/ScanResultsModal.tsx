@@ -111,7 +111,14 @@ export function ScanResultsModal({
             </div>
           </div>
 
-          {/* Invalid reasons */}
+          {/* Invalid reasons — commented out per request.
+              Note: with this banner removed, an SEB admin reviewing an INVALID
+              ballot has to scan each contest row to find the issue. The per-row
+              "NO VOTE" / "OVERVOTE" tags still indicate which contest failed,
+              but there is no longer a single summary explaining *why* the
+              ballot is INVALID. Restore this block if admins struggle to
+              identify the problem during scanning. */}
+          {/*
           {isInvalid && scanResult.ballotInvalidReasons?.length ? (
             <div className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 space-y-0.5">
               {scanResult.ballotInvalidReasons.map((r, i) => (
@@ -127,6 +134,7 @@ export function ScanResultsModal({
               ))}
             </div>
           ) : null}
+          */}
         </div>
 
         {/* Body — contest rows */}

@@ -1,6 +1,12 @@
 // src/seedDummyData.ts
 import { prisma } from './prismaClient';
 
+const SCOPED_POSITION_SEP = '__' as const;
+
+function scopedPositionId(electionId: string, slug: string): string {
+  return `${electionId}${SCOPED_POSITION_SEP}${slug}`;
+}
+
 async function main() {
   console.log('Seeding positions, candidates, and voters...');
 
@@ -78,8 +84,9 @@ async function main() {
   console.log('\n📋 Seeding positions...');
   let totalCandidates = 0;
   for (const pos of positions) {
+    const scopedId = scopedPositionId(electionId, pos.id);
     await prisma.position.upsert({
-      where: { id: pos.id },
+      where: { id: scopedId },
       update: {
         name: pos.name,
         maxVotes: pos.maxVotes,
@@ -87,7 +94,7 @@ async function main() {
         electionId: electionId,
       },
       create: {
-        id: pos.id,
+        id: scopedId,
         electionId: electionId,
         name: pos.name,
         maxVotes: pos.maxVotes,
@@ -99,7 +106,7 @@ async function main() {
     // Create candidates for each position
     const candidatesData = getCandidatesForPosition(pos.id);
     for (let i = 0; i < candidatesData.length; i++) {
-      const candidateId = `cand-${pos.id}-${i + 1}`;
+      const candidateId = `cand-${electionId}-${pos.id}-${i + 1}`;
       await prisma.candidate.upsert({
         where: { id: candidateId },
         update: {
@@ -108,12 +115,12 @@ async function main() {
           program: candidatesData[i].program,
           yearLevel: candidatesData[i].yearLevel,
           electionId: electionId,
-          positionId: pos.id,
+          positionId: scopedId,
         },
         create: {
           id: candidateId,
           electionId: electionId,
-          positionId: pos.id,
+          positionId: scopedId,
           name: candidatesData[i].name,
           party: candidatesData[i].party,
           program: candidatesData[i].program,

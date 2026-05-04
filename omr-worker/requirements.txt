@@ -1,9 +1,9 @@
 # eCASVote OMR worker — OpenCV stack (same ecosystem as Open MCR: https://github.com/iansan5653/open-mcr)
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-numpy>=1.26.0
-opencv-python-headless>=4.10.0
-pydantic>=2.0.0
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+pydantic==2.9.2
 # Optional ML correction layer (enable with OMR_ML_ENABLE=1)
-joblib>=1.4.0
-scikit-learn>=1.5.0
+joblib==1.4.2
+scikit-learn==1.5.2

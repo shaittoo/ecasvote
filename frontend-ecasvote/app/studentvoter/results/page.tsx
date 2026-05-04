@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -18,6 +18,10 @@ import { Input } from "@/components/ui/input";
 import { Bell, Settings, HelpCircle } from "lucide-react";
 import { fetchElection, fetchElections, fetchPositions, fetchResults } from "@/lib/ecasvoteApi";
 import type { Election, Position } from "@/lib/ecasvoteApi";
+import {
+  pickDefaultStudentElection,
+  sortElectionsForStudentSelect,
+} from "@/lib/studentElectionDefaults";
 import { StudentVoterSidebar } from "@/components/Sidebar";
 import StudentVoterHeader from "../components/header";
 
@@ -105,6 +109,7 @@ function CountdownTimer({ endTime }: { endTime?: string }) {
 
 export default function ResultsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [elections, setElections] = useState<Election[]>([]);
   const [electionId, setElectionId] = useState("");
@@ -132,14 +137,18 @@ export default function ResultsPage() {
     setElectionsLoading(true);
     fetchElections()
       .then((list) => {
-        setElections(list);
-        const open = list.find((e) => e.status === "OPEN");
-        const closed = list.find((e) => e.status === "CLOSED");
-        setElectionId(open?.id ?? closed?.id ?? list[0]?.id ?? "");
+        const sorted = sortElectionsForStudentSelect(list);
+        setElections(sorted);
+        const fromQuery = searchParams.get("election")?.trim();
+        const picked =
+          fromQuery && sorted.some((e) => e.id === fromQuery)
+            ? fromQuery
+            : pickDefaultStudentElection(sorted)?.id ?? "";
+        setElectionId(picked);
       })
       .catch(() => setElections([]))
       .finally(() => setElectionsLoading(false));
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => {
     if (!electionId || electionsLoading) return;

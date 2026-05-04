@@ -9,6 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { Users, BarChart3, Settings } from "lucide-react";
 import { fetchElections } from "@/lib/ecasvoteApi";
 import type { Election } from "@/lib/ecasvoteApi";
+import {
+  pickDefaultStudentElection,
+  sortElectionsForStudentSelect,
+} from "@/lib/studentElectionDefaults";
 
 function formatDate(dateString: string) {
   return new Date(dateString).toLocaleString("en-US", {
@@ -22,21 +26,26 @@ function formatDate(dateString: string) {
 }
 
 export default function LandingPage() {
-  const [election, setElection] = useState<Election | null>(null);
+  const [elections, setElections] = useState<Election[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchElections()
       .then((list) => {
-        // Prefer OPEN election, then most recent CLOSED, then first
-        const open = list.find((e) => e.status === "OPEN");
-        const closed = list.find((e) => e.status === "CLOSED");
-        setElection(open ?? closed ?? list[0] ?? null);
+        setElections(list);
+        const def = pickDefaultStudentElection(list);
+        setSelectedId(def?.id ?? "");
       })
-      .catch(() => setElection(null))
+      .catch(() => {
+        setElections([]);
+        setSelectedId("");
+      })
       .finally(() => setLoading(false));
   }, []);
 
+  const election = elections.find((e) => e.id === selectedId) ?? null;
+  const sortedForSelect = sortElectionsForStudentSelect(elections);
   const status = election?.status?.toUpperCase() ?? "";
   const statusColor =
     status === "OPEN"
@@ -94,6 +103,33 @@ export default function LandingPage() {
           </Card>
         ) : (
           <div className="space-y-8">
+            {sortedForSelect.length > 0 ? (
+              <div className="max-w-xl mx-auto">
+                <label
+                  htmlFor="landing-election-select"
+                  className="mb-1.5 block text-sm font-medium text-gray-700 text-center sm:text-left"
+                >
+                  Choose election
+                </label>
+                <select
+                  id="landing-election-select"
+                  className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={selectedId}
+                  onChange={(e) => setSelectedId(e.target.value)}
+                >
+                  {sortedForSelect.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {(e.name || e.id) +
+                        (e.status === "OPEN" ? " (OPEN)" : e.status === "CLOSED" ? " (CLOSED)" : " (DRAFT)")}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-xs text-gray-500 text-center sm:text-left">
+                  Showing the most recently opened election by default when one is OPEN.
+                </p>
+              </div>
+            ) : null}
+
             {/* Election info card */}
             <Card className="border-gray-200 shadow-sm">
               <CardContent className="py-8">
@@ -124,7 +160,10 @@ export default function LandingPage() {
             {/* Action buttons */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto">
               {election.candidatesPublished ? (
-                <Link href="/studentvoter/candidates" className="block">
+                <Link
+                  href={`/studentvoter/candidates?election=${encodeURIComponent(election.id)}`}
+                  className="block"
+                >
                   <Card className="h-full border-gray-200 hover:border-[#7A0019]/40 hover:shadow-md transition-all cursor-pointer">
                     <CardContent className="py-8 text-center">
                       <Users className="mx-auto h-10 w-10 text-[#7A0019] mb-3" />
@@ -152,7 +191,10 @@ export default function LandingPage() {
               )}
 
               {election.resultsPublished ? (
-                <Link href="/studentvoter/results" className="block">
+                <Link
+                  href={`/studentvoter/results?election=${encodeURIComponent(election.id)}`}
+                  className="block"
+                >
                   <Card className="h-full border-gray-200 hover:border-[#0C8C3F]/40 hover:shadow-md transition-all cursor-pointer">
                     <CardContent className="py-8 text-center">
                       <BarChart3 className="mx-auto h-10 w-10 text-[#0C8C3F] mb-3" />

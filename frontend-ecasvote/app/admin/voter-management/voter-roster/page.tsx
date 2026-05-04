@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../../components/header";
 import {
+  addVotersToRoster,
   deleteVoter,
   fetchElections,
   fetchElectionVoters,
@@ -157,6 +158,14 @@ export default function VoterRosterPage() {
     e.target.value = "";
     if (!file) return;
 
+    if (!printElectionId) {
+      notify.error({
+        title: "No election selected",
+        description: "Select an election before importing.",
+      });
+      return;
+    }
+
     setImporting(true);
     try {
       const text = await file.text();
@@ -168,6 +177,21 @@ export default function VoterRosterPage() {
           ? ` ${skipped.length} row(s) skipped while reading the file (e.g. bad year level). First: line ${skipped[0].line} — ${skipped[0].reason}`
           : "";
 
+      // Rostering happens server-side via electionId; fall back to client-side if needed
+      let rosterMsg = "";
+      if (result.rostered && result.rostered > 0) {
+        rosterMsg = ` ${result.rostered} added to roster.`;
+      } else if (result.voters && result.voters.length > 0) {
+        try {
+          const voterIds = result.voters.map((v) => v.id);
+          const rosterResult = await addVotersToRoster(printElectionId, voterIds);
+          rosterMsg = ` ${rosterResult.added} added to roster (${rosterResult.totalOnRoster} total).`;
+        } catch (rosterErr) {
+          console.warn("Roster add after import failed:", rosterErr);
+          rosterMsg = " (roster sync failed — add voters manually)";
+        }
+      }
+
       if (result.failed > 0) {
         const first = result.errors[0];
         notify.warning({
@@ -176,20 +200,19 @@ export default function VoterRosterPage() {
             first
               ? ` Example: record #${first.index + 1} (${first.studentNumber ?? "?"}) — ${first.message}`
               : ""
-          }${parseNote}`,
+          }${parseNote}${rosterMsg}`,
         });
       } else if (skipped.length > 0) {
         notify.warning({
           title: "Import completed with skipped rows",
-          description: `Saved ${result.total} voter(s).${parseNote}`,
+          description: `Saved ${result.total} voter(s).${parseNote}${rosterMsg}`,
         });
       } else {
         notify.success({
           title: "Import successful",
-          description: `Created ${result.created}, updated ${result.updated} (${result.total} total).`,
+          description: `Created ${result.created}, updated ${result.updated} (${result.total} total).${rosterMsg}`,
         });
       }
-      // Roster sync is now handled by the import endpoint via electionId
       await loadVoters();
     } catch (err: unknown) {
       const raw = err instanceof Error ? err.message : String(err);
@@ -227,6 +250,20 @@ export default function VoterRosterPage() {
     URL.revokeObjectURL(url);
   };
 
+  function getPageWindow(current: number, total: number): (number | "ellipsis")[] {
+    if (total <= 7) {
+      return Array.from({ length: total }, (_, i) => i + 1);
+    }
+    const window: (number | "ellipsis")[] = [1];
+    const start = Math.max(2, current - 1);
+    const end = Math.min(total - 1, current + 1);
+   
+    if (start > 2) window.push("ellipsis");
+    for (let i = start; i <= end; i++) window.push(i);
+    if (end < total - 1) window.push("ellipsis");
+    window.push(total);
+    return window;
+  }
   // function openEdit(voter: VoterRecord) {
   //   setEditingVoter(voter);
   //   setEditForm({
@@ -283,14 +320,17 @@ export default function VoterRosterPage() {
         open={sidebarOpen}
         onToggle={() => setSidebarOpen((prev) => !prev)}
         active="voter"
-        userName="John"
+        userName="Admin"
         onLogout={handleLogout}
         fixed
         pathname={pathname}
       />
 
       <div className="flex-1 flex flex-col">
-        <AdminHeader title="Voter Roster" sidebarOpen={sidebarOpen} />
+        <AdminHeader 
+        title="Voter Roster" 
+        subtitle="Manage voters and print ballots for the selected election"
+        sidebarOpen={sidebarOpen} />
 
         <main
           className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
@@ -364,9 +404,10 @@ export default function VoterRosterPage() {
                       </Button>
                       <Button
                         type="button"
-                        className="h-10 shrink-0 bg-green-600 text-white hover:bg-green-700 cursor-pointer"
+                        className="h-10 shrink-0 bg-green-600 text-white hover:bg-green-700 cursor-pointer disabled:opacity-50"
                         onClick={handleImportClick}
-                        disabled={importing}
+                        disabled={importing || !printElectionId}
+                        title={!printElectionId ? "Select an election before importing" : undefined}
                       >
                         <Upload className="mr-2 h-4 w-4" />
                         {importing ? "Importing…" : "Import roster"}
@@ -479,27 +520,32 @@ export default function VoterRosterPage() {
                   </div>
 
                   {filteredVoters.length > 0 && (
-                    <div className="flex justify-center mt-4 gap-2 text-sm text-gray-600">
+                    <div className="flex flex-wrap justify-center mt-4 gap-2 text-sm text-gray-600">
                       <button
+                        type="button"
                         disabled={currentPage === 1}
                         onClick={() => setCurrentPage((p) => p - 1)}
-                        className="px-2 py-1 border rounded disabled:opacity-50"
+                        className="px-2 py-1 border rounded disabled:opacity-50 cursor-pointer"
                       >
                         Prev
                       </button>
                       {Array.from({ length: totalPages }, (_, i) => (
                         <button
+                          type="button"
                           key={i}
-                          className={`px-2 py-1 border rounded ${currentPage === i + 1 ? "bg-gray-200" : ""}`}
+                          className={`px-2 py-1 border rounded cursor-pointer min-w-[2rem] ${
+                            currentPage === i + 1 ? "bg-gray-200 font-medium" : ""
+                          }`}
                           onClick={() => setCurrentPage(i + 1)}
                         >
                           {i + 1}
                         </button>
                       ))}
                       <button
+                        type="button"
                         disabled={currentPage === totalPages}
                         onClick={() => setCurrentPage((p) => p + 1)}
-                        className="px-2 py-1 border rounded disabled:opacity-50"
+                        className="px-2 py-1 border rounded disabled:opacity-50 cursor-pointer"
                       >
                         Next
                       </button>
@@ -509,7 +555,11 @@ export default function VoterRosterPage() {
               </Card>
             </div>
           )}
-
+        </main>
+      </div>
+    </div>
+  );
+}
           {/* {editingVoter ? (
             <div
               className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
@@ -667,8 +717,3 @@ export default function VoterRosterPage() {
               </div>
             </div>
           ) : null} */}
-        </main>
-      </div>
-    </div>
-  );
-}

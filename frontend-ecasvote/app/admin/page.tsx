@@ -13,8 +13,7 @@ import {
 } from "chart.js";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { RefreshCw } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { notify } from "@/lib/notify";
 import {
@@ -22,7 +21,7 @@ import {
   fetchElections,
   fetchPositions,
   openElection,
-  closeElection,
+  closeElection, // kept for now; no longer called below
   type DashboardData,
   type Election,
 } from "@/lib/ecasvoteApi";
@@ -137,6 +136,20 @@ function statusBadgeClass(status: string | undefined) {
   }
 }
 
+// Plain-language status label for users (no all-caps shouting)
+function statusLabel(status: string | undefined) {
+  switch (status) {
+    case "OPEN":
+      return "Voting in progress";
+    case "DRAFT":
+      return "Draft";
+    case "CLOSED":
+      return "Closed";
+    default:
+      return "Unknown";
+  }
+}
+
 export default function AdminDashboardPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -200,7 +213,6 @@ export default function AdminDashboardPage() {
 
   const election = dashboardData?.election;
   const announcements = dashboardData?.announcements ?? [];
-
   const lastTransaction = announcements.find((a) => a.txId) ?? null;
 
   const electionFromList = useMemo(
@@ -218,7 +230,7 @@ export default function AdminDashboardPage() {
         open={sidebarOpen}
         onToggle={() => setSidebarOpen((prev) => !prev)}
         active="dashboard"
-        userName="John"
+        userName="Admin"
         onLogout={handleLogout}
         fixed
         pathname={pathname}
@@ -237,79 +249,61 @@ export default function AdminDashboardPage() {
         >
           <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="space-y-6">
-              <GreetingCard name="John" role="SEB Admin" roleColor="#7A0019" />
+              <GreetingCard name="Admin" role="SEB Admin" roleColor="#7A0019" />
 
               <Card className="border-border/80 shadow-sm overflow-hidden">
-                <CardHeader className="space-y-4 border-b bg-muted/30 pb-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="space-y-1">
-                      <CardTitle className="text-xl font-semibold text-foreground">
-                        Election status
-                      </CardTitle>
-                    </div>
-                    {electionStatus ? (
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "shrink-0 border px-3 py-1 text-xs font-semibold",
-                          statusBadgeClass(electionStatus)
-                        )}
-                      >
-                        {electionStatus}
-                      </Badge>
+                {/* Toolbar: just the dropdown — no fake title competing with the real title below */}
+                <CardHeader className="pb-4 border-b bg-muted/30">
+                  <label htmlFor="dashboard-election" className="sr-only">
+                    Select election
+                  </label>
+                  <select
+                    id="dashboard-election"
+                    className="h-10 w-full sm:max-w-md rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    value={electionId}
+                    onChange={(e) => setElectionId(e.target.value)}
+                    disabled={loading}
+                  >
+                    {elections.length === 0 ? (
+                      <option value={electionId}>{electionId}</option>
                     ) : (
-                      <Badge variant="outline" className="shrink-0 text-muted-foreground">
-                        Unknown
-                      </Badge>
+                      elections.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.name || e.id}
+                        </option>
+                      ))
                     )}
-                  </div>
-
-                  {/* remove dropdown and refresh button later */}
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-                    <label htmlFor="dashboard-election" className="sr-only">
-                      Select election
-                    </label>
-                    <select
-                      id="dashboard-election"
-                      className="h-10 w-full sm:max-w-md rounded-md border border-input bg-background px-3 text-sm shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      value={electionId}
-                      onChange={(e) => setElectionId(e.target.value)}
-                      disabled={loading}
-                    >
-                      {elections.length === 0 ? (
-                        <option value={electionId}>{electionId}</option>
-                      ) : (
-                        elections.map((e) => (
-                          <option key={e.id} value={e.id}>
-                            {e.name || e.id}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-10 shrink-0 gap-2 sm:w-auto w-full"
-                      onClick={() => loadDashboard()}
-                      disabled={loading}
-                    >
-                      <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} aria-hidden />
-                      Refresh
-                    </Button>
-                  </div>
+                  </select>
                 </CardHeader>
 
                 <CardContent className="pt-6 space-y-6">
                   {loading && !dashboardData ? (
-                    <p className="text-center text-sm text-muted-foreground py-8">Loading dashboard…</p>
+                    <p className="text-center text-sm text-muted-foreground py-8">
+                      Loading dashboard…
+                    </p>
                   ) : (
                     <>
-                      <div className="text-center space-y-1">
-                        <h2 className="text-2xl font-bold text-foreground tracking-tight">
-                          {displayElectionName}
-                        </h2>
-                        <h3> {election?.description} </h3>
+                      {/* Election name + status, grouped together */}
+                      <div className="text-center space-y-3">
+                        <div className="flex flex-wrap items-center justify-center gap-3">
+                          <h2 className="text-2xl font-bold text-foreground tracking-tight">
+                            {displayElectionName}
+                          </h2>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "border px-3 py-1 text-xs font-semibold",
+                              statusBadgeClass(electionStatus)
+                            )}
+                          >
+                            {statusLabel(electionStatus)}
+                          </Badge>
+                        </div>
+                        {election?.description && (
+                          <p className="text-sm text-muted-foreground">
+                            {election.description}
+                          </p>
+                        )}
                       </div>
 
                       <div className="max-w-xl mx-auto">
@@ -317,6 +311,10 @@ export default function AdminDashboardPage() {
                       </div>
 
                       <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                        {/* Open / Close election buttons commented out — election lifecycle
+                            is handled automatically by start/end dates. Keeping the manage
+                            link so admins can still navigate to election management. */}
+                        {/*
                         {electionStatus === "DRAFT" ? (
                           <Button
                             className="flex-1 text-white order-1 sm:order-none"
@@ -373,6 +371,7 @@ export default function AdminDashboardPage() {
                             Close election
                           </Button>
                         ) : null}
+                        */}
                         <Button
                           variant="outline"
                           className="flex-1 border-[#7A0019]/30 hover:bg-[#7A0019]/5 cursor-pointer"
@@ -385,9 +384,13 @@ export default function AdminDashboardPage() {
 
                       {lastTransaction?.txId ? (
                         <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
-                          <span className="font-medium text-foreground">Last on-chain activity</span>
+                          <span className="font-medium text-foreground">
+                            Last on-chain activity
+                          </span>
                           <span className="mx-1.5">·</span>
-                          <span className="font-mono">Tx {lastTransaction.txId.slice(0, 10)}…</span>
+                          <span className="font-mono">
+                            Tx {lastTransaction.txId.slice(0, 10)}…
+                          </span>
                           <span className="mx-1.5">·</span>
                           {new Date(lastTransaction.createdAt).toLocaleString()}
                         </div>

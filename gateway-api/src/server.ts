@@ -124,9 +124,15 @@ function isVoterOrgGovernorPositionId(id: string, voterSlug: string): boolean {
   return false;
 }
 
-function isContestAllowedForDepartment(positionId: string, deptSlug: string): boolean {
+function isContestAllowedForDepartment(
+  positionId: string,
+  deptSlug: string,
+  electionId?: string
+): boolean {
   if (!deptSlug) return true;
-  const id = positionId.trim().toLowerCase();
+  const id = (electionId ? chainPositionIdFromDb(positionId, electionId) : positionId)
+    .trim()
+    .toLowerCase();
   const head = id.split('-')[0] ?? '';
   if (head === 'usc' || head === 'cas') return true;
 
@@ -140,6 +146,26 @@ function positionIdFromLayoutContest(c: unknown): string {
   if (!c || typeof c !== 'object' || Array.isArray(c)) return '';
   const o = c as { positionId?: unknown; id?: unknown };
   return String(o.positionId ?? o.id ?? '').trim();
+}
+
+/** Separator for DB-only scoped ids; slugs and election ids use `a-z0-9-` only in practice. */
+const SCOPED_POSITION_SEP = '__' as const;
+
+/** Human-readable DB primary key: `{electionId}__{slug}` (slug = chain / ballot contest id). */
+function scopedPositionId(electionId: string, slug: string): string {
+  return `${electionId}${SCOPED_POSITION_SEP}${slug}`;
+}
+
+/**
+ * Chaincode and printed ballots use the short slug only (positions are per-election on ledger).
+ * Prisma `Position.id` / `Candidate.positionId` use scoped ids — convert for contract calls.
+ */
+function chainPositionIdFromDb(dbPositionId: string, electionId: string): string {
+  const prefix = `${electionId}${SCOPED_POSITION_SEP}`;
+  if (dbPositionId.startsWith(prefix)) {
+    return dbPositionId.slice(prefix.length);
+  }
+  return dbPositionId;
 }
 
 /** Match sanitization in frontend `buildVoterPreviewBallotToken` (election segment in id). */
@@ -274,7 +300,10 @@ app.post('/voters/import', async (req, res) => {
   let created = 0;
   let updated = 0;
   let rostered = 0;
+  const upsertedVoters: Array<{ id: number; studentNumber: string }> = [];
   const errors: Array<{ index: number; studentNumber?: string; message: string }> = [];
+  // First-writer-wins: track emails claimed by earlier rows in this batch (email → studentNumber)
+  const seenEmails = new Map<string, string>();
 
   for (let i = 0; i < voters.length; i++) {
     const raw = voters[i];
@@ -309,37 +338,86 @@ app.post('/voters/import', async (req, res) => {
       const isEligible =
         raw?.isEligible === undefined || raw?.isEligible === null ? true : Boolean(raw.isEligible);
 
-      // Check if another voter already has this email with a different studentNumber
-      const emailOwner = await prisma.voter.findFirst({ where: { upEmail, NOT: { studentNumber } } });
-      const safeUpEmail = emailOwner ? undefined : upEmail;
+      // First-writer-wins; later collisions create voter without email and are reported
+      let emailCollision = false;
+      let collisionOwner = '';
+      const emailKey = upEmail.toLowerCase();
+      const batchOwner = seenEmails.get(emailKey);
+      if (batchOwner && batchOwner !== studentNumber) {
+        emailCollision = true;
+        collisionOwner = `studentNumber ${batchOwner} (earlier row in this batch)`;
+      } else if (!batchOwner) {
+        const emailOwner = await prisma.voter.findFirst({ where: { upEmail, NOT: { studentNumber } } });
+        if (emailOwner) {
+          emailCollision = true;
+          collisionOwner = `studentNumber ${emailOwner.studentNumber}`;
+        }
+      }
 
       const existing = await prisma.voter.findUnique({ where: { studentNumber } });
-      const voter = await prisma.voter.upsert({
-        where: { studentNumber },
-        create: {
+      const placeholderEmail = `${studentNumber}@placeholder.invalid`;
+
+      let voter;
+      if (emailCollision) {
+        voter = await prisma.voter.upsert({
+          where: { studentNumber },
+          create: {
+            studentNumber,
+            upEmail: placeholderEmail,
+            fullName,
+            college,
+            department,
+            program,
+            yearLevel,
+            status,
+            isEligible,
+          },
+          update: {
+            fullName,
+            college,
+            department,
+            program,
+            yearLevel,
+            status,
+            isEligible,
+          },
+        });
+        errors.push({
+          index: i,
           studentNumber,
-          upEmail,
-          fullName,
-          college,
-          department,
-          program,
-          yearLevel,
-          status,
-          isEligible,
-        },
-        update: {
-          ...(safeUpEmail !== undefined ? { upEmail: safeUpEmail } : {}),
-          fullName,
-          college,
-          department,
-          program,
-          yearLevel,
-          status,
-          isEligible,
-        },
-      });
+          message: `upEmail '${upEmail}' already used by ${collisionOwner}; voter ${existing ? 'updated' : 'created'} without email`,
+        });
+      } else {
+        voter = await prisma.voter.upsert({
+          where: { studentNumber },
+          create: {
+            studentNumber,
+            upEmail,
+            fullName,
+            college,
+            department,
+            program,
+            yearLevel,
+            status,
+            isEligible,
+          },
+          update: {
+            upEmail,
+            fullName,
+            college,
+            department,
+            program,
+            yearLevel,
+            status,
+            isEligible,
+          },
+        });
+        seenEmails.set(emailKey, studentNumber);
+      }
+
       if (existing) updated += 1;
       else created += 1;
+      upsertedVoters.push({ id: voter.id, studentNumber: voter.studentNumber });
 
       // Add voter to election roster if electionId is provided
       if (electionId) {
@@ -355,10 +433,14 @@ app.post('/voters/import', async (req, res) => {
         }
       }
     } catch (err: any) {
+      const code = err?.code as string | undefined;
+      const msg = code === 'P2002'
+        ? `Unique constraint failed (likely duplicate upEmail); voter skipped`
+        : (err.message || String(err));
       errors.push({
         index: i,
         studentNumber: raw?.studentNumber ? String(raw.studentNumber) : undefined,
-        message: err.message || String(err),
+        message: msg,
       });
     }
   }
@@ -371,6 +453,7 @@ app.post('/voters/import', async (req, res) => {
     total: created + updated,
     failed: errors.length,
     errors,
+    voters: upsertedVoters,
   });
 });
 
@@ -876,15 +959,26 @@ app.post('/elections', async (req, res) => {
       } else {
         console.warn(`❌ All 5 retries failed for position ${pos.id} — skipping chaincode registration`);
       }
+      const scopedId = scopedPositionId(String(electionId), pos.id);
       try {
         await prisma.position.upsert({
-          where: { id: pos.id },
-          // Avoid reassigning a shared position row to a newer election.
-          update: { name: pos.name, maxVotes: pos.maxVotes, order: pos.order },
-          create: { id: pos.id, electionId: String(electionId), name: pos.name, maxVotes: pos.maxVotes, order: pos.order },
+          where: { id: scopedId },
+          update: {
+            electionId: String(electionId),
+            name: pos.name,
+            maxVotes: pos.maxVotes,
+            order: pos.order,
+          },
+          create: {
+            id: scopedId,
+            electionId: String(electionId),
+            name: pos.name,
+            maxVotes: pos.maxVotes,
+            order: pos.order,
+          },
         });
       } catch (dbErr: any) {
-        console.warn(`⚠️ Failed to seed position ${pos.id} to database:`, dbErr.message);
+        console.warn(`⚠️ Failed to seed position ${scopedId} to database:`, dbErr.message);
       }
     }
     console.log(`📊 Position seeding complete: ${positionsSucceeded}/${defaultPositions.length} positions added to chaincode`);
@@ -1040,8 +1134,9 @@ app.get('/elections/:id/positions', async (req, res) => {
           const chainCandidates = candidateText ? JSON.parse(candidateText) : [];
 
           // Preserve optional DB metadata (e.g. imageUrl) if present, without trusting DB IDs.
+          const scopedPid = scopedPositionId(id, positionId);
           const dbCandidates = await prisma.candidate.findMany({
-            where: { electionId: id, positionId },
+            where: { electionId: id, positionId: scopedPid },
             orderBy: { name: 'asc' },
           });
           const dbByName = new Map<string, (typeof dbCandidates)[number]>(
@@ -1062,7 +1157,7 @@ app.get('/elections/:id/positions', async (req, res) => {
                   imageUrl: db?.imageUrl ?? null,
                 };
               })
-            : dbCandidates;
+            : dbCandidates.map((c) => ({ ...c, positionId }));
           return {
             id: positionId,
             electionId: id,
@@ -1089,19 +1184,23 @@ app.get('/elections/:id/positions', async (req, res) => {
         byPosition.get(pid)!.push(c);
       }
 
-      // Try to hydrate names/maxVotes/order from DB position metadata (global ids).
-      const dbPosById = new Map<string, any>(
-        (await prisma.position.findMany()).map((p) => [p.id, p])
+      // Hydrate names/maxVotes/order from DB position metadata for this election only.
+      const dbPositionsForElection = await prisma.position.findMany({ where: { electionId: id } });
+      const dbPosByChainId = new Map<string, any>(
+        dbPositionsForElection.map((p) => [chainPositionIdFromDb(p.id, id), p])
       );
       const dbCandidatesAll = await prisma.candidate.findMany({
         where: { electionId: id },
       });
       const dbCandidateByPosAndName = new Map<string, (typeof dbCandidatesAll)[number]>(
-        dbCandidatesAll.map((c) => [`${c.positionId}::${c.name.trim().toLowerCase()}`, c])
+        dbCandidatesAll.map((c) => [
+          `${chainPositionIdFromDb(c.positionId, id)}::${c.name.trim().toLowerCase()}`,
+          c,
+        ])
       );
 
       const positionsWithCandidates = [...byPosition.entries()].map(([positionId, group], idx) => {
-        const dbPos = dbPosById.get(positionId);
+        const dbPos = dbPosByChainId.get(positionId);
         const dbCandidates = (group.length > 0
           ? [] // chain candidates already available for this position
           : []);
@@ -1146,7 +1245,15 @@ app.get('/elections/:id/positions', async (req, res) => {
           },
           orderBy: { name: 'asc' },
         });
-        return { ...position, candidates };
+        const shortId = chainPositionIdFromDb(position.id, id);
+        return {
+          id: shortId,
+          electionId: id,
+          name: position.name,
+          maxVotes: position.maxVotes,
+          order: position.order,
+          candidates: candidates.map((c) => ({ ...c, positionId: shortId })),
+        };
       })
     );
     return res.json(positionsWithCandidates);
@@ -1178,21 +1285,24 @@ app.post('/elections/:id/positions', async (req, res) => {
       const { name, maxVotes, order } = positions[i];
       if (!name || typeof name !== 'string') continue;
 
-      const positionId = name
+      const slug = name
         .trim()
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-|-$/g, '');
 
+      const scopedId = scopedPositionId(id, slug);
+
       const position = await prisma.position.upsert({
-        where: { id: positionId },
+        where: { id: scopedId },
         update: {
+          electionId: id,
           name: name.trim(),
-          maxVotes: typeof maxVotes === 'number' ? maxVotes : 1,
-          order: typeof order === 'number' ? order : i + 1,
+          ...(typeof maxVotes === 'number' ? { maxVotes } : {}),
+          ...(typeof order === 'number' ? { order } : {}),
         },
         create: {
-          id: positionId,
+          id: scopedId,
           electionId: id,
           name: name.trim(),
           maxVotes: typeof maxVotes === 'number' ? maxVotes : 1,
@@ -1743,7 +1853,10 @@ app.post('/scanner/validate', async (req, res) => {
         where: { electionId, positionId: p.id },
         orderBy: { name: 'asc' },
       });
-      if (first) mockSelections[p.id] = first.id;
+      if (first) {
+        const chainPid = chainPositionIdFromDb(p.id, electionId);
+        mockSelections[chainPid] = first.id;
+      }
     }
 
     res.json({
@@ -1945,6 +2058,20 @@ app.post('/scanner/confirm-vote', async (req, res) => {
         } catch (rollbackErr: any) {
           console.error('DB rollback after chaincode failure also failed:', rollbackErr.message);
         }
+        const ccPieces: string[] = [];
+        if (ccErr?.message != null) ccPieces.push(String(ccErr.message));
+        if (ccErr?.cause && typeof ccErr.cause === 'object' && ccErr.cause !== null && 'message' in ccErr.cause) {
+          ccPieces.push(String((ccErr.cause as { message: string }).message));
+        }
+        const errMsg = ccPieces.join(' ');
+        const errLower = errMsg.toLowerCase();
+        // Chaincode uses "not OPEN for voting" when status is CLOSED/DRAFT; other paths say "CLOSED" explicitly.
+        if (errLower.includes('closed') || errLower.includes('not open for voting')) {
+          return res.status(409).json({
+            error: 'ELECTION_CLOSED',
+            message: 'This election is closed. Votes can no longer be submitted.',
+          });
+        }
         return res.status(500).json({ error: `Blockchain rejected vote: ${ccErr.message}` });
       }
     }
@@ -2043,6 +2170,22 @@ app.get('/api/omr-layout/:ballotId', async (req, res) => {
       return res.status(500).json({ error: 'LAYOUT_JSON_CORRUPT', ballotId });
     }
 
+    // Sort contests by order field to fix layouts stored with wrong order
+    // (some ballots were generated while Position.order was corrupted)
+    if (
+      layout &&
+      typeof layout === 'object' &&
+      !Array.isArray(layout) &&
+      'contests' in layout
+    ) {
+      const layoutObj = layout as Record<string, unknown>;
+      if (Array.isArray(layoutObj.contests)) {
+        layoutObj.contests = [...layoutObj.contests].sort(
+          (a: any, b: any) => (a.order ?? 999) - (b.order ?? 999)
+        );
+      }
+    }
+
     const { academicOrg, academicOrgSource } = await resolveOmrLayoutAcademicOrg(
       ballotId,
       record.electionId
@@ -2063,7 +2206,7 @@ app.get('/api/omr-layout/:ballotId', async (req, res) => {
         const filtered = rawContests.filter((c) => {
           const pid = positionIdFromLayoutContest(c);
           if (!pid) return false;
-          return isContestAllowedForDepartment(pid, deptSlug);
+          return isContestAllowedForDepartment(pid, deptSlug, record.electionId);
         });
         layoutOut = { ...layoutObj, contests: filtered };
       }
@@ -2138,12 +2281,9 @@ app.post('/elections/:id/candidates', async (req, res) => {
   try {
     // Get positions from chaincode to avoid DB cross-election ID collisions.
     const contract = await getContract();
-    const electionBytes = await contract.evaluateTransaction('GetElection', id);
-    const electionText = Buffer.from(electionBytes).toString('utf8').trim();
-    const election = electionText ? JSON.parse(electionText) : null;
-    const chainPositions = Array.isArray(election?.positions) ? election.positions : [];
+    const dbPositions = await prisma.position.findMany({ where: { electionId: id } });
     const positionMap = new Map<string, { id: string; name: string }>(
-      chainPositions.map((p: any) => [String(p?.name ?? ''), { id: String(p?.id ?? ''), name: String(p?.name ?? '') }])
+      dbPositions.map((p) => [p.name, { id: p.id, name: p.name }])
     );
 
     const createdCandidates: any[] = [];
@@ -2172,7 +2312,7 @@ app.post('/elections/:id/candidates', async (req, res) => {
           positionId: position.id,
         },
       });
-      const candidateId = `cand-${id}-${position.id}-${existingCount + 1}`;
+      const candidateId = `cand-${position.id}-${existingCount + 1}`;
 
       // Save to database
       const candidate = await prisma.candidate.upsert({
@@ -2211,7 +2351,7 @@ app.post('/elections/:id/candidates', async (req, res) => {
                 const regCandCommit = await contract.submitAsync('RegisterCandidate', {
                   arguments: [
                     id,
-                    position.id,
+                    chainPositionIdFromDb(position.id, id),
                     candidateId,
                     name,
                     party || 'Independent',
@@ -2726,7 +2866,8 @@ app.post('/elections/:id/voters/roster', async (req, res) => {
         if (code !== 'P2002') throw e;
       }
     }
-    res.json({ ok: true, electionId, added });
+    const totalOnRoster = await prisma.electionVoter.count({ where: { electionId } });
+    res.json({ ok: true, electionId, added, totalOnRoster });
   } catch (err: any) {
     console.error('POST roster error:', err);
     res.status(500).json({ error: err.message || 'failed' });

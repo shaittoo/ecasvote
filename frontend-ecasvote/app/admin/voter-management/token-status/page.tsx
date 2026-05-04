@@ -228,14 +228,17 @@ export default function TokenStatusPage() {
         open={sidebarOpen}
         onToggle={() => setSidebarOpen((prev) => !prev)}
         active="voter"
-        userName="John"
+        userName="Admin"
         onLogout={handleLogout}
         fixed
         pathname={pathname}
       />
 
       <div className="flex-1 flex flex-col">
-        <AdminHeader title="Token Status" sidebarOpen={sidebarOpen} />
+        <AdminHeader 
+        title="Token Status" 
+        subtitle="Generate ballot tokens and track which have been used"
+        sidebarOpen={sidebarOpen} />
 
         <main
           className={`flex-1 p-6 overflow-y-auto transition-all duration-300 ${
@@ -247,7 +250,7 @@ export default function TokenStatusPage() {
           ) : (
             <div className="max-w-7xl mx-auto space-y-6">
               {!loading && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   <StatCard
                     title="Total issued"
                     value={stats.totalIssued}
@@ -263,7 +266,7 @@ export default function TokenStatusPage() {
                     value={stats.unused}
                     color="text-amber-700"
                   />
-                  <StatCard
+                  {/* <StatCard
                     title="Selected election"
                     valueLabel={
                       electionId
@@ -271,7 +274,7 @@ export default function TokenStatusPage() {
                         : "—"
                     }
                     color="text-blue-800"
-                  />
+                  /> */}
                 </div>
               )}
 

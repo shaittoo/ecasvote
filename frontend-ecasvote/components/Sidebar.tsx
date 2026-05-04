@@ -344,7 +344,7 @@ export type AdminNavKey =
 
 const adminItems: SidebarItem[] = [
   { key: "dashboard", name: "Dashboard", href: "/admin", icon: Home },
-  { key: "onboarding", name: "Onboarding", href: "#", icon: BookOpen },
+  { key: "onboarding", name: "Help Center", href: "/admin/onboarding", icon: BookOpen },
   {
     key: "election",
     name: "Election Management",

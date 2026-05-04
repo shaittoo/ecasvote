@@ -5,7 +5,7 @@
  * raw JSON export (ecasvote-scan-export/1).
  */
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,7 +19,6 @@ import {
   fetchElections,
   fetchOmrLayout,
   fetchPositions,
-  scannerDebugImage,
   scannerScanImage,
   scannerValidate,
 } from "@/lib/ecasvoteApi";
@@ -36,10 +35,8 @@ import { buildPreviewBallotToken } from "@/lib/ballot/previewBallotId";
 import {
   buildScanExportBatch,
   parseSelectionsByPosition,
-  type ScanExportAllBatches,
   type ScanExportBallotRow,
   type ScanExportBatch,
-  SCAN_EXPORT_ALL_SCHEMA,
 } from "@/lib/ballot/scanExport";
 import type { OmGeometryTemplate } from "@/lib/ballot/omGeometryTemplate";
 import { confirmPaperVote } from "@/lib/ecasvoteApi";
@@ -187,8 +184,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const fileInputId = useId();
-  const dropRef = useRef<HTMLDivElement>(null);
+  /* File upload / drop zone disabled for now — re-enable with useId + dropRef + dragActive + addFiles below. */
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -210,7 +206,6 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
   const [exporting, setExporting] = useState(false);
   const [batchFiles, setBatchFiles] = useState<File[]>([]);
   const [scanHistory, setScanHistory] = useState<StoredScanBatch[]>([]);
-  const [dragActive, setDragActive] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [cameraBusy, setCameraBusy] = useState(false);
@@ -222,15 +217,18 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
   const [edgeStatus, setEdgeStatus] = useState<
     "idle" | "searching" | "detected" | "captured"
   >("idle");
+  /** OpenCV debug overlay (Preview Overlay) — UI commented out for now. */
+  /*
   const [debugOverlayBusy, setDebugOverlayBusy] = useState(false);
   const [debugOverlayImage, setDebugOverlayImage] = useState<string | null>(null);
-  /** Pretty-printed `omr.bubbleRead.warpDebug` from the latest OMR scan (DevTools path helper). */
-  const [lastOmrWarpDebugJson, setLastOmrWarpDebugJson] = useState<string | null>(null);
   const [debugOverlayMeta, setDebugOverlayMeta] = useState<{
     contestsDetected?: number;
     contestsInTemplate?: number;
     fileName: string;
   } | null>(null);
+  */
+  /** Pretty-printed `omr.bubbleRead.warpDebug` from the latest OMR scan (DevTools path helper). */
+  const [lastOmrWarpDebugJson, setLastOmrWarpDebugJson] = useState<string | null>(null);
   const [omGeometryTemplate, setOmGeometryTemplate] = useState<OmGeometryTemplate | null>(null);
   /** Non-empty `?department=` forces the governor row (same as ballot print). */
   const urlGovernorOverride = searchParams.get("department")?.trim() ?? "";
@@ -386,6 +384,11 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     [positionsForPreview]
   );
 
+  /*
+  const fileInputId = useId();
+  const dropRef = useRef<HTMLDivElement>(null);
+  const [dragActive, setDragActive] = useState(false);
+
   const addFiles = useCallback((files: FileList | File[]) => {
     const next = Array.from(files).filter((f) => {
       const t = f.type.toLowerCase();
@@ -398,14 +401,15 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
       });
       return;
     }
-    // Single ballot at a time — replace any existing file
     setBatchFiles([next[0]]);
   }, []);
 
   const removeFileAt = (index: number) => {
     setBatchFiles((prev) => prev.filter((_, i) => i !== index));
   };
+  */
 
+  /*
   const previewDebugOverlay = useCallback(async () => {
     if (!batchFiles.length) {
       notify.error({ title: "Add a file first" });
@@ -472,6 +476,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     omGeometryTemplate,
     positions,
   ]);
+  */
 
   const stopCamera = useCallback(() => {
     if (autoRunRef.current !== null) {
@@ -1123,6 +1128,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     }
   };
 
+  /*
   const exportAllBatches = () => {
     if (!scanHistory.length) return;
     const payload: ScanExportAllBatches = {
@@ -1136,6 +1142,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     );
     notify.success({ title: "Exported all batches (raw JSON)" });
   };
+  */
 
   const runScanBatch = async () => {
     if (!electionId) {
@@ -1648,15 +1655,28 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
         notify.success({ title: "Vote recorded successfully" });
       }
     } catch (err: unknown) {
+      const error = err as Error & { code?: string; error?: string };
       const raw = err instanceof Error ? err.message : "Submit failed";
-      const msg = friendlyValidateError(
-        raw.includes("TOKEN_USED") ? "TOKEN_USED"
-        : raw.includes("UNKNOWN_TOKEN") ? "UNKNOWN_TOKEN"
-        : raw.includes("TEMPLATE_MISMATCH") ? "TEMPLATE_MISMATCH"
-        : raw
-      );
-      console.error("Vote submission error:", raw);
-      notify.error({ title: msg });
+      const rawLower = raw.toLowerCase();
+      const looksElectionNotOpen =
+        error?.code === "ELECTION_CLOSED" ||
+        error?.error === "ELECTION_CLOSED" ||
+        rawLower.includes("not open for voting") ||
+        (rawLower.includes("election") && rawLower.includes("closed"));
+      if (looksElectionNotOpen) {
+        notify.error({
+          title: "This election is closed. Votes can no longer be submitted.",
+        });
+      } else {
+        const msg = friendlyValidateError(
+          raw.includes("TOKEN_USED") ? "TOKEN_USED"
+          : raw.includes("UNKNOWN_TOKEN") ? "UNKNOWN_TOKEN"
+          : raw.includes("TEMPLATE_MISMATCH") ? "TEMPLATE_MISMATCH"
+          : raw
+        );
+        console.error("Vote submission error:", raw);
+        notify.error({ title: msg });
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -1682,7 +1702,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
       <div className="flex flex-1 flex-col">
         <AdminHeader
           title="Scan ballots"
-          subtitle="Multi-mark contests (maxVotes) · raw JSON export · OMR worker or browser QR fallback"
+          subtitle="Scan, review, and submit paper ballots"
           sidebarOpen={sidebarOpen}
         />
 
@@ -1700,13 +1720,13 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
           {loading ? (
             <div className="py-12 text-center text-gray-500">Loading elections…</div>
           ) : (
-            <div className="mx-auto max-w-4xl space-y-6">
+            <div className="mx-auto w-full max-w-7xl space-y-6">
               <Card className="border-[#7A0019]/20 shadow-sm">
                 <CardHeader>
                   <CardTitle className="text-xl">Scan Paper Ballot</CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Upload a scanned ballot image (<strong>PNG / JPEG</strong>) or use a connected document scanner.
-                    The system will detect filled bubbles and present the results for review before submitting.
+                    Use a connected document scanner. The system will detect filled bubbles and present the
+                    results for review before submitting.
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-5">
@@ -1780,6 +1800,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                     </div>
                   ) : null}
 
+                  {/* File upload + drag-drop — disabled for now (see commented addFiles / useId above).
                   <div
                     ref={dropRef}
                     role="button"
@@ -1810,7 +1831,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                       if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
                     }}
                     className={cn(
-                      "rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors",
+                      "min-h-[14rem] rounded-lg border-2 border-dashed px-6 py-14 text-center transition-colors",
                       dragActive
                         ? "border-[#7A0019] bg-[#7A0019]/5"
                         : "border-gray-300 bg-white hover:border-gray-400"
@@ -1844,6 +1865,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                       />
                     </div>
                   </div>
+                  */}
 
                   <div className="rounded-md border bg-white p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1857,6 +1879,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                             variant="outline"
                             disabled={!electionId || cameraBusy}
                             onClick={() => void startCamera()}
+                            className="cursor-pointer"
                           >
                             {cameraBusy ? "Opening…" : "Start camera"}
                           </Button>
@@ -1869,6 +1892,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                               onClick={() =>
                                 void captureCameraFrame({ requireValidQr: true })
                               }
+                              className="cursor-pointer"
                             >
                               Capture to queue
                             </Button>
@@ -1877,6 +1901,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                               variant="outline"
                               disabled={cameraBusy}
                               onClick={stopCamera}
+                              className="cursor-pointer"
                             >
                               Stop camera
                             </Button>
@@ -1890,7 +1915,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                           Camera device
                         </label>
                         <select
-                          className="h-9 w-full max-w-md rounded-md border border-input bg-background px-3 text-sm"
+                          className="h-9 w-full max-w-md rounded-md border border-input bg-background px-3 text-sm cursor-pointer"
                           value={cameraDeviceId}
                           onChange={(e) => setCameraDeviceId(e.target.value)}
                           disabled={cameraOn}
@@ -1903,10 +1928,10 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                         </select>
                       </div>
                     )}
-                    <div className="relative mt-3 overflow-hidden rounded border bg-black/90">
+                    <div className="relative mt-3 min-h-[min(52vh,36rem)] overflow-hidden rounded border bg-black/90">
                       <video
                         ref={videoRef}
-                        className={`mx-auto max-h-[36rem] w-full max-w-xl object-contain ${
+                        className={`mx-auto max-h-[min(72vh,52rem)] w-full max-w-full object-contain ${
                           cameraPreviewTopAlign ? "object-top" : "object-center"
                         }`}
                         playsInline
@@ -1915,7 +1940,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                       />
                       <canvas
                         ref={overlayCanvasRef}
-                        className={`pointer-events-none absolute inset-0 mx-auto max-h-[36rem] w-full max-w-xl object-contain ${
+                        className={`pointer-events-none absolute inset-0 mx-auto max-h-[min(72vh,52rem)] w-full max-w-full object-contain ${
                           cameraPreviewTopAlign ? "object-top" : "object-center"
                         }`}
                         aria-hidden
@@ -1983,7 +2008,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
 
                   <div className="flex flex-wrap gap-2">
                     <Button
-                      className="bg-[#7A0019] text-white hover:bg-[#5c0013]"
+                      className="bg-[#7A0019] text-white hover:bg-[#5c0013] cursor-pointer"
                       disabled={
                         !electionId ||
                         batchFiles.length === 0 ||
@@ -1994,6 +2019,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                     >
                       {isScanning ? "Scanning…" : "Scan Ballot"}
                     </Button>
+                    {/* Preview Overlay + OpenCV debug image — disabled for now (see previewDebugOverlay + debug overlay state).
                     {batchFiles.length > 0 && (
                       <Button
                         type="button"
@@ -2004,8 +2030,11 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                         {debugOverlayBusy ? "Rendering…" : "Preview Overlay"}
                       </Button>
                     )}
+                    */}
+
                   </div>
 
+                  {/* OpenCV contour/rectangle preview panel — disabled for now.
                   {debugOverlayImage && (
                     <div className="rounded-md border bg-white p-3">
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -2018,7 +2047,6 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                           {debugOverlayMeta?.contestsInTemplate ?? "?"}
                         </p>
                       </div>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={debugOverlayImage}
                         alt="OpenCV debug overlay"
@@ -2026,9 +2054,11 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                       />
                     </div>
                   )}
+                  */}
                 </CardContent>
               </Card>
 
+              {/* Scan Results card — disabled for now (see exportAllBatches + scanHistory list UI).
               <Card>
                 <CardHeader>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -2048,7 +2078,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                 <CardContent>
                   {scanHistory.length === 0 ? (
                     <p className="py-8 text-center text-sm text-muted-foreground">
-                      No scans yet. Upload or scan a ballot above to see results.
+                      No scans yet. Scan a ballot with the document camera above to see results.
                     </p>
                   ) : (
                     <ul className="space-y-4">
@@ -2140,6 +2170,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                   )}
                 </CardContent>
               </Card>
+              */}
 
               </div>
           )}

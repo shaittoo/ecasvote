@@ -16,7 +16,11 @@ function pct(part: number, total: number): number {
 
 export default function VoterTurnoutBreakdown({ groups }: { groups: Group[] }) {
   if (groups.length === 0) {
-    return null;
+    return (
+      <p className="py-8 text-center text-sm text-muted-foreground">
+        No eligible voter rows or no academic organizations in the registry.
+      </p>
+    );
   }
 
   const data = {

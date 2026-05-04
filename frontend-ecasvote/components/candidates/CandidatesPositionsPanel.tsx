@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { fetchElection, fetchElections, fetchPositions } from "@/lib/ecasvoteApi";
 import type { Election, Position } from "@/lib/ecasvoteApi";
+import { pickDefaultStudentElection, sortElectionsForStudentSelect } from "@/lib/studentElectionDefaults";
 import { CandidateCard } from "@/components/candidate-card";
 import { Lock, Users } from "lucide-react";
 
@@ -32,20 +33,16 @@ export function CandidatesPositionsPanel({
   const [published, setPublished] = useState(true);
   const [resolvedElectionId, setResolvedElectionId] = useState<string | null>(electionIdProp ?? null);
 
-  // Resolve the election ID: use prop, or find the active/recent election
+  // Load roster; prefer ?election= id when valid, else most recent OPEN default.
   useEffect(() => {
-    if (electionIdProp) {
-      setResolvedElectionId(electionIdProp);
-      return;
-    }
     setLoadingElections(true);
     fetchElections()
       .then((list) => {
-        setElections(list);
-        const open = list.find((e: Election) => e.status === "OPEN");
-        const closed = list.find((e: Election) => e.status === "CLOSED");
-        const best = open ?? closed ?? list[0] ?? null;
-        setResolvedElectionId(best?.id ?? null);
+        const sorted = sortElectionsForStudentSelect(list);
+        setElections(sorted);
+        const fromProp =
+          electionIdProp && sorted.some((e) => e.id === electionIdProp) ? electionIdProp : null;
+        setResolvedElectionId(fromProp ?? pickDefaultStudentElection(sorted)?.id ?? null);
       })
       .catch(() => {
         setElections([]);
@@ -78,7 +75,7 @@ export function CandidatesPositionsPanel({
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
-      {!electionIdProp ? (
+      {elections.length > 0 || loadingElections ? (
         <div className="max-w-md">
           <label htmlFor="candidates-election-select" className="mb-1.5 block text-sm font-medium text-gray-700">
             Election
@@ -97,7 +94,8 @@ export function CandidatesPositionsPanel({
             ) : (
               elections.map((e) => (
                 <option key={e.id} value={e.id}>
-                  {e.name || e.id}
+                  {(e.name || e.id) +
+                    (e.status === "OPEN" ? " (OPEN)" : e.status === "CLOSED" ? " (CLOSED)" : " (DRAFT)")}
                 </option>
               ))
             )}

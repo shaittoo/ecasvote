@@ -273,7 +273,7 @@ export function EditElectionPage() {
   return (
     <AdminElectionShell
       title="Edit election"
-      subtitle={electionRow.title || electionId}
+      subtitle="Update election details, dates, and candidates while still in draft"
     >
       <div className="mx-auto w-full max-w-[min(100%,1920px)] space-y-6">
         <div className="flex items-center gap-2">
