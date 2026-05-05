@@ -30,6 +30,10 @@ import { notify } from "@/lib/notify";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
+/** Same bar pixel width + chart height on every position card (Chart.js scales bar width by category count otherwise). */
+const SUMMARY_RESULT_CHART_HEIGHT_PX = 220;
+const SUMMARY_RESULT_BAR_THICKNESS_PX = 150;
+
 export default function ResultsSummaryPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -148,6 +152,7 @@ export default function ResultsSummaryPage() {
           {
             label: "Votes",
             data: votes,
+            barThickness: SUMMARY_RESULT_BAR_THICKNESS_PX,
             backgroundColor: [
               "#7A0019",
               "#0C8C3F",
@@ -567,12 +572,25 @@ export default function ResultsSummaryPage() {
                           </div>
                         </CardHeader>
                         <CardContent>
-                          <div className="mb-6">
+                          <div
+                            className="mb-6 w-full"
+                            style={{
+                              height: SUMMARY_RESULT_CHART_HEIGHT_PX,
+                              minHeight: SUMMARY_RESULT_CHART_HEIGHT_PX,
+                            }}
+                          >
                             <Bar
                               data={data}
                               options={{
                                 responsive: true,
                                 maintainAspectRatio: false,
+                                layout: { padding: { top: 4, bottom: 4, left: 4, right: 8 } },
+                                datasets: {
+                                  bar: {
+                                    categoryPercentage: 0.72,
+                                    barPercentage: 1,
+                                  },
+                                },
                                 plugins: {
                                   legend: { display: false },
                                   tooltip: {
@@ -595,7 +613,7 @@ export default function ResultsSummaryPage() {
                                   },
                                 },
                               }}
-                              height={300}
+                              height={SUMMARY_RESULT_CHART_HEIGHT_PX}
                             />
                           </div>
 

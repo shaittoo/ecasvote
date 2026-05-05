@@ -227,6 +227,23 @@ export async function updateElection(
   await handleResponse(res);
 }
 
+/** DB-only end-time extension for OPEN elections (no chaincode). Gateway PATCH /elections/:id/end-time */
+export async function patchElectionEndTime(
+  electionId: string,
+  endTimeIso: string
+): Promise<{ ok: boolean; endTime?: string }> {
+  const res = await fetch(
+    `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}/end-time`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endTime: endTimeIso }),
+    }
+  );
+
+  return handleResponse(res);
+}
+
 export async function deleteElection(electionId: string): Promise<void> {
   const res = await fetch(
     `${getGatewayBase()}/elections/${encodeURIComponent(electionId)}`,

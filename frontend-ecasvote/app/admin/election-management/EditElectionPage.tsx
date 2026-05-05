@@ -1,12 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ArrowLeft, Lock } from "lucide-react";
-import { fetchElection, updateElection } from "@/lib/ecasvoteApi";
+import {
+  closeElection,
+  fetchElection,
+  patchElectionEndTime,
+  updateElection,
+  type Election,
+} from "@/lib/ecasvoteApi";
 import { notify } from "@/lib/notify";
 import { AdminElectionShell } from "./AdminElectionShell";
 import { CandidateManagementPanel } from "./CandidateManagementPanel";
@@ -17,6 +23,8 @@ import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { ElectionSettingsForm } from "./ElectionSettingsForm";
 import { validateElectionForm } from "./electionFormValidation";
+import { CloseElectionDialog } from "./CloseElectionDialog";
+import { ExtendElectionDialog } from "./ExtendElectionDialog";
 
 function formatAcademicYear(startYear: number): string {
   return `${startYear} - ${startYear + 1}`;
@@ -41,6 +49,18 @@ type EditFormSnapshot = {
   endTime: string;
 };
 
+/** Gateway often returns JSON `{ "error": "..." }` as text; keeps PATCH validation messages distinct in toasts. */
+function gatewayErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  try {
+    const j = JSON.parse(raw) as { error?: string };
+    if (typeof j?.error === "string" && j.error.trim()) return j.error;
+  } catch {
+    /* not JSON */
+  }
+  return raw;
+}
+
 export function EditElectionPage() {
   const params = useParams();
   const router = useRouter();
@@ -60,13 +80,19 @@ export function EditElectionPage() {
   const [startTime, setStartTime] = useState("08:00");
   const [endTime, setEndTime] = useState("17:00");
   const [saving, setSaving] = useState(false);
+  const [electionDetail, setElectionDetail] = useState<Election | null>(null);
+  const [closeElectionDialogOpen, setCloseElectionDialogOpen] = useState(false);
+  const [extendElectionDialogOpen, setExtendElectionDialogOpen] = useState(false);
+  const [closingElection, setClosingElection] = useState(false);
+  const [extendingElection, setExtendingElection] = useState(false);
   const initialSnapshotRef = useRef<EditFormSnapshot | null>(null);
 
-  // Derived from electionRow.status — the status already reflects the chain state
-  // because loadElectionRows() calls fetchElection() which triggers auto-open/close.
-  const electionStatus = electionRow?.status?.toUpperCase() ?? "DRAFT";
-  // DEBUG: allow editing on open elections
-  const locked = false; // was: electionStatus !== "DRAFT"
+  // Prefer fresh GET detail after mutations (close/extend) so badge + OPEN-only actions update without reload.
+  const electionStatus =
+    (electionDetail?.status ?? electionRow?.status)?.toUpperCase() ?? "DRAFT";
+  const settingsReadOnly = electionStatus !== "DRAFT";
+  /** Candidate panel lock policy unchanged from prior behavior (draft-only edits). */
+  const locked = false;
 
   useEffect(() => {
     if (!electionId) {
@@ -81,10 +107,13 @@ export function EditElectionPage() {
         if (cancelled) return;
         if (!row) {
           setElectionRow(null);
+          setElectionDetail(null);
           setLoading(false);
           return;
         }
         setElectionRow(row);
+        const detail = await fetchElection(electionId);
+        if (!cancelled) setElectionDetail(detail);
         const form = await loadElectionEditFormState(row);
         if (cancelled) return;
         const normalizedAcademicYear =
@@ -115,6 +144,7 @@ export function EditElectionPage() {
       } catch (e) {
         notify.error({ title: `Failed to load election: ${e}` });
         setElectionRow(null);
+        setElectionDetail(null);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -128,7 +158,14 @@ export function EditElectionPage() {
     if (saving) return;
     if (!electionId || !electionRow) return;
 
-    // Double-check lock on the client side before calling the API
+    if (electionStatus !== "DRAFT") {
+      notify.error({
+        title: "Election settings cannot be edited",
+        description: "Save is only available while the election is in draft.",
+      });
+      return;
+    }
+
     if (locked) {
       notify.error({
         title: "Election is locked",
@@ -190,6 +227,7 @@ export function EditElectionPage() {
         title: "Election updated",
         description: "Changes saved to blockchain and database.",
       });
+      if (electionData) setElectionDetail(electionData);
     } catch (err: unknown) {
       notify.error({
         title: "Update failed",
@@ -199,6 +237,22 @@ export function EditElectionPage() {
       setSaving(false);
     }
   };
+
+  const refreshElectionFromApi = useCallback(async () => {
+    if (!electionId) return;
+    try {
+      const rows = await loadElectionRows();
+      const row = rows.find((r) => r.id === electionId);
+      if (row) setElectionRow(row);
+      const detail = await fetchElection(electionId);
+      setElectionDetail(detail);
+    } catch (e: unknown) {
+      notify.error({
+        title: "Refresh failed",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }, [electionId]);
 
   const rangeLabel = !durationRange?.from
     ? "Select election date range"
@@ -292,35 +346,62 @@ export function EditElectionPage() {
         {/* Election Settings Card */}
         <Card>
           <CardHeader className="pb-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <CardTitle className="text-2xl">Election Settings</CardTitle>
-              {/* Status badge */}
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold",
-                  electionStatus === "OPEN"
-                    ? "bg-green-100 text-green-800"
-                    : electionStatus === "CLOSED"
-                    ? "bg-red-100 text-red-800"
-                    : "bg-gray-100 text-gray-700"
-                )}
-              >
-                {locked && <Lock className="h-3 w-3" />}
-                {electionStatus}
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                {electionStatus === "OPEN" && electionDetail ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="border-[#7A0019]/30 text-[#7A0019] hover:bg-[#7A0019]/5"
+                      onClick={() => setExtendElectionDialogOpen(true)}
+                    >
+                      Extend Election
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setCloseElectionDialogOpen(true)}
+                    >
+                      Close Election
+                    </Button>
+                  </>
+                ) : null}
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold",
+                    electionStatus === "OPEN"
+                      ? "bg-green-100 text-green-800"
+                      : electionStatus === "CLOSED"
+                      ? "bg-red-100 text-red-800"
+                      : "bg-gray-100 text-gray-700"
+                  )}
+                >
+                  {locked && <Lock className="h-3 w-3" />}
+                  {electionStatus}
+                </span>
+              </div>
             </div>
           </CardHeader>
 
           <CardContent className="space-y-4">
-            {/* Lock banner */}
-            {locked && (
+            {settingsReadOnly ? (
+              <p className="rounded-md border border-gray-200 bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+                Election settings cannot be edited while the election is OPEN or CLOSED.
+              </p>
+            ) : null}
+
+            {locked ? (
               <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 <Lock className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
                   Only draft elections can be edited. All fields are read-only.
                 </span>
               </div>
-            )}
+            ) : null}
 
             <ElectionSettingsForm
               title={newTitle}
@@ -336,20 +417,23 @@ export function EditElectionPage() {
               endTime={endTime}
               onEndTimeChange={setEndTime}
               academicYearOptions={academicYearOptions}
+              readOnly={settingsReadOnly}
               disabled={locked}
             />
 
-            <div className="flex justify-end pt-2">
-              <Button
-                className="text-white"
-                style={{ backgroundColor: locked ? "#9CA3AF" : "#7A0019" }}
-                onClick={() => void handleSave()}
-                disabled={saving || locked}
-                title={locked ? "Election is locked and cannot be edited" : undefined}
-              >
-                {saving ? "Saving…" : locked ? "Locked" : "Save Changes"}
-              </Button>
-            </div>
+            {!settingsReadOnly ? (
+              <div className="flex justify-end pt-2">
+                <Button
+                  className="text-white"
+                  style={{ backgroundColor: locked ? "#9CA3AF" : "#7A0019" }}
+                  onClick={() => void handleSave()}
+                  disabled={saving || locked}
+                  title={locked ? "Election is locked and cannot be edited" : undefined}
+                >
+                  {saving ? "Saving…" : locked ? "Locked" : "Save Changes"}
+                </Button>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -359,6 +443,50 @@ export function EditElectionPage() {
           electionTitle={electionRow.title}
           locked={locked}
         />
+
+        <CloseElectionDialog
+          open={closeElectionDialogOpen}
+          electionName={electionDetail?.name ?? electionRow.title}
+          submitting={closingElection}
+          onCancel={() => !closingElection && setCloseElectionDialogOpen(false)}
+          onConfirmClose={async () => {
+            setClosingElection(true);
+            try {
+              await closeElection(electionId);
+              notify.success({
+                title: "Election closed successfully. No further votes will be accepted.",
+              });
+              await refreshElectionFromApi();
+              setCloseElectionDialogOpen(false);
+            } catch (err: unknown) {
+              notify.error({ title: gatewayErrorMessage(err) });
+            } finally {
+              setClosingElection(false);
+            }
+          }}
+        />
+
+        {electionDetail?.endTime ? (
+          <ExtendElectionDialog
+            open={extendElectionDialogOpen}
+            currentEndIso={electionDetail.endTime}
+            submitting={extendingElection}
+            onCancel={() => !extendingElection && setExtendElectionDialogOpen(false)}
+            onConfirm={async (endTimeIso) => {
+              setExtendingElection(true);
+              try {
+                await patchElectionEndTime(electionId, endTimeIso);
+                notify.success({ title: "Election end date updated." });
+                await refreshElectionFromApi();
+                setExtendElectionDialogOpen(false);
+              } catch (err: unknown) {
+                notify.error({ title: gatewayErrorMessage(err) });
+              } finally {
+                setExtendingElection(false);
+              }
+            }}
+          />
+        ) : null}
       </div>
     </AdminElectionShell>
   );
