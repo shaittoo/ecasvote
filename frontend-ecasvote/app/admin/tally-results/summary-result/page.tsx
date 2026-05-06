@@ -15,7 +15,7 @@ import {
   Legend,
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
-import { CheckCircle2, Download, Lock, Printer } from "lucide-react";
+import { CheckCircle2, Download, Printer } from "lucide-react";
 import {
   fetchElection,
   fetchElections,
@@ -435,21 +435,6 @@ export default function ResultsSummaryPage() {
                   <CardTitle className="text-destructive">Error</CardTitle>
                   <CardDescription>{error}</CardDescription>
                 </CardHeader>
-              </Card>
-            ) : !isClosed ? (
-              <Card>
-                <CardContent className="py-16 text-center">
-                  <Lock className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-                  <h2 className="text-xl font-semibold text-gray-900 mb-2">
-                    Results are not yet available
-                  </h2>
-                  <p className="text-gray-500 mb-4">
-                    The election must be closed before results can be viewed.
-                  </p>
-                  <Badge variant="secondary" className="text-sm px-3 py-1">
-                    Current status: {electionStatus || "Unknown"}
-                  </Badge>
-                </CardContent>
               </Card>
             ) : !hasResults ? (
               <Card>

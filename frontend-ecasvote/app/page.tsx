@@ -220,7 +220,7 @@ export default function LandingPage() {
                       Results
                     </h3>
                     <p className="text-sm text-gray-400">
-                      {status === "CLOSED" ? "Not yet published" : "Available after election closes"}
+                      Not yet published
                     </p>
                   </CardContent>
                 </Card>

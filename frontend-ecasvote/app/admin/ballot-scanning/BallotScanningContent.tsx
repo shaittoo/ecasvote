@@ -10,7 +10,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { AdminSidebar } from "@/components/Sidebar";
 import AdminHeader from "../components/header";
@@ -20,6 +19,7 @@ import {
   fetchElections,
   fetchOmrLayout,
   fetchPositions,
+  scannerDebugImage,
   scannerScanImage,
   scannerValidate,
 } from "@/lib/ecasvoteApi";
@@ -41,11 +41,7 @@ import {
 } from "@/lib/ballot/scanExport";
 import type { OmGeometryTemplate } from "@/lib/ballot/omGeometryTemplate";
 import { confirmPaperVote } from "@/lib/ecasvoteApi";
-import type { VoterReviewPayload } from "@/types/voterReview";
-
-const VOTER_REVIEW_STORAGE_KEY = "ecasvote_review_payload";
-const VOTER_REVIEW_BROADCAST_NAME = "ecasvote_review";
-import { ContestResultRow } from "./components/ContestResultRow";
+import { ScanResultsModal } from "./components/ScanResultsModal";
 import type { ScanResult, ContestReadItem, BubbleOverlayItem } from "./components/ScanPageContent";
 
 /** Gateway/worker expect `scannerTemplate` object with a `geometry` field (DOM-measured layout). */
@@ -124,79 +120,6 @@ function friendlyValidateError(code: string): string {
     default:
       return code.length < 120 ? code : "An error occurred. Please try again or contact the SEB.";
   }
-}
-
-function postReviewDoneAndClearPayload(): void {
-  try {
-    const ch = new BroadcastChannel(VOTER_REVIEW_BROADCAST_NAME);
-    ch.postMessage({ type: "REVIEW_DONE" });
-    ch.close();
-  } catch {
-    /* ignore */
-  }
-  try {
-    localStorage.removeItem(VOTER_REVIEW_STORAGE_KEY);
-  } catch {
-    /* ignore */
-  }
-}
-
-/** Same governor filter as ScanResultsModal — voter review must match admin contest list. */
-function filterPositionsForBallotReview(
-  positions: Position[],
-  academicOrg?: string
-): Position[] {
-  const org = academicOrg?.toLowerCase().trim();
-  if (!org) return positions;
-  return positions.filter((pos) => {
-    const pid = pos.id.toLowerCase();
-    if (!pid.includes("-governor")) return true;
-    return pid.includes(org.toLowerCase());
-  });
-}
-
-function ballotRowTokenValidationOk(row: ScanExportBallotRow): boolean {
-  const tv = row.tokenValidation;
-  return (
-    typeof tv === "object" &&
-    tv !== null &&
-    "ok" in tv &&
-    (tv as { ok?: boolean }).ok === true
-  );
-}
-
-function buildVoterReviewPayloadFromScan(
-  positions: Position[],
-  electionDisplayName: string,
-  ballotToken: string,
-  tokenValidationOk: boolean,
-  scanResult: ScanResult
-): VoterReviewPayload {
-  const filtered = filterPositionsForBallotReview(positions, scanResult.academicOrg);
-  const selectionsByPosition: Record<string, string[]> = {};
-  const positionLabels: Record<string, string> = {};
-  const maxVotesByPosition: Record<string, number> = {};
-  const candidateLabels: Record<string, string> = {};
-
-  for (const p of filtered) {
-    positionLabels[p.id] = p.name;
-    maxVotesByPosition[p.id] = p.maxVotes;
-    for (const c of p.candidates) {
-      candidateLabels[c.id] = c.name;
-    }
-    candidateLabels[`abstain:${p.id}`] = "Abstain";
-    selectionsByPosition[p.id] = scanResult.selectionsByPosition[p.id] ?? [];
-  }
-
-  return {
-    ballotToken,
-    tokenValidationOk,
-    electionName: electionDisplayName,
-    selectionsByPosition,
-    positionLabels,
-    candidateLabels,
-    maxVotesByPosition,
-  };
 }
 
 function isTokenUsedValidation(v: unknown): boolean {
@@ -295,8 +218,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
   const [edgeStatus, setEdgeStatus] = useState<
     "idle" | "searching" | "detected" | "captured"
   >("idle");
-  /** OpenCV debug overlay (Preview Overlay) — UI commented out for now. */
-  /*
+  /** OpenCV debug overlay (Preview Overlay). */
   const [debugOverlayBusy, setDebugOverlayBusy] = useState(false);
   const [debugOverlayImage, setDebugOverlayImage] = useState<string | null>(null);
   const [debugOverlayMeta, setDebugOverlayMeta] = useState<{
@@ -304,7 +226,6 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     contestsInTemplate?: number;
     fileName: string;
   } | null>(null);
-  */
   /** Pretty-printed `omr.bubbleRead.warpDebug` from the latest OMR scan (DevTools path helper). */
   const [lastOmrWarpDebugJson, setLastOmrWarpDebugJson] = useState<string | null>(null);
   const [omGeometryTemplate, setOmGeometryTemplate] = useState<OmGeometryTemplate | null>(null);
@@ -315,11 +236,10 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
   /** Set from POST /scanner/validate after a decodable ballot QR (issued roster org). */
   const [governorFilterFromBallot, setGovernorFilterFromBallot] = useState<string | null>(null);
 
-  // Post-scan review: voter window + fixed admin panel (no modal)
+  // Results review modal
+  const [showResultsModal, setShowResultsModal] = useState(false);
   const [latestScanResult, setLatestScanResult] = useState<ScanResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [voterReviewPopupBlocked, setVoterReviewPopupBlocked] = useState(false);
-  const reviewWinRef = useRef<Window | null>(null);
   const [omrOffline, setOmrOffline] = useState(false);
 
   const handleLogout = () => router.push("/login");
@@ -463,32 +383,6 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     [positionsForPreview]
   );
 
-  const adminReviewContests = useMemo(() => {
-    if (!latestScanResult) return [];
-    const filteredPositions = filterPositionsForBallotReview(
-      positions,
-      latestScanResult.academicOrg
-    );
-    const contestsRead = latestScanResult.bubbleRead?.contestsRead ?? [];
-    const contestReadMap = new Map<string, ContestReadItem>();
-    for (const cr of contestsRead) {
-      contestReadMap.set(cr.positionId, cr);
-    }
-    return filteredPositions.map((posRow) => ({
-      position: posRow,
-      detectedSelections: latestScanResult.selectionsByPosition[posRow.id] ?? [],
-      contestRead: contestReadMap.get(posRow.id) ?? null,
-    }));
-  }, [latestScanResult, positions]);
-
-  const adminReviewFinalSelections = useMemo(() => {
-    const out: Record<string, string[]> = {};
-    for (const row of adminReviewContests) {
-      out[row.position.id] = row.detectedSelections;
-    }
-    return out;
-  }, [adminReviewContests]);
-
   /*
   const fileInputId = useId();
   const dropRef = useRef<HTMLDivElement>(null);
@@ -514,7 +408,6 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
   };
   */
 
-  /*
   const previewDebugOverlay = useCallback(async () => {
     if (!batchFiles.length) {
       notify.error({ title: "Add a file first" });
@@ -581,7 +474,6 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     omGeometryTemplate,
     positions,
   ]);
-  */
 
   const stopCamera = useCallback(() => {
     if (autoRunRef.current !== null) {
@@ -1676,47 +1568,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
           bubbleRead: { bubbleOverlay, contestsRead },
         };
         setLatestScanResult(result);
-
-        const token = lastOmrBallot.ballotToken?.trim();
-        if (token) {
-          const electionDisplayName =
-            elections.find((e) => e.id === electionId)?.name ??
-            electionName ??
-            electionId;
-          const payload = buildVoterReviewPayloadFromScan(
-            pos,
-            electionDisplayName,
-            token,
-            ballotRowTokenValidationOk(lastOmrBallot),
-            result
-          );
-          try {
-            localStorage.setItem(VOTER_REVIEW_STORAGE_KEY, JSON.stringify(payload));
-          } catch (e) {
-            notify.error({
-              title: "Could not prepare voter review",
-              description: String(e),
-            });
-          }
-          const reviewWin = window.open(
-            "/voter-review",
-            "ecasvote_voter_review",
-            "width=960,height=700,menubar=no,toolbar=no,location=no,status=no"
-          );
-          reviewWinRef.current = reviewWin;
-          if (!reviewWin) {
-            setVoterReviewPopupBlocked(true);
-          } else {
-            setVoterReviewPopupBlocked(false);
-          }
-        } else {
-          setVoterReviewPopupBlocked(false);
-          notify.warning({
-            title: "No ballot token on scan row",
-            description:
-              "Voter review window was skipped. You can still review marks below.",
-          });
-        }
+        setShowResultsModal(true);
       }
 
       const errC = ballots.length - validCount;
@@ -1789,8 +1641,8 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
         ballotStatus: latestScanResult.ballotStatus,
         ballotInvalidReasons: latestScanResult.ballotInvalidReasons as Array<Record<string, unknown>> | undefined,
       });
+      setShowResultsModal(false);
       setLatestScanResult(null);
-      reviewWinRef.current = null;
       if (result.invalidated) {
         notify.warning({
           title: "Ballot marked as INVALID",
@@ -1813,27 +1665,23 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
           title: "This election is closed. Votes can no longer be submitted.",
         });
       } else {
-      const msg = friendlyValidateError(
-        raw.includes("TOKEN_USED") ? "TOKEN_USED"
-        : raw.includes("UNKNOWN_TOKEN") ? "UNKNOWN_TOKEN"
-        : raw.includes("TEMPLATE_MISMATCH") ? "TEMPLATE_MISMATCH"
-        : raw
-      );
-      console.error("Vote submission error:", raw);
-      notify.error({ title: msg });
+        const msg = friendlyValidateError(
+          raw.includes("TOKEN_USED") ? "TOKEN_USED"
+          : raw.includes("UNKNOWN_TOKEN") ? "UNKNOWN_TOKEN"
+          : raw.includes("TEMPLATE_MISMATCH") ? "TEMPLATE_MISMATCH"
+          : raw
+        );
+        console.error("Vote submission error:", raw);
+        notify.error({ title: msg });
       }
     } finally {
-      postReviewDoneAndClearPayload();
-      setVoterReviewPopupBlocked(false);
       setIsSubmitting(false);
     }
   };
 
-  const dismissReviewSession = () => {
-    postReviewDoneAndClearPayload();
-    reviewWinRef.current = null;
+  const handleRescanFromModal = () => {
+    setShowResultsModal(false);
     setLatestScanResult(null);
-    setVoterReviewPopupBlocked(false);
   };
 
   return (
@@ -1912,77 +1760,77 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                         {positionsForPreview.length} after org filter (must match printed ballot).
                       </p>
                     ) : null}
-            </div>
-          )}
+                  </div>
+                  )}
 
-          {electionId && positions.length > 0 ? (
-            <div style={{ position: "relative", width: 0, height: 0, overflow: "visible" }}>
-              <div
-                style={{
-                  position: "absolute",
-                  left: "-10000px",
-                  top: 0,
-                  width: "794px",
-                  minWidth: "794px",
-                  background: "white",
-                  pointerEvents: "none",
-                  zIndex: 0,
-                }}
-              >
-                <PrintableBallotSheet
-                  key={`${electionId}-${includeAbstain}-${effectiveGovernorFilter}`}
-                  electionId={electionId}
-                  ballotToken={buildPreviewBallotToken(electionId)}
-                  templateVersion={BALLOT_TEMPLATE_VERSION}
-                  electionName={electionName || electionId}
-                  positions={printablePositions}
-                  showAbstain={includeAbstain}
-                  onGeometryTemplateReady={(geom) => {
-                    console.log(
-                      "SCANNER PREVIEW GEOMETRY CONTEST IDS:",
-                      geom.contests.map((c) => c.positionId),
-                    );
-                    setOmGeometryTemplate(geom);
-                  }}
-                />
-              </div>
-            </div>
-          ) : null}
+                  {electionId && positions.length > 0 ? (
+                        <div style={{ position: "relative", width: 0, height: 0, overflow: "visible" }}>
+                          <div
+                            style={{
+                              position: "absolute",
+                              left: "-10000px",
+                              top: 0,
+                              width: "794px",
+                              minWidth: "794px",
+                              background: "white",
+                              pointerEvents: "none",
+                              zIndex: 0,
+                            }}
+                          >
+                            <PrintableBallotSheet
+                              key={`${electionId}-${includeAbstain}-${effectiveGovernorFilter}`}
+                              electionId={electionId}
+                              ballotToken={buildPreviewBallotToken(electionId)}
+                              templateVersion={BALLOT_TEMPLATE_VERSION}
+                              electionName={electionName || electionId}
+                              positions={printablePositions}
+                              showAbstain={includeAbstain}
+                              onGeometryTemplateReady={(geom) => {
+                                console.log(
+                                  "SCANNER PREVIEW GEOMETRY CONTEST IDS:",
+                                  geom.contests.map((c) => c.positionId),
+                                );
+                                setOmGeometryTemplate(geom);
+                              }}
+                            />
+                        </div>
+                    </div>
+                  ) : null}
 
                   {/* File upload + drag-drop — disabled for now (see commented addFiles / useId above).
-              <div
-                ref={dropRef}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    document.getElementById(fileInputId)?.click();
-                  }
-                }}
-                onDragEnter={(e) => {
-                  e.preventDefault();
-                  setDragActive(true);
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragActive(true);
-                }}
-                onDragLeave={(e) => {
-                  e.preventDefault();
-                  if (!dropRef.current?.contains(e.relatedTarget as Node)) {
-                    setDragActive(false);
-                  }
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragActive(false);
-                  if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
-                }}
-                className={cn(
+                  <div
+                    ref={dropRef}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        document.getElementById(fileInputId)?.click();
+                      }
+                    }}
+                    onDragEnter={(e) => {
+                      e.preventDefault();
+                      setDragActive(true);
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragActive(true);
+                    }}
+                    onDragLeave={(e) => {
+                      e.preventDefault();
+                      if (!dropRef.current?.contains(e.relatedTarget as Node)) {
+                        setDragActive(false);
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragActive(false);
+                      if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
+                    }}
+                    className={cn(
                       "min-h-[14rem] rounded-lg border-2 border-dashed px-6 py-14 text-center transition-colors",
                       dragActive
-                      ? "border-[#7A0019] bg-[#7A0019]/5"
+                        ? "border-[#7A0019] bg-[#7A0019]/5"
                         : "border-gray-300 bg-white hover:border-gray-400"
                     )}
                   >
@@ -1991,219 +1839,218 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                       PNG or JPEG (full-size scan recommended)
                     </p>
                     <div className="mt-4 flex flex-wrap justify-center gap-2">
-                    <label htmlFor={fileInputId}>
-                      <span
-                        className={cn(
-                          buttonVariants({ variant: "outline" }),
+                      <label htmlFor={fileInputId}>
+                        <span
+                          className={cn(
+                            buttonVariants({ variant: "outline" }),
                             "cursor-pointer"
-                        )}
-                      >
-                        Choose file
-                      </span>
-                    </label>
-                <input
-                  id={fileInputId}
-                  type="file"
-                  accept="image/png,image/jpeg"
-                  className="sr-only"
-                  disabled={!electionId}
-                  onChange={(e) => {
-                    if (e.target.files?.length) addFiles(e.target.files);
-                    e.target.value = "";
-                  }}
-                />
-              </div>
+                          )}
+                        >
+                          Choose file
+                        </span>
+                      </label>
+                      <input
+                        id={fileInputId}
+                        type="file"
+                        accept="image/png,image/jpeg"
+                        className="sr-only"
+                        disabled={!electionId}
+                        onChange={(e) => {
+                          if (e.target.files?.length) addFiles(e.target.files);
+                          e.target.value = "";
+                        }}
+                      />
+                    </div>
                   </div>
                   */}
 
                   <div className="rounded-md border bg-white p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-sm font-medium text-gray-900">
-                    Use document camera (NetumScan SD)
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {!cameraOn ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={!electionId || cameraBusy}
-                        onClick={() => void startCamera()}
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-gray-900">
+                        Use document camera (NetumScan SD)
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {!cameraOn ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={!electionId || cameraBusy}
+                            onClick={() => void startCamera()}
                             className="cursor-pointer"
-                      >
+                          >
                             {cameraBusy ? "Opening…" : "Start camera"}
-                      </Button>
-                    ) : (
-                      <>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={cameraBusy}
-                          onClick={() =>
-                            void captureCameraFrame({ requireValidQr: true })
-                          }
+                          </Button>
+                        ) : (
+                          <>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={cameraBusy}
+                              onClick={() =>
+                                void captureCameraFrame({ requireValidQr: true })
+                              }
                               className="cursor-pointer"
-                        >
-                          Capture to queue
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={cameraBusy}
-                          onClick={stopCamera}
+                            >
+                              Capture to queue
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={cameraBusy}
+                              onClick={stopCamera}
                               className="cursor-pointer"
-                        >
-                          Stop camera
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </div>
-                {cameraDevices.length > 1 && (
-                  <div className="mt-2">
-                    <label className="mb-1 block text-xs text-muted-foreground">
-                      Camera device
-                    </label>
-                    <select
+                            >
+                              Stop camera
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {cameraDevices.length > 1 && (
+                      <div className="mt-2">
+                        <label className="mb-1 block text-xs text-muted-foreground">
+                          Camera device
+                        </label>
+                        <select
                           className="h-9 w-full max-w-md rounded-md border border-input bg-background px-3 text-sm cursor-pointer"
-                      value={cameraDeviceId}
-                      onChange={(e) => setCameraDeviceId(e.target.value)}
-                      disabled={cameraOn}
-                    >
-                      {cameraDevices.map((d) => (
-                        <option key={d.deviceId} value={d.deviceId}>
-                          {d.label || `Camera ${d.deviceId.slice(0, 6)}`}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                          value={cameraDeviceId}
+                          onChange={(e) => setCameraDeviceId(e.target.value)}
+                          disabled={cameraOn}
+                        >
+                          {cameraDevices.map((d) => (
+                            <option key={d.deviceId} value={d.deviceId}>
+                              {d.label || `Camera ${d.deviceId.slice(0, 6)}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                     <div className="relative mt-3 min-h-[min(52vh,36rem)] overflow-hidden rounded border bg-black/90">
-                  <video
-                    ref={videoRef}
+                      <video
+                        ref={videoRef}
                         className={`mx-auto max-h-[min(72vh,52rem)] w-full max-w-full object-contain ${
-                      cameraPreviewTopAlign ? "object-top" : "object-center"
-                    }`}
-                    playsInline
-                    muted
-                    autoPlay
-                  />
-                  <canvas
-                    ref={overlayCanvasRef}
+                          cameraPreviewTopAlign ? "object-top" : "object-center"
+                        }`}
+                        playsInline
+                        muted
+                        autoPlay
+                      />
+                      <canvas
+                        ref={overlayCanvasRef}
                         className={`pointer-events-none absolute inset-0 mx-auto max-h-[min(72vh,52rem)] w-full max-w-full object-contain ${
-                      cameraPreviewTopAlign ? "object-top" : "object-center"
-                    }`}
-                    aria-hidden
-                  />
-                </div>
-                {cameraOn && (
-                  <div className="mt-2 flex flex-wrap items-center gap-3">
-                    <label className="inline-flex items-center gap-2 text-xs text-gray-700">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4"
-                        checked={autoCapture}
-                        onChange={(e) => setAutoCapture(e.target.checked)}
+                          cameraPreviewTopAlign ? "object-top" : "object-center"
+                        }`}
+                        aria-hidden
                       />
-                      Auto-capture using SquareFiducials
-                    </label>
-                    <span className="text-xs text-muted-foreground">
-                      Status:{" "}
-                      {edgeStatus === "idle"
-                        ? "idle"
-                        : edgeStatus === "searching"
-                          ? "searching for fiducials"
-                          : edgeStatus === "detected"
-                            ? "fiducials detected"
-                            : "captured"}
-                    </span>
-                    <label className="inline-flex items-center gap-2 text-xs text-gray-700">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4"
-                        checked={showLiveBubbleOverlay}
-                        onChange={(e) => setShowLiveBubbleOverlay(e.target.checked)}
-                      />
-                      Live encircle detection overlay
-                    </label>
-                    <label className="inline-flex items-center gap-2 text-xs text-gray-700">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4"
-                        checked={cameraPreviewTopAlign}
-                        onChange={(e) => setCameraPreviewTopAlign(e.target.checked)}
-                      />
-                      Align camera preview to top
-                    </label>
+                    </div>
+                    {cameraOn && (
+                      <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={autoCapture}
+                            onChange={(e) => setAutoCapture(e.target.checked)}
+                          />
+                          Auto-capture using SquareFiducials
+                        </label>
+                        <span className="text-xs text-muted-foreground">
+                          Status:{" "}
+                          {edgeStatus === "idle"
+                            ? "idle"
+                            : edgeStatus === "searching"
+                              ? "searching for fiducials"
+                              : edgeStatus === "detected"
+                                ? "fiducials detected"
+                                : "captured"}
+                        </span>
+                        <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={showLiveBubbleOverlay}
+                            onChange={(e) => setShowLiveBubbleOverlay(e.target.checked)}
+                          />
+                          Live encircle detection overlay
+                        </label>
+                        <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={cameraPreviewTopAlign}
+                            onChange={(e) => setCameraPreviewTopAlign(e.target.checked)}
+                          />
+                          Align camera preview to top
+                        </label>
+                      </div>
+                    )}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Keep the full ballot in frame. Auto-capture triggers once per detected
+                      ballot and only queues QR-valid images.
+                    </p>
                   </div>
-                )}
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Keep the full ballot in frame. Auto-capture triggers once per detected
-                  ballot and only queues QR-valid images.
-                </p>
-              </div>
 
-              {batchFiles.length > 0 && (
+                  {batchFiles.length > 0 && (
                     <div className="rounded-md border bg-white px-3 py-2 flex items-center justify-between">
                       <span className="text-sm text-gray-800 truncate">{batchFiles[0].name}</span>
-                  <button
-                    type="button"
+                      <button
+                        type="button"
                         className="shrink-0 text-xs text-red-600 underline ml-2"
-                    onClick={() => setBatchFiles([])}
-                  >
-                    Remove
-                  </button>
-                </div>
-              )}
+                        onClick={() => setBatchFiles([])}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
 
                   <div className="flex flex-wrap gap-2">
-                <Button
+                    <Button
                       className="bg-[#7A0019] text-white hover:bg-[#5c0013] cursor-pointer"
-                  disabled={
-                    !electionId ||
-                    batchFiles.length === 0 ||
-                    isScanning ||
-                    !omGeometryTemplate
-                  }
-                  onClick={() => void runScanBatch()}
-                >
+                      disabled={
+                        !electionId ||
+                        batchFiles.length === 0 ||
+                        isScanning ||
+                        !omGeometryTemplate
+                      }
+                      onClick={() => void runScanBatch()}
+                    >
                       {isScanning ? "Scanning…" : "Scan Ballot"}
                     </Button>
-                    {/* Preview Overlay + OpenCV debug image — disabled for now (see previewDebugOverlay + debug overlay state).
-                    {batchFiles.length > 0 && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={debugOverlayBusy || !omGeometryTemplate}
-                        onClick={() => void previewDebugOverlay()}
-                      >
-                        {debugOverlayBusy ? "Rendering…" : "Preview Overlay"}
-                </Button>
-              )}
-                    */}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={
+                        debugOverlayBusy ||
+                        !omGeometryTemplate ||
+                        !electionId ||
+                        batchFiles.length === 0
+                      }
+                      onClick={() => void previewDebugOverlay()}
+                    >
+                      {debugOverlayBusy ? "Rendering…" : "Preview Overlay"}
+                    </Button>
 
                   </div>
 
-                  {/* OpenCV contour/rectangle preview panel — disabled for now.
-              {debugOverlayImage && (
+                  {debugOverlayImage && (
                     <div className="rounded-md border bg-white p-3">
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-gray-900">
-                      OpenCV contour/rectangle preview
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {debugOverlayMeta?.fileName ?? "file"} · detected contests{" "}
-                      {debugOverlayMeta?.contestsDetected ?? "?"}/
-                      {debugOverlayMeta?.contestsInTemplate ?? "?"}
-                    </p>
-                  </div>
-                  <img
-                    src={debugOverlayImage}
-                    alt="OpenCV debug overlay"
-                    className="mx-auto max-h-[520px] w-full rounded border object-contain"
-                  />
-                </div>
-              )}
-                  */}
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-gray-900">
+                          OpenCV contour/rectangle preview
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {debugOverlayMeta?.fileName ?? "file"} · detected contests{" "}
+                          {debugOverlayMeta?.contestsDetected ?? "?"}/
+                          {debugOverlayMeta?.contestsInTemplate ?? "?"}
+                        </p>
+                      </div>
+                      <img
+                        src={debugOverlayImage}
+                        alt="OpenCV debug overlay"
+                        className="mx-auto max-h-[520px] w-full rounded border object-contain"
+                      />
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -2321,102 +2168,24 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
               </Card>
               */}
 
-            </div>
+              </div>
           )}
         </main>
       </div>
 
-      {voterReviewPopupBlocked && latestScanResult ? (
-        <div
-          role="alert"
-          className="fixed inset-x-0 top-0 z-[60] border-b border-red-300 bg-red-50 px-4 py-3 text-center text-sm font-medium text-red-900 shadow-md"
-        >
-          Pop-up was blocked. Please allow pop-ups for this site and try again.
-        </div>
-      ) : null}
-
-      {latestScanResult ? (
-        <div className="fixed inset-x-0 bottom-0 z-50 flex max-h-[85vh] flex-col overflow-hidden border-t border-gray-200 bg-white shadow-[0_-8px_30px_rgba(0,0,0,0.12)]">
-          <div className="shrink-0 border-b bg-gray-50 px-4 py-3 sm:px-6">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <h2 className="text-base font-semibold text-gray-900">
-                  Review scanned votes (admin)
-                </h2>
-                <p className="mt-0.5 text-sm text-gray-500">{electionName || electionId}</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {latestScanResult.ballotId ? (
-                  <Badge variant="outline" className="font-mono text-xs">
-                    {latestScanResult.ballotId}
-                  </Badge>
-                ) : null}
-                <Badge
-                  className={
-                    latestScanResult.ballotStatus === "INVALID"
-                      ? "bg-red-100 text-red-800 border-red-200"
-                      : "bg-emerald-100 text-emerald-800 border-emerald-200"
-                  }
-                >
-                  {latestScanResult.ballotStatus === "INVALID" ? "INVALID" : "VALID"}
-                </Badge>
-              </div>
-            </div>
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-6">
-            <div className="space-y-3 pb-2">
-              {adminReviewContests.length === 0 ? (
-                <p className="py-6 text-center text-sm text-gray-500">
-                  No contests found. The ballot may not have been recognized.
-                </p>
-              ) : (
-                adminReviewContests.map((cd) => (
-                  <ContestResultRow
-                    key={cd.position.id}
-                    position={cd.position}
-                    detectedSelections={cd.detectedSelections}
-                    contestRead={cd.contestRead}
-                  />
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="shrink-0 border-t bg-gray-50 px-4 py-4 sm:px-6">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <Button variant="outline" onClick={dismissReviewSession} disabled={isSubmitting}>
-                Rescan / dismiss review
-              </Button>
-              <div className="flex flex-wrap gap-2 sm:justify-end">
-                <Button variant="outline" onClick={dismissReviewSession} disabled={isSubmitting}>
-                  Close
-                </Button>
-                <Button
-                  className="bg-[#7A0019] hover:bg-[#5c0013] text-white"
-                  disabled={isSubmitting || !latestScanResult.ballotId}
-                  onClick={() => handleConfirmVote(adminReviewFinalSelections)}
-                >
-                  {isSubmitting ? (
-                    <span className="flex items-center gap-2">
-                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                      Submitting…
-                    </span>
-                  ) : (
-                    "Confirm & Submit Vote"
-                  )}
-                </Button>
-              </div>
-            </div>
-            {!latestScanResult.ballotId ? (
-              <p className="mt-2 text-xs text-red-600">
-                No ballot token detected — QR code could not be read. Cannot submit without a valid
-                token.
-              </p>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      {/* Results review modal */}
+      {latestScanResult && (
+        <ScanResultsModal
+          open={showResultsModal}
+          onClose={() => setShowResultsModal(false)}
+          scanResult={latestScanResult}
+          positions={positions}
+          electionName={electionName || electionId}
+          submitting={isSubmitting}
+          onConfirm={handleConfirmVote}
+          onRescan={handleRescanFromModal}
+        />
+      )}
     </div>
   );
 }

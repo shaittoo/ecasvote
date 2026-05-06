@@ -14,12 +14,6 @@ const SESSION_MAX_AGE = 28800; // 8 hours in seconds
  */
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-
-  /** Public voter-facing review popup — never redirect to login. */
-  if (pathname === "/voter-review" || pathname.startsWith("/voter-review/")) {
-    return NextResponse.next();
-  }
-
   const role = request.cookies.get("ecasvote_role")?.value;
 
   if (pathname.startsWith("/admin")) {
@@ -47,10 +41,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    "/admin/:path*",
-    "/validator/:path*",
-    "/voter-review",
-    "/voter-review/:path*",
-  ],
+  matcher: ["/admin/:path*", "/validator/:path*"],
 };

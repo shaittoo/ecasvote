@@ -2731,9 +2731,6 @@ app.post('/elections/:id/publish-results', async (req, res) => {
   try {
     const election = await prisma.election.findUnique({ where: { id } });
     if (!election) return res.status(404).json({ error: 'Election not found' });
-    if (election.status !== 'CLOSED') {
-      return res.status(400).json({ error: 'Election must be CLOSED before publishing results' });
-    }
     const resultsPatch: any = { resultsPublished: publish };
     await prisma.election.update({
       where: { id },
