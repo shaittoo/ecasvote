@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Chart as ChartJS,
@@ -107,7 +107,7 @@ function CountdownTimer({ endTime }: { endTime?: string }) {
   );
 }
 
-export default function ResultsPage() {
+function ResultsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -483,6 +483,14 @@ export default function ResultsPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+export default function ResultsPage() {
+  return (
+    <Suspense fallback={<div className="py-12 text-center text-gray-500">Loading…</div>}>
+      <ResultsPageContent />
+    </Suspense>
   );
 }
 

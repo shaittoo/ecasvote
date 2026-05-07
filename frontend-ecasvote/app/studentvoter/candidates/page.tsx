@@ -1,12 +1,13 @@
 "use client";
 
+import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { StudentVoterSidebar } from "@/components/Sidebar";
 import StudentVoterHeader from "../components/header";
 import { RoleCandidatesPage } from "@/components/candidates/RoleCandidatesPage";
 import { CandidatesPositionsPanel } from "@/components/candidates/CandidatesPositionsPanel";
 
-export default function StudentVoterCandidatesPage() {
+function StudentVoterCandidatesContent() {
   const searchParams = useSearchParams();
   const electionFromQuery = searchParams.get("election")?.trim() || undefined;
 
@@ -37,5 +38,13 @@ export default function StudentVoterCandidatesPage() {
     >
       <CandidatesPositionsPanel electionId={electionFromQuery} />
     </RoleCandidatesPage>
+  );
+}
+
+export default function StudentVoterCandidatesPage() {
+  return (
+    <Suspense fallback={<div className="py-12 text-center text-gray-500">Loading…</div>}>
+      <StudentVoterCandidatesContent />
+    </Suspense>
   );
 }
