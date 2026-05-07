@@ -157,7 +157,7 @@ const DEFAULT_SHEET: ScannerSheetLayout = {
   },
   qr: {
     role: "ballot-identity-only",
-    payloadShape: "{ e, b, v } (same three fields as long-key JSON)",
+    payloadShape: "{ e, b, v } (electionId, ballotToken, templateVersion); long keys still accepted",
     placementNote: "Bottom-right metadata zone inside the registration frame",
     quietZoneModules: 2,
   },
