@@ -349,7 +349,7 @@ export default function HelpCenterPage() {
             {/* HERO */}
             <div className="space-y-3 text-center">
               <h1 className="text-3xl font-bold tracking-tight">
-                <span className="text-[#FFFF00]">Secure.</span>{" "}
+                <span className="text-[#EACE09]">Secure.</span>{" "}
                 <span className="text-[#7A0019]">Transparent.</span>{" "}
                 <span className="text-emerald-700">Accountable Election.</span>
               </h1>

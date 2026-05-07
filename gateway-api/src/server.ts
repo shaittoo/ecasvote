@@ -1032,11 +1032,21 @@ app.get('/elections/:id', async (req, res) => {
     }
     const election = JSON.parse(responseText);
     const now = new Date();
-    const startTime = new Date(election.startTime);
-    const endTime = new Date(election.endTime);
+
+    /** Chain JSON may omit endTime after CloseElection or use values our parser rejects — never feed NaN into max() or Prisma. */
+    const instantMs = (raw: unknown): number | null => {
+      if (raw == null || raw === '') return null;
+      const t = new Date(String(raw)).getTime();
+      return Number.isFinite(t) ? t : null;
+    };
+
+    const chainStartMs = instantMs(election.startTime);
+    const chainEndMsForLogic = instantMs(election.endTime);
+    const startTime =
+      chainStartMs != null ? new Date(chainStartMs) : new Date(election.startTime);
 
     // Auto-open: if DRAFT and start time has been reached, open the election
-    if (election.status === 'DRAFT' && now >= startTime) {
+    if (election.status === 'DRAFT' && chainStartMs != null && now.getTime() >= chainStartMs) {
       try {
         await contract.submit('OpenElection', {
           arguments: [req.params.id],
@@ -1049,8 +1059,12 @@ app.get('/elections/:id', async (req, res) => {
       }
     }
 
-    // Auto-close: if OPEN and end time has passed, close the election
-    if (election.status === 'OPEN' && now > endTime) {
+    // Auto-close: if OPEN and chain end is known and has passed
+    if (
+      election.status === 'OPEN' &&
+      chainEndMsForLogic != null &&
+      now.getTime() > chainEndMsForLogic
+    ) {
       try {
         await contract.submit('CloseElection', {
           arguments: [req.params.id],
@@ -1060,6 +1074,25 @@ app.get('/elections/:id', async (req, res) => {
         console.log(`✅ Election ${req.params.id} automatically closed (end time passed)`);
       } catch (closeErr: any) {
         console.warn(`⚠️ Failed to auto-close election ${req.params.id}:`, closeErr.message);
+      }
+    }
+
+    // Display schedule: DB end time may be extended past chain (PATCH /end-time only updates Prisma).
+    const dbBeforeMerge = await prisma.election
+      .findUnique({ where: { id: req.params.id } })
+      .catch(() => null);
+    const dbEndMs = dbBeforeMerge?.endTime ? instantMs(dbBeforeMerge.endTime) : null;
+    const mergeEnds: number[] = [];
+    if (chainEndMsForLogic != null) mergeEnds.push(chainEndMsForLogic);
+    if (dbEndMs != null) mergeEnds.push(dbEndMs);
+    if (mergeEnds.length > 0) {
+      election.endTime = new Date(Math.max(...mergeEnds)).toISOString();
+    }
+    // Chain may omit endTime while Prisma still holds an extended schedule — fall back to DB row for upsert/response.
+    if (instantMs(election.endTime) == null && dbBeforeMerge?.endTime != null) {
+      const fromDb = instantMs(dbBeforeMerge.endTime);
+      if (fromDb != null) {
+        election.endTime = new Date(fromDb).toISOString();
       }
     }
     
@@ -2644,6 +2677,53 @@ app.post('/elections/:id/close', async (req, res) => {
   }
 });
 
+// Extend displayed end time only (Prisma). Does not invoke chaincode — election stays OPEN on-chain until CloseElection.
+app.patch('/elections/:id/end-time', async (req, res) => {
+  const { id } = req.params;
+  const endTimeRaw = req.body?.endTime;
+  if (!endTimeRaw || typeof endTimeRaw !== 'string') {
+    return res.status(400).json({ error: 'endTime is required (ISO string)' });
+  }
+
+  try {
+    const row = await prisma.election.findUnique({ where: { id } });
+    if (!row) {
+      return res.status(404).json({ error: 'Election not found' });
+    }
+    if (row.status !== 'OPEN') {
+      return res.status(400).json({ error: 'Election must be OPEN to extend end time' });
+    }
+
+    const newEnd = new Date(endTimeRaw);
+    if (Number.isNaN(newEnd.getTime())) {
+      return res.status(400).json({ error: 'Invalid endTime' });
+    }
+
+    const now = new Date();
+    const currentEnd = new Date(row.endTime);
+    if (newEnd.getTime() <= currentEnd.getTime()) {
+      return res.status(400).json({
+        error: 'End time must be after the current end time',
+      });
+    }
+    if (newEnd.getTime() <= now.getTime()) {
+      return res.status(400).json({
+        error: 'End time must be in the future',
+      });
+    }
+
+    await prisma.election.update({
+      where: { id },
+      data: { endTime: newEnd },
+    });
+
+    res.json({ ok: true, endTime: newEnd.toISOString() });
+  } catch (err: any) {
+    console.error('PATCH /elections/:id/end-time error:', err);
+    res.status(500).json({ error: err.message || 'Failed to update end time' });
+  }
+});
+
 // Publish / unpublish election results
 app.post('/elections/:id/publish-results', async (req, res) => {
   const { id } = req.params;
@@ -2651,9 +2731,6 @@ app.post('/elections/:id/publish-results', async (req, res) => {
   try {
     const election = await prisma.election.findUnique({ where: { id } });
     if (!election) return res.status(404).json({ error: 'Election not found' });
-    if (election.status !== 'CLOSED') {
-      return res.status(400).json({ error: 'Election must be CLOSED before publishing results' });
-    }
     const resultsPatch: any = { resultsPublished: publish };
     await prisma.election.update({
       where: { id },

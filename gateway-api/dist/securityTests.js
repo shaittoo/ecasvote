@@ -8,7 +8,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.runSecurityTests = runSecurityTests;
 const fabricClient_1 = require("./fabricClient");
 const prismaClient_1 = require("./prismaClient");
-const ELECTION_ID = 'test-4-elections';
+const ELECTION_ID = 'test-8-elections';
 const testResults = [];
 /**
  * Test 1: Verify blockchain immutability

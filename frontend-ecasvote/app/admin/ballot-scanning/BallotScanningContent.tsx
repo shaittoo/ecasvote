@@ -19,6 +19,7 @@ import {
   fetchElections,
   fetchOmrLayout,
   fetchPositions,
+  scannerDebugImage,
   scannerScanImage,
   scannerValidate,
 } from "@/lib/ecasvoteApi";
@@ -217,8 +218,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
   const [edgeStatus, setEdgeStatus] = useState<
     "idle" | "searching" | "detected" | "captured"
   >("idle");
-  /** OpenCV debug overlay (Preview Overlay) — UI commented out for now. */
-  /*
+  /** OpenCV debug overlay (Preview Overlay). */
   const [debugOverlayBusy, setDebugOverlayBusy] = useState(false);
   const [debugOverlayImage, setDebugOverlayImage] = useState<string | null>(null);
   const [debugOverlayMeta, setDebugOverlayMeta] = useState<{
@@ -226,7 +226,6 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     contestsInTemplate?: number;
     fileName: string;
   } | null>(null);
-  */
   /** Pretty-printed `omr.bubbleRead.warpDebug` from the latest OMR scan (DevTools path helper). */
   const [lastOmrWarpDebugJson, setLastOmrWarpDebugJson] = useState<string | null>(null);
   const [omGeometryTemplate, setOmGeometryTemplate] = useState<OmGeometryTemplate | null>(null);
@@ -409,7 +408,6 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
   };
   */
 
-  /*
   const previewDebugOverlay = useCallback(async () => {
     if (!batchFiles.length) {
       notify.error({ title: "Add a file first" });
@@ -476,7 +474,6 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     omGeometryTemplate,
     positions,
   ]);
-  */
 
   const stopCamera = useCallback(() => {
     if (autoRunRef.current !== null) {
@@ -2019,22 +2016,22 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                     >
                       {isScanning ? "Scanning…" : "Scan Ballot"}
                     </Button>
-                    {/* Preview Overlay + OpenCV debug image — disabled for now (see previewDebugOverlay + debug overlay state).
-                    {batchFiles.length > 0 && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={debugOverlayBusy || !omGeometryTemplate}
-                        onClick={() => void previewDebugOverlay()}
-                      >
-                        {debugOverlayBusy ? "Rendering…" : "Preview Overlay"}
-                      </Button>
-                    )}
-                    */}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={
+                        debugOverlayBusy ||
+                        !omGeometryTemplate ||
+                        !electionId ||
+                        batchFiles.length === 0
+                      }
+                      onClick={() => void previewDebugOverlay()}
+                    >
+                      {debugOverlayBusy ? "Rendering…" : "Preview Overlay"}
+                    </Button>
 
                   </div>
 
-                  {/* OpenCV contour/rectangle preview panel — disabled for now.
                   {debugOverlayImage && (
                     <div className="rounded-md border bg-white p-3">
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -2054,7 +2051,6 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                       />
                     </div>
                   )}
-                  */}
                 </CardContent>
               </Card>
 

@@ -7,7 +7,7 @@
 import { getContract } from './fabricClient';
 import { prisma } from './prismaClient';
 
-const ELECTION_ID = 'test-4-elections';
+const ELECTION_ID = 'test-8-elections';
 
 interface SecurityTestResult {
   testName: string;

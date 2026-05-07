@@ -26,6 +26,8 @@ type ElectionSettingsFormProps = {
   onEndTimeChange: (v: string) => void;
   academicYearOptions: string[];
   disabled?: boolean;
+  /** When true, labels unchanged but controls are plain text (non‑interactive). */
+  readOnly?: boolean;
   showRequiredIndicators?: boolean;
 };
 
@@ -44,11 +46,13 @@ export function ElectionSettingsForm({
   onEndTimeChange,
   academicYearOptions,
   disabled = false,
+  readOnly = false,
   showRequiredIndicators = false,
 }: ElectionSettingsFormProps) {
   const [nowPhtLabel, setNowPhtLabel] = useState("");
 
   useEffect(() => {
+    if (readOnly) return;
     const formatter = new Intl.DateTimeFormat("en-US", {
       timeZone: "Asia/Manila",
       month: "short",
@@ -62,7 +66,7 @@ export function ElectionSettingsForm({
     updateLabel();
     const timerId = window.setInterval(updateLabel, 30000);
     return () => window.clearInterval(timerId);
-  }, []);
+  }, [readOnly]);
 
   const requiredMark = showRequiredIndicators ? <span className="text-red-500">*</span> : null;
   const rangeLabel = !durationRange?.from
@@ -70,6 +74,60 @@ export function ElectionSettingsForm({
     : !durationRange.to
       ? format(durationRange.from, "MMM dd, yyyy")
       : `${format(durationRange.from, "MMM dd, yyyy")} - ${format(durationRange.to, "MMM dd, yyyy")}`;
+
+  const readOnlyValueClass =
+    "min-h-10 rounded-md border border-gray-200 bg-muted/40 px-3 py-2 text-sm text-gray-900";
+
+  if (readOnly) {
+    return (
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="md:col-span-2">
+          <label className="mb-1 block text-sm font-medium text-gray-700">
+            Election Title {requiredMark}
+          </label>
+          <div className={readOnlyValueClass}>{title || "—"}</div>
+        </div>
+
+        <div className="space-y-3 rounded-md border border-gray-200 p-4 md:col-span-2">
+          <label className="block text-base font-semibold tracking-tight text-gray-800">
+            Duration Settings
+          </label>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-12 md:items-end">
+            <div className="md:col-span-6">
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Election Duration (Philippine Time) {requiredMark}
+              </label>
+              <div className={readOnlyValueClass}>{rangeLabel}</div>
+            </div>
+            <div className="md:col-span-3">
+              <label className="mb-1 block text-sm font-medium text-gray-700">Start Time</label>
+              <div className={readOnlyValueClass}>{startTime}</div>
+            </div>
+            <div className="md:col-span-3">
+              <label className="mb-1 block text-sm font-medium text-gray-700">End Time</label>
+              <div className={readOnlyValueClass}>{endTime}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-3 rounded-md border border-gray-200 p-4 md:col-span-2">
+          <label className="block text-base font-semibold tracking-tight text-gray-800">
+            Description
+          </label>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Academic Year</label>
+              <div className={readOnlyValueClass}>{academicYear}</div>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Semester</label>
+              <div className={readOnlyValueClass}>{semester}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

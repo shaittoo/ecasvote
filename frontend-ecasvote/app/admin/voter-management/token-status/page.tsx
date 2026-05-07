@@ -12,7 +12,6 @@ import {
   fetchElections,
   fetchPaperTokens,
   fetchPaperCheckIn,
-  issuePaperBallot,
   generateAllPaperTokens,
   type Election,
   type PaperTokenRow,
@@ -48,7 +47,6 @@ export default function TokenStatusPage() {
   const [searchVoters, setSearchVoters] = useState("");
   const [electionsLoading, setElectionsLoading] = useState(true);
   const [bulkGenerating, setBulkGenerating] = useState(false);
-  const [issuingVoterId, setIssuingVoterId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
 
   const rowsPerPage = 15;
@@ -179,26 +177,6 @@ export default function TokenStatusPage() {
       });
     } finally {
       setBulkGenerating(false);
-    }
-  }
-
-  async function handleGenerateOne(voterId: number) {
-    if (!electionId) return;
-    setIssuingVoterId(voterId);
-    try {
-      const r = await issuePaperBallot(electionId, voterId);
-      notify.success({
-        title: r.reprint ? "Token (reprint)" : "Token generated",
-        description: `${r.studentNumber} → ${r.ballotToken}`,
-      });
-      await loadAll(electionId);
-    } catch (e: unknown) {
-      notify.error({
-        title: "Could not generate token",
-        description: e instanceof Error ? e.message : "Unknown error",
-      });
-    } finally {
-      setIssuingVoterId(null);
     }
   }
 
@@ -366,19 +344,18 @@ export default function TokenStatusPage() {
                               <th className="p-2 font-medium whitespace-nowrap">Issued at</th>
                               <th className="p-2 font-medium whitespace-nowrap">Cast</th>
                               <th className="p-2 font-medium whitespace-nowrap">Time used</th>
-                              <th className="p-2 font-medium w-36">Action</th>
                             </tr>
                           </thead>
                           <tbody>
                             {!electionId ? (
                               <tr>
-                                <td colSpan={8} className="p-8 text-center text-muted-foreground">
+                                <td colSpan={7} className="p-8 text-center text-muted-foreground">
                                   Select an election.
                                 </td>
                               </tr>
                             ) : filteredVoters.length === 0 ? (
                               <tr>
-                                <td colSpan={8} className="p-8 text-center text-muted-foreground">
+                                <td colSpan={7} className="p-8 text-center text-muted-foreground">
                                   {voters.length === 0
                                     ? "No eligible voters found."
                                     : "No matches for your search."}
@@ -417,38 +394,6 @@ export default function TokenStatusPage() {
                                     </td>
                                     <td className="p-2 font-mono text-xs whitespace-nowrap">
                                       {issued?.timeUsed ? formatDt(issued.timeUsed) : "—"}
-                                    </td>
-                                    <td className="p-2">
-                                      {v.paperStatus === "Not Issued" ? (
-                                        <Button
-                                          size="sm"
-                                          variant="secondary"
-                                          className="cursor-pointer inline-flex items-center gap-1"
-                                          disabled={issuingVoterId !== null || bulkGenerating}
-                                          onClick={() => handleGenerateOne(v.voterId)}
-                                        >
-                                          {issuingVoterId === v.voterId ? (
-                                            "Generating…"
-                                          ) : (
-                                            <>
-                                              <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                                              Generate token
-                                            </>
-                                          )}
-                                        </Button>
-                                      ) : v.paperStatus === "Issued" ? (
-                                        <Button
-                                          size="sm"
-                                          variant="outline"
-                                          className="cursor-pointer"
-                                          disabled={issuingVoterId !== null || bulkGenerating}
-                                          onClick={() => handleGenerateOne(v.voterId)}
-                                        >
-                                          {issuingVoterId === v.voterId ? "…" : "Reprint token"}
-                                        </Button>
-                                      ) : (
-                                        <span className="text-xs text-muted-foreground">—</span>
-                                      )}
                                     </td>
                                   </tr>
                                 );
