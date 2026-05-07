@@ -15,7 +15,7 @@ import {
   Legend,
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
-import { CheckCircle2, Download, Lock, Printer } from "lucide-react";
+import { CheckCircle2, Download, Printer } from "lucide-react";
 import {
   fetchElection,
   fetchElections,
@@ -29,6 +29,10 @@ import AdminHeader from "../../components/header";
 import { notify } from "@/lib/notify";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
+
+/** Same bar pixel width + chart height on every position card (Chart.js scales bar width by category count otherwise). */
+const SUMMARY_RESULT_CHART_HEIGHT_PX = 220;
+const SUMMARY_RESULT_BAR_THICKNESS_PX = 150;
 
 export default function ResultsSummaryPage() {
   const router = useRouter();
@@ -148,6 +152,7 @@ export default function ResultsSummaryPage() {
           {
             label: "Votes",
             data: votes,
+            barThickness: SUMMARY_RESULT_BAR_THICKNESS_PX,
             backgroundColor: [
               "#7A0019",
               "#0C8C3F",
@@ -431,21 +436,6 @@ export default function ResultsSummaryPage() {
                   <CardDescription>{error}</CardDescription>
                 </CardHeader>
               </Card>
-            ) : !isClosed ? (
-              <Card>
-                <CardContent className="py-16 text-center">
-                  <Lock className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-                  <h2 className="text-xl font-semibold text-gray-900 mb-2">
-                    Results are not yet available
-                  </h2>
-                  <p className="text-gray-500 mb-4">
-                    The election must be closed before results can be viewed.
-                  </p>
-                  <Badge variant="secondary" className="text-sm px-3 py-1">
-                    Current status: {electionStatus || "Unknown"}
-                  </Badge>
-                </CardContent>
-              </Card>
             ) : !hasResults ? (
               <Card>
                 <CardHeader>
@@ -567,12 +557,25 @@ export default function ResultsSummaryPage() {
                           </div>
                         </CardHeader>
                         <CardContent>
-                          <div className="mb-6">
+                          <div
+                            className="mb-6 w-full"
+                            style={{
+                              height: SUMMARY_RESULT_CHART_HEIGHT_PX,
+                              minHeight: SUMMARY_RESULT_CHART_HEIGHT_PX,
+                            }}
+                          >
                             <Bar
                               data={data}
                               options={{
                                 responsive: true,
                                 maintainAspectRatio: false,
+                                layout: { padding: { top: 4, bottom: 4, left: 4, right: 8 } },
+                                datasets: {
+                                  bar: {
+                                    categoryPercentage: 0.72,
+                                    barPercentage: 1,
+                                  },
+                                },
                                 plugins: {
                                   legend: { display: false },
                                   tooltip: {
@@ -595,7 +598,7 @@ export default function ResultsSummaryPage() {
                                   },
                                 },
                               }}
-                              height={300}
+                              height={SUMMARY_RESULT_CHART_HEIGHT_PX}
                             />
                           </div>
 

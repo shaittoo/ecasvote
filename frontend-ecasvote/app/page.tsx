@@ -117,15 +117,20 @@ export default function LandingPage() {
                   value={selectedId}
                   onChange={(e) => setSelectedId(e.target.value)}
                 >
-                  {sortedForSelect.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {(e.name || e.id) +
-                        (e.status === "OPEN" ? " (OPEN)" : e.status === "CLOSED" ? " (CLOSED)" : " (DRAFT)")}
-                    </option>
-                  ))}
+                  {sortedForSelect.map((e) => {
+                    const st = (e.status ?? "").toString().trim().toUpperCase();
+                    const suffix =
+                      st === "OPEN" ? " (OPEN)" : st === "CLOSED" ? " (CLOSED)" : " (DRAFT)";
+                    return (
+                      <option key={e.id} value={e.id}>
+                        {(e.name || e.id) + suffix}
+                      </option>
+                    );
+                  })}
                 </select>
                 <p className="mt-1.5 text-xs text-gray-500 text-center sm:text-left">
-                  Showing the most recently opened election by default when one is OPEN.
+                  The ongoing election (OPEN and within its voting dates) is selected by default.
+                  Use the menu to switch.
                 </p>
               </div>
             ) : null}
@@ -215,7 +220,7 @@ export default function LandingPage() {
                       Results
                     </h3>
                     <p className="text-sm text-gray-400">
-                      {status === "CLOSED" ? "Not yet published" : "Available after election closes"}
+                      Not yet published
                     </p>
                   </CardContent>
                 </Card>

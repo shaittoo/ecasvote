@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Chart as ChartJS,
@@ -107,7 +107,7 @@ function CountdownTimer({ endTime }: { endTime?: string }) {
   );
 }
 
-export default function ResultsPage() {
+function ResultsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -286,8 +286,8 @@ export default function ResultsPage() {
               <CardDescription>{error}</CardDescription>
             </CardHeader>
           </Card>
-        ) : election && (election.status !== 'CLOSED' || !election.resultsPublished) ? (
-          // Show "Results Not Available Yet" when election is not closed or results not published
+        ) : election && !election.resultsPublished ? (
+          // Show "Results Not Available Yet" when results are not published
           <div className="space-y-6">
             {election.status !== 'CLOSED' && (
               <Card>
@@ -318,7 +318,7 @@ export default function ResultsPage() {
               </h2>
               <p className="text-gray-600 text-lg">
                 {election.status !== 'CLOSED'
-                  ? `The ${election?.name || "CAS SC Elections 2026"} is still ongoing. Final tallies will be available after the election period.`
+                  ? `The ${election?.name || "CAS SC Elections 2026"} is still ongoing. Results will appear here once the election board publishes them.`
                   : "The election has ended. Results will be published by the election board shortly."}
               </p>
             </div>
@@ -483,6 +483,14 @@ export default function ResultsPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+export default function ResultsPage() {
+  return (
+    <Suspense fallback={<div className="py-12 text-center text-gray-500">Loading…</div>}>
+      <ResultsPageContent />
+    </Suspense>
   );
 }
 
