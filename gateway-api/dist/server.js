@@ -33,28 +33,6 @@ const uploadCandidateImage = (0, multer_1.default)({
             cb(new Error('Only image files are allowed'));
     },
 });
-const multer_1 = __importDefault(require("multer"));
-const path_1 = __importDefault(require("path"));
-const fs_1 = __importDefault(require("fs"));
-const UPLOADS_DIR = path_1.default.join(__dirname, '../uploads/candidates');
-fs_1.default.mkdirSync(UPLOADS_DIR, { recursive: true });
-const candidateImageStorage = multer_1.default.diskStorage({
-    destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
-    filename: (_req, file, cb) => {
-        const ext = path_1.default.extname(file.originalname).toLowerCase();
-        cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
-    },
-});
-const uploadCandidateImage = (0, multer_1.default)({
-    storage: candidateImageStorage,
-    limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
-    fileFilter: (_req, file, cb) => {
-        if (file.mimetype.startsWith('image/'))
-            cb(null, true);
-        else
-            cb(new Error('Only image files are allowed'));
-    },
-});
 /** Unique paper ballot token (QR identifies ballot only — not vote data). */
 function generateBallotToken() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
