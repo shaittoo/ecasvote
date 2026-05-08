@@ -926,8 +926,8 @@ app.post('/elections', async (req, res) => {
     ];
 
     // Wait for CreateElection transaction to be fully processed before adding positions
-    console.log('⏳ Waiting 2s for CreateElection to be processed on-chain...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    console.log('⏳ Waiting 5s for CreateElection to be processed on-chain...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
     let positionsSucceeded = 0;
     for (const pos of defaultPositions) {
@@ -950,7 +950,8 @@ app.post('/elections', async (req, res) => {
         } catch (ccErr: any) {
           console.warn(`⚠️ AddPosition ${pos.id} attempt ${attempt}/5 failed:`, ccErr.message);
           if (attempt < 5) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            const retryDelay = ccErr.message?.includes('does not exist') ? 2000 : 1000;
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
           }
         }
       }
