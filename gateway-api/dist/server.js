@@ -694,7 +694,7 @@ app.post('/init', async (req, res) => {
             // not found → continue
         }
         // Init ledger
-        await contract.submit('InitLedger', { endorsingOrganizations: fabricClient_1.ALL_ENDORSING_ORGS });
+        await contract.submit('InitLedger', { endorsingOrganizations: ['Org1MSP'] });
         // Sync to DB
         try {
             const electionBuffer = await contract.evaluateTransaction('GetElection', 'election-2025');
@@ -819,7 +819,7 @@ app.post('/elections', async (req, res) => {
                 String(endTime),
                 String(createdBy ?? 'admin'),
             ],
-            endorsingOrganizations: fabricClient_1.ALL_ENDORSING_ORGS,
+            endorsingOrganizations: ['Org1MSP'],
         });
         const createTxId = createCommit.getTransactionId();
         // DB sync
@@ -876,7 +876,7 @@ app.post('/elections', async (req, res) => {
                             String(pos.maxVotes),
                             String(pos.order),
                         ],
-                        endorsingOrganizations: fabricClient_1.ALL_ENDORSING_ORGS,
+                        endorsingOrganizations: ['Org1MSP'],
                     });
                     console.log(`✅ Position ${pos.id} added to chaincode (attempt ${attempt})`);
                     positionAdded = true;
@@ -979,7 +979,7 @@ app.get('/elections/:id', async (req, res) => {
             try {
                 await contract.submit('OpenElection', {
                     arguments: [req.params.id],
-                    endorsingOrganizations: fabricClient_1.ALL_ENDORSING_ORGS,
+                    endorsingOrganizations: ['Org1MSP'],
                 });
                 election.status = 'OPEN';
                 console.log(`✅ Election ${req.params.id} automatically opened (start time reached)`);
@@ -995,7 +995,7 @@ app.get('/elections/:id', async (req, res) => {
             try {
                 await contract.submit('CloseElection', {
                     arguments: [req.params.id],
-                    endorsingOrganizations: fabricClient_1.ALL_ENDORSING_ORGS,
+                    endorsingOrganizations: ['Org1MSP'],
                 });
                 election.status = 'CLOSED';
                 console.log(`✅ Election ${req.params.id} automatically closed (end time passed)`);
@@ -2171,7 +2171,7 @@ app.post('/elections/:id/candidates', async (req, res) => {
                                         program || '',
                                         yearLevel || '',
                                     ],
-                                    endorsingOrganizations: fabricClient_1.ALL_ENDORSING_ORGS,
+                                    endorsingOrganizations: ['Org1MSP'],
                                 });
                                 candTxId = regCandCommit.getTransactionId();
                                 console.log(`✅ Candidate ${candidateId} registered on blockchain (txId: ${candTxId}, attempt ${attempt})`);
@@ -2260,7 +2260,7 @@ app.put('/elections/:id', async (req, res) => {
             try {
                 await contract.submit('UpdateElection', {
                     arguments: [id, name, description || '', startTime, endTime],
-                    endorsingOrganizations: fabricClient_1.ALL_ENDORSING_ORGS,
+                    endorsingOrganizations: ['Org1MSP'],
                 });
                 success = true;
                 break;
@@ -2380,7 +2380,7 @@ app.post('/elections/:id/open', async (req, res) => {
         const contract = await (0, fabricClient_1.getContract)();
         const openCommit = await contract.submitAsync('OpenElection', {
             arguments: [id],
-            endorsingOrganizations: fabricClient_1.ALL_ENDORSING_ORGS,
+            endorsingOrganizations: ['Org1MSP'],
         });
         const openTxId = openCommit.getTransactionId();
         try {
@@ -2407,7 +2407,7 @@ app.post('/elections/:id/close', async (req, res) => {
         const contract = await (0, fabricClient_1.getContract)();
         const closeCommit = await contract.submitAsync('CloseElection', {
             arguments: [id],
-            endorsingOrganizations: fabricClient_1.ALL_ENDORSING_ORGS,
+            endorsingOrganizations: ['Org1MSP'],
         });
         const closeTxId = closeCommit.getTransactionId();
         try {
@@ -2697,7 +2697,7 @@ app.post('/elections/:id/voters', async (req, res) => {
         const contract = await (0, fabricClient_1.getContract)();
         await contract.submit('RegisterVoter', {
             arguments: [id, voterId],
-            endorsingOrganizations: fabricClient_1.ALL_ENDORSING_ORGS,
+            endorsingOrganizations: ['Org1MSP'],
         });
         const v = await prismaClient_1.prisma.voter.findUnique({
             where: { studentNumber: String(voterId).trim() },
@@ -3038,7 +3038,7 @@ app.get('/elections/:id/dashboard', async (req, res) => {
                     try {
                         await contract.submit('CloseElection', {
                             arguments: [id],
-                            endorsingOrganizations: fabricClient_1.ALL_ENDORSING_ORGS,
+                            endorsingOrganizations: ['Org1MSP'],
                         });
                         election.status = 'CLOSED';
                     }
