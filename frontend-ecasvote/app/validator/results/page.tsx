@@ -162,14 +162,10 @@ export default function ValidatorResultsPage() {
               <div className="text-center py-12 text-gray-500">
                 Loading results...
               </div>
-            ) : election && !election.resultsPublished ? (
+            ) : election && (election.status !== "CLOSED" || !election.resultsPublished) ? (
               <div className="py-12 text-center text-gray-500 space-y-4">
                 <p className="text-lg font-semibold">Results Not Available Yet</p>
-                <p className="text-sm">
-                  {election.status !== "CLOSED"
-                    ? "The election is still ongoing. Results will be available after the election is closed and results are published."
-                    : "The election has ended. Results will be published by the election board shortly."}
-                </p>
+                <p className="text-sm">Results have not been published yet.</p>
               </div>
             ) : resultsCharts.length > 0 ? (
               <div className="space-y-6">

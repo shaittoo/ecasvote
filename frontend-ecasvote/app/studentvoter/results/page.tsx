@@ -286,41 +286,13 @@ function ResultsPageContent() {
               <CardDescription>{error}</CardDescription>
             </CardHeader>
           </Card>
-        ) : election && !election.resultsPublished ? (
-          // Show "Results Not Available Yet" when results are not published
+        ) : election && (election.status !== "CLOSED" || !election.resultsPublished) ? (
           <div className="space-y-6">
-            {election.status !== 'CLOSED' && (
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-4">
-                        <span className="bg-[#0C8C3F] text-white px-3 py-1 rounded-full text-sm font-medium">
-                          Ongoing Elections
-                        </span>
-                      </div>
-                      <h3 className="text-2xl font-bold mb-4">
-                        {election?.name || "CAS Student Council Elections 2026"}
-                      </h3>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm text-[#7A0019] mb-2">Election Countdown</p>
-                      <CountdownTimer endTime={election?.endTime} />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
             <div className="text-center py-16">
               <h2 className="text-3xl font-bold text-[#7A0019] mb-4">
                 Results Not Available Yet!
               </h2>
-              <p className="text-gray-600 text-lg">
-                {election.status !== 'CLOSED'
-                  ? `The ${election?.name || "CAS SC Elections 2026"} is still ongoing. Results will appear here once the election board publishes them.`
-                  : "The election has ended. Results will be published by the election board shortly."}
-              </p>
+              <p className="text-gray-600 text-lg">Results have not been published yet.</p>
             </div>
           </div>
         ) : !results || Object.keys(results).length === 0 ? (

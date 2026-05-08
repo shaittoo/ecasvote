@@ -24,6 +24,7 @@ import {
 } from "chart.js";
 import { Line } from "react-chartjs-2";
 import {
+  fetchElection,
   fetchElections,
   fetchElectionTurnout,
   fetchHourlyParticipation,
@@ -73,6 +74,7 @@ export default function VoterTurnoutPage() {
   const [elections, setElections] = useState<{ id: string; name: string }[]>([]);
   const [electionId, setElectionId] = useState(DEFAULT_ELECTION_ID);
   const [electionName, setElectionName] = useState("");
+  const [electionStatus, setElectionStatus] = useState("");
   const [selectedDate, setSelectedDate] = useState(
     () => new Date().toISOString().split("T")[0]
   );
@@ -110,6 +112,8 @@ export default function VoterTurnoutPage() {
       }
       const current = list.find((e) => e.id === eid);
       setElectionName(current?.name ?? eid);
+      const election = await fetchElection(eid);
+      setElectionStatus(String(election?.status ?? "").toUpperCase());
 
       const stats = await fetchElectionTurnout(eid);
       setTurnoutStats(stats);
@@ -160,6 +164,7 @@ export default function VoterTurnoutPage() {
   const totalVoters = turnoutStats?.totalVoters ?? 0;
   const votedCount = turnoutStats?.votedCount ?? 0;
   const notVotedCount = turnoutStats?.notVotedCount ?? 0;
+  const isClosed = electionStatus === "CLOSED";
   const hasResults = totalVoters > 0 && votedCount > 0 && notVotedCount > 0;
 
   const groupsData = (turnoutStats?.byDepartment ?? []).map((dept, i) => ({
@@ -313,7 +318,7 @@ export default function VoterTurnoutPage() {
                       variant="outline"
                       className="h-10 gap-2 bg-[#7A0019] hover:bg-[#5c0013] text-white cursor-pointer"
                       onClick={exportPdf}
-                      disabled={!hasResults}
+                      disabled={!hasResults || !isClosed}
                     >
                       <Printer className="mr-2 h-4 w-4" />
                       Print
@@ -332,6 +337,19 @@ export default function VoterTurnoutPage() {
                 </div>
               ) : null}
 
+              {!isClosed ? (
+                <Card>
+                  <CardContent className="py-16 text-center">
+                    <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                      Voter turnout not available yet
+                    </h2>
+                    <p className="text-gray-500">
+                      Voter turnout will be available after the election closes.
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+              <>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 print:gap-4">
                 <Card className="border-border/80 shadow-sm print:break-inside-avoid print:shadow-none">
                   <CardHeader className="pb-2">
@@ -477,6 +495,8 @@ export default function VoterTurnoutPage() {
                   )}
                 </CardContent>
               </Card>
+              </>
+              )}
             </div>
           )}
         </main>

@@ -340,7 +340,6 @@ export default function TokenStatusPage() {
                               <th className="p-2 font-medium whitespace-nowrap">Student no.</th>
                               <th className="p-2 font-medium">Name</th>
                               <th className="p-2 font-medium whitespace-nowrap">Ballot status</th>
-                              <th className="p-2 font-medium">Ballot token</th>
                               <th className="p-2 font-medium whitespace-nowrap">Issued at</th>
                               <th className="p-2 font-medium whitespace-nowrap">Cast</th>
                               <th className="p-2 font-medium whitespace-nowrap">Time used</th>
@@ -349,13 +348,13 @@ export default function TokenStatusPage() {
                           <tbody>
                             {!electionId ? (
                               <tr>
-                                <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                                <td colSpan={6} className="p-8 text-center text-muted-foreground">
                                   Select an election.
                                 </td>
                               </tr>
                             ) : filteredVoters.length === 0 ? (
                               <tr>
-                                <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                                <td colSpan={6} className="p-8 text-center text-muted-foreground">
                                   {voters.length === 0
                                     ? "No eligible voters found."
                                     : "No matches for your search."}
@@ -371,9 +370,6 @@ export default function TokenStatusPage() {
                                     </td>
                                     <td className="p-2">{v.name}</td>
                                     <td className="p-2">{statusBadge(v.paperStatus)}</td>
-                                    <td className="p-2 font-mono text-xs">
-                                      {v.ballotToken ?? "—"}
-                                    </td>
                                     <td className="p-2 font-mono text-xs whitespace-nowrap">
                                       {issued ? formatDt(issued.timeCreated) : "—"}
                                     </td>

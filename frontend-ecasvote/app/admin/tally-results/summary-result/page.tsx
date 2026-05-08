@@ -265,6 +265,7 @@ export default function ResultsSummaryPage() {
   const isClosed = electionStatus === "CLOSED";
   const isPublished = !!election?.resultsPublished;
   const hasResults = results && Object.keys(results).length > 0;
+  const canShowResults = isClosed && isPublished;
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -400,7 +401,7 @@ export default function ResultsSummaryPage() {
                       variant="outline"
                       className="h-10 gap-2 bg-[#7A0019] hover:bg-[#5c0013] text-white cursor-pointer"
                       onClick={handleExport}
-                      disabled={!hasResults}
+                      disabled={!hasResults || !canShowResults}
                     >
                       <Download className="mr-2 h-4 w-4" />
                       Export CSV
@@ -410,7 +411,7 @@ export default function ResultsSummaryPage() {
                       variant="outline"
                       className="h-10 gap-2 bg-[#7A0019] hover:bg-[#5c0013] text-white cursor-pointer"
                       onClick={handlePrint}
-                      disabled={!hasResults}
+                      disabled={!hasResults || !canShowResults}
                     >
                       <Printer className="mr-2 h-4 w-4" />
                       Print
@@ -436,6 +437,17 @@ export default function ResultsSummaryPage() {
                   <CardDescription>{error}</CardDescription>
                 </CardHeader>
               </Card>
+            ) : !canShowResults ? (
+              <Card>
+                <CardContent className="py-16 text-center">
+                  <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                    Results Not Available Yet
+                  </h2>
+                  <p className="text-gray-500">
+                    Results will be available after the election closes and results are published.
+                  </p>
+                </CardContent>
+              </Card>
             ) : !hasResults ? (
               <Card>
                 <CardHeader>
@@ -447,29 +459,6 @@ export default function ResultsSummaryPage() {
               </Card>
             ) : (
               <>
-                {!isPublished && (
-                  <Card className="border-amber-200 bg-amber-50">
-                    <CardContent className="py-6">
-                      <div className="flex items-center justify-between gap-4">
-                        <div>
-                          <h3 className="font-semibold text-amber-900">Results are ready</h3>
-                          <p className="text-sm text-amber-700 mt-1">
-                            Click &quot;Publish Results&quot; to make them visible to students and
-                            validators.
-                          </p>
-                        </div>
-                        <Button
-                          onClick={handlePublish}
-                          disabled={publishing}
-                          className="bg-[#7A0019] hover:bg-[#5a0013] text-white shrink-0"
-                        >
-                          {publishing ? "Publishing..." : "Publish Results"}
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
                 {isPublished && (
                   <Card className="border-green-200 bg-green-50">
                     <CardContent className="py-4">
