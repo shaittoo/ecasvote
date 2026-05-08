@@ -14,7 +14,8 @@ const SESSION_MAX_AGE = 28800; // 8 hours in seconds
  */
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const role = request.cookies.get("ecasvote_role")?.value;
+  const rawRole = request.cookies.get("ecasvote_role")?.value;
+  const role = rawRole?.trim().toLowerCase();
 
   if (pathname.startsWith("/admin")) {
     if (role !== "admin") {

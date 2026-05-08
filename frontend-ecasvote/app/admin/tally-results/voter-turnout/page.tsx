@@ -344,7 +344,7 @@ export default function VoterTurnoutPage() {
                       Voter turnout not available yet
                     </h2>
                     <p className="text-gray-500">
-                      Voter turnout will be available after the election closes.
+                      Voter turnout data will be available after the election closes.
                     </p>
                   </CardContent>
                 </Card>

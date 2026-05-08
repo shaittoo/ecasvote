@@ -383,6 +383,20 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     [positionsForPreview]
   );
 
+  const scanBlockedReason = useMemo(() => {
+    if (!electionId) return "Select an election first.";
+    if (batchFiles.length === 0) return "Add or capture a ballot image first.";
+    if (isScanning) return "Scan is already in progress.";
+    return null;
+  }, [electionId, batchFiles.length, isScanning]);
+
+  const previewBlockedReason = useMemo(() => {
+    if (!electionId) return "Select an election first.";
+    if (batchFiles.length === 0) return "Add or capture a ballot image first.";
+    if (debugOverlayBusy) return "Preview overlay rendering in progress.";
+    return null;
+  }, [electionId, batchFiles.length, debugOverlayBusy]);
+
   /*
   const fileInputId = useId();
   const dropRef = useRef<HTMLDivElement>(null);
@@ -2006,12 +2020,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                   <div className="flex flex-wrap gap-2">
                     <Button
                       className="bg-[#7A0019] text-white hover:bg-[#5c0013] cursor-pointer"
-                      disabled={
-                        !electionId ||
-                        batchFiles.length === 0 ||
-                        isScanning ||
-                        !omGeometryTemplate
-                      }
+                      disabled={scanBlockedReason !== null}
                       onClick={() => void runScanBatch()}
                     >
                       {isScanning ? "Scanning…" : "Scan Ballot"}
@@ -2019,18 +2028,25 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={
-                        debugOverlayBusy ||
-                        !omGeometryTemplate ||
-                        !electionId ||
-                        batchFiles.length === 0
-                      }
+                      disabled={previewBlockedReason !== null}
                       onClick={() => void previewDebugOverlay()}
                     >
                       {debugOverlayBusy ? "Rendering…" : "Preview Overlay"}
                     </Button>
 
                   </div>
+                  {(scanBlockedReason || previewBlockedReason) && (
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      {scanBlockedReason && <p>Scan Ballot disabled: {scanBlockedReason}</p>}
+                      {previewBlockedReason && <p>Preview Overlay disabled: {previewBlockedReason}</p>}
+                    </div>
+                  )}
+                  {!omGeometryTemplate && electionId && batchFiles.length > 0 && (
+                    <p className="text-xs text-amber-700">
+                      OMR geometry is still preparing. Buttons are clickable, but scan/preview will show a
+                      validation message until geometry is ready.
+                    </p>
+                  )}
 
                   {debugOverlayImage && (
                     <div className="rounded-md border bg-white p-3">
