@@ -1,0 +1,39 @@
+services:
+  gateway:
+    build: ./gateway-api
+    network_mode: host
+    environment:
+      DATABASE_URL: file:./prisma/dev.db
+      CHANNEL_NAME: mychannel
+      CHAINCODE_NAME: ecasvote
+      MSP_ID: Org1MSP
+      CRYPTO_PATH: /crypto/organizations/peerOrganizations/org1.example.com
+      PEER_ENDPOINT: localhost:7051
+      PEER_HOST_ALIAS: peer0.org1.example.com
+      PORT: "4000"
+      OMR_WORKER_URL: http://127.0.0.1:8090
+    volumes:
+      - ./gateway-api/prisma/dev.db:/app/prisma/dev.db
+      - ../fabric-network-ecasvote/organizations:/crypto/organizations
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend-ecasvote
+      args:
+        - NEXT_PUBLIC_GATEWAY_URL=${NEXT_PUBLIC_GATEWAY_URL:-http://localhost:4000}
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - gateway
+
+  omr-worker:
+    build: ./omr-worker
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      OMR_FIDUCIAL_WARP: crop
+      OMR_BBOX_SPAN_Y_BIAS_PX: "4"
+      OMR_BBOX_EXTRA_EDGE_PAD_PX: "12"
+      OMR_AUTO_HOMOGRAPHY_SKEW_DEG: "5"
+      GATEWAY_URL: http://localhost:4000
