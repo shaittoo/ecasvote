@@ -42,5 +42,7 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
+  // Only admin and validator routes are protected.
+  // /studentvoter/review-monitor is intentionally public (no auth — dedicated display for voter review).
   matcher: ["/admin/:path*", "/validator/:path*"],
 };
