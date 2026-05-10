@@ -65,7 +65,7 @@ BUBBLE_SPEC = BubbleSpec()
 LAYOUT_SPEC = LayoutSpec()
 
 # Corner fiducials: keep in sync with frontend `PrintableBallotSheet` SCAN_GEOMETRY.cornerSize.
-FIDUCIAL_SQUARE_OUTER_PX = 20.0
+FIDUCIAL_SQUARE_OUTER_PX = 32.0
 FIDUCIAL_CENTROID_INSET_PX = FIDUCIAL_SQUARE_OUTER_PX / 2.0
 # Typical `#printable-ballot-scan-frame` DOM size when geometry is measured (fallback only).
 NOMINAL_SCAN_FRAME_W_PX = 756.0
