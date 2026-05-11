@@ -20,9 +20,14 @@ export const metadata: Metadata = {
   },
   description:
     "eCASVote — blockchain-backed electronic voting for UP Visayas CAS Student Council elections.",
+  // `app/favicon.ico` is the canonical tab icon (Next serves it at /favicon.ico).
+  // Keep metadata.icons so tools that only read <head> links still see eCASVote branding.
   icons: {
-    icon: [{ url: "/eCASVote_minimized.ico", type: "image/ico" }],
-    apple: [{ url: "/eCASVote_minimized.ico", type: "image/ico" }],
+    icon: [
+      { url: "/favicon.ico", sizes: "any", type: "image/x-icon" },
+      { url: "/eCASVote_minimized.ico", sizes: "any", type: "image/x-icon" },
+    ],
+    apple: "/eCASVote_minimizedlogo.png",
   },
 };
 
