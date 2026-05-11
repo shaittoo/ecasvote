@@ -1,4 +1,9 @@
 import type { NextConfig } from "next";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** This package lives under ecasvote/, which also has a package-lock.json; pin Turbopack root here so dev cache and resolution stay in this app. */
+const turbopackRoot = path.dirname(fileURLToPath(import.meta.url));
 
 const gatewayTarget =
   process.env.GATEWAY_PROXY_URL?.trim() || "http://127.0.0.1:4000";
@@ -57,6 +62,9 @@ function buildImageRemotePatterns(): RemotePattern[] {
 }
 
 const nextConfig: NextConfig = {
+  turbopack: {
+    root: turbopackRoot,
+  },
   images: {
     remotePatterns: buildImageRemotePatterns(),
   },
