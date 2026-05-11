@@ -1,5 +1,7 @@
 #!/bin/bash
-# eCASVote — Start all services
+# eCASVote — Start all services (local development)
+#
+# Production on Debian uses Docker Compose + Nginx — see DEPLOY.md and README.md.
 #
 # NOTE: Before running this script, ensure gateway-api/.env exists and
 # CRYPTO_PATH is set to the correct path for your Fabric network crypto
@@ -10,7 +12,15 @@
 set -e
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
-NETWORK_DIR="$REPO_DIR/fabric-network-ecasvote"
+# Prefer sibling clone (same layout as docker-compose and README); fall back to legacy nested path.
+if [ -d "$REPO_DIR/../fabric-network-ecasvote" ] && [ -f "$REPO_DIR/../fabric-network-ecasvote/network.sh" ]; then
+  NETWORK_DIR="$(cd "$REPO_DIR/../fabric-network-ecasvote" && pwd)"
+elif [ -d "$REPO_DIR/fabric-network-ecasvote" ] && [ -f "$REPO_DIR/fabric-network-ecasvote/network.sh" ]; then
+  NETWORK_DIR="$REPO_DIR/fabric-network-ecasvote"
+else
+  echo -e "\033[0;31m[eCASVote]\033[0m fabric-network-ecasvote not found. Clone https://github.com/shaittoo/fabric-network-ecasvote next to this repo (../fabric-network-ecasvote) or under ${REPO_DIR}/fabric-network-ecasvote"
+  exit 1
+fi
 GATEWAY_DIR="$REPO_DIR/gateway-api"
 FRONTEND_DIR="$REPO_DIR/frontend-ecasvote"
 OMR_DIR="$REPO_DIR/omr-worker"
@@ -30,7 +40,7 @@ error() { echo -e "${RED}[eCASVote]${NC} $1"; }
 # ------------------------------------------------------------------
 info "Checking Docker..."
 if ! docker info > /dev/null 2>&1; then
-  error "Docker is not running. Please start Docker Desktop and try again."
+  error "Docker is not available (daemon not running or no permission). On Linux start the service (e.g. sudo systemctl start docker) and ensure your user is in the docker group."
   exit 1
 fi
 info "Docker is running."
@@ -38,14 +48,17 @@ info "Docker is running."
 # ------------------------------------------------------------------
 # 2. Fabric Network
 # ------------------------------------------------------------------
+FABRIC_JUST_STARTED=false
 if docker ps --format '{{.Names}}' | grep -q 'peer0.org1'; then
   info "Fabric network is already running."
 else
   info "Starting Fabric network..."
   cd "$NETWORK_DIR"
-  ./network.sh up createChannel -c mychannel -ca
+  # Cryptogen material (no -ca); matches README Quick Start and typical Linux setups.
+  ./network.sh up createChannel -c mychannel
   cd "$REPO_DIR"
   info "Fabric network started."
+  FABRIC_JUST_STARTED=true
 fi
 
 # ------------------------------------------------------------------
@@ -72,6 +85,17 @@ else
     -p 11051:11051 \
     hyperledger/fabric-peer:2.5 2>/dev/null || warn "Org3 peer container may already exist. Run: docker start peer0.org3.example.com"
   info "Org3 peer started."
+fi
+
+# ------------------------------------------------------------------
+# 3b. Chaincode as a service (CCaaS)
+# ------------------------------------------------------------------
+# After a fresh network bring-up, install/commit definition and start chaincode-ecasvote.
+if [ "$FABRIC_JUST_STARTED" = true ] && [ -x "$NETWORK_DIR/ccaas-deploy.sh" ]; then
+  info "Deploying chaincode (CCaaS)..."
+  (cd "$NETWORK_DIR" && ./ccaas-deploy.sh) || warn "ccaas-deploy.sh failed — run manually: cd \"$NETWORK_DIR\" && ./ccaas-deploy.sh"
+elif [ "$FABRIC_JUST_STARTED" = false ] && ! docker ps --format '{{.Names}}' | grep -q '^chaincode-ecasvote$'; then
+  warn "CCaaS container 'chaincode-ecasvote' is not running. Gateway needs chaincode: cd \"$NETWORK_DIR\" && ./ccaas-deploy.sh"
 fi
 
 # ------------------------------------------------------------------

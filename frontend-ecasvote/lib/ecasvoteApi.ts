@@ -1132,3 +1132,61 @@ export async function confirmPaperVote(params: {
   }
   return data;
 }
+
+/** POST /scanner/create-session — create a scan session for dual-monitor review */
+export async function createScanSession(params: {
+  electionId: string;
+  ballotToken: string;
+  templateVersion?: string;
+  selections: Record<string, string[]>;
+  ballotStatus?: "VALID" | "INVALID";
+  ballotInvalidReasons?: Array<Record<string, unknown>>;
+}): Promise<{ sessionId: string; status: string }> {
+  const selectionsFlat: Record<string, string> = {};
+  for (const [pid, picks] of Object.entries(params.selections)) {
+    selectionsFlat[pid] = picks.join(",");
+  }
+  const res = await fetch(`${getGatewayBase()}/scanner/create-session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      electionId: params.electionId,
+      ballotToken: params.ballotToken,
+      templateVersion: params.templateVersion ?? "ballot-template-v2",
+      selections: selectionsFlat,
+      ballotStatus: params.ballotStatus ?? "VALID",
+      ballotInvalidReasons: params.ballotInvalidReasons ?? [],
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "create-session failed");
+  return data;
+}
+
+/** GET /review-monitor/current — poll active scan session for voter review monitor */
+export async function fetchReviewMonitorCurrent(): Promise<any> {
+  const res = await fetch(`${getGatewayBase()}/review-monitor/current`);
+  return res.json();
+}
+
+/** POST /scan-sessions/:id/confirm — voter confirms vote from review monitor */
+export async function confirmScanSession(sessionId: string): Promise<any> {
+  const res = await fetch(`${getGatewayBase()}/scan-sessions/${sessionId}/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "confirm failed");
+  return data;
+}
+
+/** POST /scan-sessions/:id/rescan — request rescan from review monitor */
+export async function rescanScanSession(sessionId: string): Promise<{ status: string }> {
+  const res = await fetch(`${getGatewayBase()}/scan-sessions/${sessionId}/rescan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "rescan failed");
+  return data;
+}

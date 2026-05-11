@@ -2166,6 +2166,10 @@ def _score_bubbles_from_saved_layout(
         return {"selectionsByPosition": {}, "rawBubbleScores": {}, "confidence": 0.0,
                 "error": "layout_page_invalid", "bubbleOverlay": [], "contestsRead": []}
 
+    # Scale bubble coordinates from frontend render space to canonical OMR space
+    scale_x = float(CANONICAL_W) / pw
+    scale_y = float(CANONICAL_H) / ph
+
     selections: dict[str, list[str]] = {}
     raw_scores: dict[str, dict[str, float]] = {}
     contest_confs: list[float] = []
@@ -2174,8 +2178,6 @@ def _score_bubbles_from_saved_layout(
 
     flat_rois: dict[str, BubbleRoiScore] = {}
     contest_plan: list[tuple[str, int, list[tuple[str, BubbleRoiScore]]]] = []
-
-    _remap_fracs = _fiducial_warp_registration_mode() != "none"
 
     for contest in (layout_map.get("contests") or []):
         pid = str(contest.get("positionId") or "")
@@ -2188,29 +2190,16 @@ def _score_bubbles_from_saved_layout(
             oid = str(bubble.get("optionId") or "")
             if not oid:
                 continue
-            xf = float(bubble.get("x") or 0)
-            yf = float(bubble.get("y") or 0)
-            wf = float(bubble.get("w") or 0)
-            hf = float(bubble.get("h") or 0)
+            xf = float(bubble.get("x") or 0) * scale_x
+            yf = float(bubble.get("y") or 0) * scale_y
+            wf = float(bubble.get("w") or 0) * scale_x
+            hf = float(bubble.get("h") or 0) * scale_y
             if wf > 1e-9 or hf > 1e-9:
-                if abs(pw - 1.0) < 0.01:
-                    nx = xf + wf / 2.0
-                    ny = yf + hf / 2.0
-                else:
-                    nx = (xf + wf / 2.0) / pw
-                    ny = (yf + hf / 2.0) / ph
+                ex = int(round(max(0, min(w_img - 1, xf + wf / 2.0))))
+                ey = int(round(max(0, min(h_img - 1, yf + hf / 2.0))))
             else:
                 nx = max(0.0, min(1.0, xf))
                 ny = max(0.0, min(1.0, yf))
-            nx = max(0.0, min(1.0, nx))
-            ny = max(0.0, min(1.0, ny))
-            if _remap_fracs:
-                ex_f, ey_f = map_template_fractions_to_warped_pixels(
-                    nx, ny, w_img, h_img, layout_map
-                )
-                ex = int(round(max(0, min(w_img - 1, ex_f))))
-                ey = int(round(max(0, min(h_img - 1, ey_f))))
-            else:
                 ex = int(round(max(0, min(w_img - 1, nx * w_img))))
                 ey = int(round(max(0, min(h_img - 1, ny * h_img))))
             roi = score_bubble_fixed_roi(gray, ex, ey, mask=score_mask)

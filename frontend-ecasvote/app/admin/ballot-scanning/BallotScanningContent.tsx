@@ -40,7 +40,7 @@ import {
   type ScanExportBatch,
 } from "@/lib/ballot/scanExport";
 import type { OmGeometryTemplate } from "@/lib/ballot/omGeometryTemplate";
-import { confirmPaperVote } from "@/lib/ecasvoteApi";
+import { createScanSession, fetchReviewMonitorCurrent } from "@/lib/ecasvoteApi";
 import { ScanResultsModal } from "./components/ScanResultsModal";
 import type { ScanResult, ContestReadItem, BubbleOverlayItem } from "./components/ScanPageContent";
 
@@ -241,6 +241,8 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
   const [latestScanResult, setLatestScanResult] = useState<ScanResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [omrOffline, setOmrOffline] = useState(false);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [waitingForVoter, setWaitingForVoter] = useState(false);
 
   const handleLogout = () => router.push("/login");
 
@@ -382,6 +384,20 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     () => mapPositionsToPrintableBallot(positionsForPreview),
     [positionsForPreview]
   );
+
+  const scanBlockedReason = useMemo(() => {
+    if (!electionId) return "Select an election first.";
+    if (batchFiles.length === 0) return "Add or capture a ballot image first.";
+    if (isScanning) return "Scan is already in progress.";
+    return null;
+  }, [electionId, batchFiles.length, isScanning]);
+
+  const previewBlockedReason = useMemo(() => {
+    if (!electionId) return "Select an election first.";
+    if (batchFiles.length === 0) return "Add or capture a ballot image first.";
+    if (debugOverlayBusy) return "Preview overlay rendering in progress.";
+    return null;
+  }, [electionId, batchFiles.length, debugOverlayBusy]);
 
   /*
   const fileInputId = useId();
@@ -1568,7 +1584,17 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
           bubbleRead: { bubbleOverlay, contestsRead },
         };
         setLatestScanResult(result);
-        setShowResultsModal(true);
+        // Dual-monitor flow: skip the modal and submit directly to create a scan session
+        if (result.ballotId) {
+          const selections: Record<string, string[]> = {};
+          for (const [posId, val] of Object.entries(result.selectionsByPosition ?? {})) {
+            const v = Array.isArray(val) ? val.join(",") : String(val ?? "");
+            selections[posId] = v ? v.split(",").filter(Boolean) : [];
+          }
+          handleConfirmVote(selections, result);
+        } else {
+          setShowResultsModal(true);
+        }
       }
 
       const errC = ballots.length - validCount;
@@ -1627,55 +1653,73 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
     }
   };
 
-  const handleConfirmVote = async (finalSelections: Record<string, string[]>) => {
-    if (!latestScanResult?.ballotId) {
+  const handleConfirmVote = async (finalSelections: Record<string, string[]>, scanResult?: ScanResult) => {
+    const sr = scanResult ?? latestScanResult;
+    if (!sr?.ballotId) {
       notify.error({ title: "No ballot token detected. Cannot submit." });
       return;
     }
     setIsSubmitting(true);
     try {
-      const result = await confirmPaperVote({
+      // Create a scan session for dual-monitor voter review
+      const session = await createScanSession({
         electionId,
-        ballotToken: latestScanResult.ballotId,
+        ballotToken: sr.ballotId,
         selections: finalSelections,
-        ballotStatus: latestScanResult.ballotStatus,
-        ballotInvalidReasons: latestScanResult.ballotInvalidReasons as Array<Record<string, unknown>> | undefined,
+        ballotStatus: sr.ballotStatus,
+        ballotInvalidReasons: sr.ballotInvalidReasons as Array<Record<string, unknown>> | undefined,
       });
+      setActiveSessionId(session.sessionId);
       setShowResultsModal(false);
       setLatestScanResult(null);
-      if (result.invalidated) {
-        notify.warning({
-          title: "Ballot marked as INVALID",
-          description: "Token has been used. Votes are not counted due to overvote, missing votes, or improper markings.",
-        });
-      } else {
-        notify.success({ title: "Vote recorded successfully" });
-      }
+      setWaitingForVoter(true);
+      notify.success({ title: "Ballot scanned. Waiting for voter confirmation..." });
     } catch (err: unknown) {
-      const error = err as Error & { code?: string; error?: string };
       const raw = err instanceof Error ? err.message : "Submit failed";
-      const rawLower = raw.toLowerCase();
-      const looksElectionNotOpen =
-        error?.code === "ELECTION_CLOSED" ||
-        error?.error === "ELECTION_CLOSED" ||
-        rawLower.includes("not open for voting") ||
-        (rawLower.includes("election") && rawLower.includes("closed"));
-      if (looksElectionNotOpen) {
-        notify.error({
-          title: "This election is closed. Votes can no longer be submitted.",
-        });
-      } else {
-        const msg = friendlyValidateError(
-          raw.includes("TOKEN_USED") ? "TOKEN_USED"
-          : raw.includes("UNKNOWN_TOKEN") ? "UNKNOWN_TOKEN"
-          : raw.includes("TEMPLATE_MISMATCH") ? "TEMPLATE_MISMATCH"
-          : raw
-        );
-        console.error("Vote submission error:", raw);
-        notify.error({ title: msg });
-      }
+      console.error("Create session error:", raw);
+      notify.error({ title: raw });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Poll for voter confirmation/rescan when waiting
+  useEffect(() => {
+    if (!waitingForVoter || !activeSessionId) return;
+    const interval = setInterval(async () => {
+      try {
+        const data = await fetchReviewMonitorCurrent();
+        if (data.status === "WAITING") {
+          // Session was confirmed or rescanned
+          setWaitingForVoter(false);
+          setActiveSessionId(null);
+        } else if (data.status === "SUBMITTED") {
+          setWaitingForVoter(false);
+          setActiveSessionId(null);
+          notify.success({ title: "Vote submitted successfully" });
+        } else if (data.status === "RESCAN") {
+          setWaitingForVoter(false);
+          setActiveSessionId(null);
+          notify.warning({ title: "Voter requested rescan" });
+        }
+      } catch {
+        // ignore poll errors
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [waitingForVoter, activeSessionId]);
+
+  const handleForceRescan = async () => {
+    if (!activeSessionId) return;
+    try {
+      const { rescanScanSession } = await import("@/lib/ecasvoteApi");
+      await rescanScanSession(activeSessionId);
+      setWaitingForVoter(false);
+      setActiveSessionId(null);
+      notify.warning({ title: "Session cancelled. Ready to rescan." });
+    } catch (err: unknown) {
+      const raw = err instanceof Error ? err.message : "Rescan failed";
+      notify.error({ title: raw });
     }
   };
 
@@ -2006,12 +2050,7 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                   <div className="flex flex-wrap gap-2">
                     <Button
                       className="bg-[#7A0019] text-white hover:bg-[#5c0013] cursor-pointer"
-                      disabled={
-                        !electionId ||
-                        batchFiles.length === 0 ||
-                        isScanning ||
-                        !omGeometryTemplate
-                      }
+                      disabled={scanBlockedReason !== null}
                       onClick={() => void runScanBatch()}
                     >
                       {isScanning ? "Scanning…" : "Scan Ballot"}
@@ -2019,18 +2058,25 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={
-                        debugOverlayBusy ||
-                        !omGeometryTemplate ||
-                        !electionId ||
-                        batchFiles.length === 0
-                      }
+                      disabled={previewBlockedReason !== null}
                       onClick={() => void previewDebugOverlay()}
                     >
                       {debugOverlayBusy ? "Rendering…" : "Preview Overlay"}
                     </Button>
 
                   </div>
+                  {(scanBlockedReason || previewBlockedReason) && (
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      {scanBlockedReason && <p>Scan Ballot disabled: {scanBlockedReason}</p>}
+                      {previewBlockedReason && <p>Preview Overlay disabled: {previewBlockedReason}</p>}
+                    </div>
+                  )}
+                  {!omGeometryTemplate && electionId && batchFiles.length > 0 && (
+                    <p className="text-xs text-amber-700">
+                      OMR geometry is still preparing. Buttons are clickable, but scan/preview will show a
+                      validation message until geometry is ready.
+                    </p>
+                  )}
 
                   {debugOverlayImage && (
                     <div className="rounded-md border bg-white p-3">
@@ -2172,6 +2218,30 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
           )}
         </main>
       </div>
+
+      {/* Waiting for voter confirmation overlay */}
+      {waitingForVoter && activeSessionId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-white rounded-xl shadow-2xl p-10 max-w-md text-center space-y-6">
+            <div className="animate-pulse text-5xl">⏳</div>
+            <h2 className="text-2xl font-bold text-gray-800">
+              Waiting for Voter Confirmation
+            </h2>
+            <p className="text-gray-500 text-sm">
+              Session: <span className="font-mono text-xs">{activeSessionId}</span>
+            </p>
+            <p className="text-gray-600">
+              The voter is reviewing their ballot on the review monitor.
+            </p>
+            <button
+              onClick={handleForceRescan}
+              className="mt-4 px-6 py-3 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg transition-colors"
+            >
+              Force Rescan
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Results review modal */}
       {latestScanResult && (

@@ -14,7 +14,8 @@ const SESSION_MAX_AGE = 28800; // 8 hours in seconds
  */
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const role = request.cookies.get("ecasvote_role")?.value;
+  const rawRole = request.cookies.get("ecasvote_role")?.value;
+  const role = rawRole?.trim().toLowerCase();
 
   if (pathname.startsWith("/admin")) {
     if (role !== "admin") {
@@ -41,5 +42,7 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
+  // Only admin and validator routes are protected.
+  // /studentvoter/review-monitor is intentionally public (no auth — dedicated display for voter review).
   matcher: ["/admin/:path*", "/validator/:path*"],
 };
