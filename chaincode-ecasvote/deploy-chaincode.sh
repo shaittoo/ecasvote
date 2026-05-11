@@ -1,14 +1,31 @@
 #!/bin/bash
-# deploy-chaincode.sh - Quick script to rebuild and redeploy eCASVote chaincode
+# deploy-chaincode.sh — legacy in-docker chaincode path (not CCaaS).
+# Prefer fabric-network-ecasvote/ccaas-deploy.sh for production on kernel 6.12+.
 
-set -e
+set -euo pipefail
 
-CHAINCODE_DIR="/home/sdtal/go/src/github.com/shaittoo/ecasvote/chaincode-ecasvote"
-NETWORK_DIR="/home/sdtal/go/src/github.com/shaittoo/fabric-network-ecasvote"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# This script lives in .../ecasvote/chaincode-ecasvote/
+CHAINCODE_DIR="${CHAINCODE_DIR:-$SCRIPT_DIR}"
+# Default: fabric-network-ecasvote as sibling of ecasvote (override with FABRIC_NETWORK_HOME)
+_DEFAULT_NETWORK="$(cd "${SCRIPT_DIR}/../.." && pwd)/fabric-network-ecasvote"
+NETWORK_DIR="${FABRIC_NETWORK_HOME:-$_DEFAULT_NETWORK}"
+
 CHAINCODE_NAME="ecasvote"
 CHANNEL_NAME="mychannel"
 VERSION="1.0"
 SEQUENCE="1"
+
+if [ ! -d "$NETWORK_DIR" ]; then
+  echo "❌ Fabric network directory not found: $NETWORK_DIR"
+  echo "   Set FABRIC_NETWORK_HOME to your fabric-network-ecasvote clone."
+  exit 1
+fi
+
+if [ ! -d "$NETWORK_DIR/bin" ]; then
+  echo "❌ Missing Fabric binaries under $NETWORK_DIR/bin"
+  exit 1
+fi
 
 echo "🔨 Step 1: Building chaincode..."
 cd "$CHAINCODE_DIR"
@@ -19,9 +36,8 @@ echo ""
 echo "📦 Step 2: Packaging chaincode for Fabric..."
 cd "$NETWORK_DIR"
 
-# Add Fabric binaries to PATH
-export PATH="${PWD}/../bin:$PATH"
-export FABRIC_CFG_PATH="${PWD}/../config"
+export PATH="${NETWORK_DIR}/bin:${PATH}"
+export FABRIC_CFG_PATH="${NETWORK_DIR}/config"
 
 # Helper functions to switch org context
 setGlobalsForOrg1() {
@@ -204,14 +220,6 @@ else
     --cafile "${PWD}/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem"
 fi
 
-# Optional: readiness check (can be uncommented if you want logs)
-# peer lifecycle chaincode checkcommitreadiness \
-#   --channelID "$CHANNEL_NAME" \
-#   --name "$CHAINCODE_NAME" \
-#   --version "$VERSION" \
-#   --sequence "$SEQUENCE" \
-#   --output json
-
 echo ""
 echo "🚀 Step 7: Committing chaincode to channel (both peers)..."
 
@@ -237,11 +245,13 @@ echo "✅ Chaincode deployed successfully!"
 echo ""
 echo "🔄 Step 8: Initializing ledger with new positions and candidates..."
 sleep 2
-curl -X POST http://localhost:4000/init || echo "⚠️  Warning: Could not initialize ledger. Make sure gateway-api is running on port 4000."
+GATEWAY_URL="${GATEWAY_URL:-http://localhost:4000}"
+curl -sf -X POST "${GATEWAY_URL}/init" >/dev/null \
+  || echo "⚠️  Warning: Could not POST ${GATEWAY_URL}/init — ensure gateway-api is running."
 
 echo ""
 echo "✨ Deployment complete!"
 echo ""
 echo "📝 Next steps:"
-echo "   1. Run the database seed script: cd /home/shaina/dev/eCASVote/gateway-api && npm run seed"
-echo "   2. Verify the chaincode is working by checking the gateway-api logs"
+echo "   1. Seed DB if needed: cd gateway-api && npx prisma migrate deploy && npm run seed (if defined)"
+echo "   2. Prefer CCaaS on Debian 13: fabric-network-ecasvote/ccaas-deploy.sh"

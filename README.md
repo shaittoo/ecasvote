@@ -53,52 +53,89 @@ A hybrid electronic and paper ballot voting system built on Hyperledger Fabric, 
 | Frontend | Next.js 16, React 19, Tailwind CSS, Chart.js |
 | OMR Worker | Python FastAPI, OpenCV (paper ballot bubble detection) |
 | Authentication | bcrypt, cookie-based sessions |
-| Infrastructure | Docker, WSL2/Ubuntu |
+| Infrastructure | Docker (Compose v2), Debian 13, Nginx (TLS reverse proxy) |
 
-## Quick Deploy (Ubuntu/Debian)
+## Production deployment on Debian 13
 
-### Prerequisites
+Use this path for a **single school server** (e.g. clients reach **`https://192.168.1.6`**). Nginx TLS paths, routing, **smoke tests**, and **SQLite backup** are in **[DEPLOY.md](DEPLOY.md)**—keep it open while you run the steps below.
 
-```bash
-# Docker
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
+### 0. Directory layout (required)
 
-# Node.js 18
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt-get install -y nodejs
+Clone **two** repos as **siblings** (the gateway Compose file mounts **`../fabric-network-ecasvote/organizations`**):
 
-# Go 1.21
-sudo snap install go --classic
-
-# Python 3.10+ (for OMR worker)
-sudo apt-get install -y python3 python3-pip python3-venv
-
-# Hyperledger Fabric 2.5 binaries
-curl -sSLO https://raw.githubusercontent.com/hyperledger/fabric/main/scripts/install-fabric.sh
-chmod +x install-fabric.sh
-./install-fabric.sh --fabric-version 2.5.0 binary
+```text
+~/ecasvote-system/
+├── ecasvote/                    # this repository
+└── fabric-network-ecasvote/     # https://github.com/shaittoo/fabric-network-ecasvote
 ```
 
-### Setup
+### 1. Install packages on Debian
 
 ```bash
-git clone https://github.com/shaittoo/ecasvote.git
-cd ecasvote
-cp gateway-api/.env.example gateway-api/.env
-# Edit gateway-api/.env — set CRYPTO_PATH to your Fabric network crypto material
-./start.sh
+sudo apt-get update
+sudo apt-get install -y git nginx curl ca-certificates
+
+# Docker Engine + Compose v2 plugin
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"
+# Log out and back in for the docker group.
+docker compose version
 ```
 
-### Access
+### 2. Hyperledger Fabric and chaincode
 
-| URL | Credentials |
-|-----|-------------|
-| http://localhost:3000 | Landing page (public) |
-| http://localhost:3000/login | Admin: `admin@up.edu.ph` / `admin123` |
-| http://localhost:3000/login | Validator: `validator@up.edu.ph` / `validator123` |
+On the **same host**:
 
-See [SETUP.md](SETUP.md) for the full setup guide.
+1. In **`fabric-network-ecasvote`**, bring up the network, create the channel, and deploy chaincode. **CCaaS** is recommended on recent Linux kernels (e.g. 6.12); use that repo’s **`ccaas-deploy.sh`** and its README.
+2. Confirm **`fabric-network-ecasvote/organizations/`** exists before starting the gateway container.
+
+### 3. TLS for Nginx
+
+Install **`ecasvote.crt`** and **`ecasvote.key`** under **`/etc/nginx/ssl/`** as described in **[DEPLOY.md — TLS material](DEPLOY.md#tls-material)**. Adjust **`server_name`** in **`nginx/ecasvote.conf`** if your IP or DNS name is not **`192.168.1.6`**.
+
+### 4. Build and run eCASVote (Docker Compose)
+
+From **`ecasvote/`** (this repo root):
+
+```bash
+cd ~/ecasvote-system/ecasvote
+cp .env.example .env
+# For production behind Nginx, leave NEXT_PUBLIC_GATEWAY_URL empty in .env so the
+# browser uses same-origin /ecasvote-gateway (see DEPLOY.md).
+
+export NEXT_PUBLIC_IMAGE_REMOTE_HOSTS=192.168.1.6   # or your HTTPS hostname
+
+docker compose build
+docker compose up -d
+```
+
+This starts **gateway** (4000), **omr-worker** (8090), and **frontend** (3000) with **`network_mode: host`**.
+
+### 5. Enable the Nginx site
+
+```bash
+cd ~/ecasvote-system/ecasvote
+sudo cp nginx/ecasvote.conf /etc/nginx/sites-available/ecasvote.conf
+sudo ln -sf /etc/nginx/sites-available/ecasvote.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### 6. Verify and back up
+
+- Run **[DEPLOY.md — Smoke Tests](DEPLOY.md#smoke-tests)**.
+- Schedule **[DEPLOY.md — SQLite Backup](DEPLOY.md#sqlite-backup)** before upgrades or Fabric resets.
+
+### 7. After a reboot
+
+1. Fabric (peers, orderer, CCaaS chaincode container if used)  
+2. **`docker compose up -d`** in **`ecasvote/`**  
+3. **Nginx**
+
+---
+
+## Local development
+
+For laptops and **non-production** setups (Node, npm, optional local Fabric), follow **[SETUP.md](SETUP.md)** and **`./start.sh`**. Default URLs are **`http://localhost:3000`** (frontend) and **`http://localhost:4000`** (gateway); credentials and seeding are described in SETUP.md.
 
 ## Organizations
 
@@ -129,19 +166,18 @@ Private Data Collections (`pdcVoters`, `pdcBallots`) are accessible only to Org1
 
 ## Quick Start
 
-See [SETUP.md](SETUP.md) for detailed startup instructions.
+See [SETUP.md](SETUP.md) for detailed startup instructions. From this repo root you can also use **`./start.sh`** and **`./stop.sh`** to bring local services up or down (see SETUP.md for prerequisites). **Org3’s peer** often needs a manual `docker start` after the network is up—SETUP.md covers that.
 
 ```bash
-# 1. Start Fabric network
-cd fabric-network-ecasvote
-./network.sh up createChannel -c mychannel -ca
+# 1. Start Fabric network (cryptogen; no -ca). Sibling clone — see Project Structure.
+cd ../fabric-network-ecasvote
+./network.sh up createChannel -c mychannel
 
-# 2. Deploy chaincode
-cd chaincode-ecasvote
-./deploy-chaincode.sh
+# 2. Deploy chaincode via CCaaS (still in fabric-network-ecasvote; reads ../ecasvote/chaincode-ecasvote)
+./ccaas-deploy.sh
 
 # 3. Start gateway API
-cd gateway-api
+cd ../ecasvote/gateway-api
 cp .env.example .env
 npx prisma db push
 npm run dev
@@ -150,18 +186,16 @@ npm run dev
 curl -X POST http://localhost:4000/seed-users
 
 # 5. Start frontend
-cd frontend-ecasvote
+cd ../frontend-ecasvote
 npm run dev
 ```
 
 ## Project Structure
 
+The Fabric peer network is **[fabric-network-ecasvote](https://github.com/shaittoo/fabric-network-ecasvote)** (separate clone, **sibling** of this repo for production Compose; see **Production deployment on Debian 13** above).
+
 ```
 ecasvote/
-├── fabric-network-ecasvote/   # Fabric network config, docker-compose, crypto
-│   ├── organizations/         # Crypto material for all orgs
-│   ├── network.sh             # Network lifecycle (up/down/createChannel)
-│   └── docker/                # Docker compose files
 ├── chaincode-ecasvote/        # Hyperledger Fabric chaincode (TypeScript)
 │   ├── src/ecasVote.ts        # Smart contract with all chaincode functions
 │   ├── collections_config.json # PDC definitions (pdcVoters, pdcBallots)
@@ -177,9 +211,11 @@ ecasvote/
 │   ├── app/studentvoter/      # Public candidate and results pages
 │   └── lib/ecasvoteApi.ts     # API client functions
 ├── omr-worker/                # Python FastAPI OMR service (OpenCV)
+├── nginx/                     # Nginx site template (production)
 ├── start.sh                   # Start all services
 ├── stop.sh                    # Stop all services
-├── SETUP.md                   # Startup instructions
+├── SETUP.md                   # Local/dev startup instructions
+├── DEPLOY.md                  # Production: TLS, Nginx, smoke tests, backups
 ├── CONNECT.md                 # Component connection guide
 ├── TROUBLESHOOTING.md         # Known issues and fixes
 ├── SECURITY_ANALYSIS.md       # Security design documentation
@@ -203,6 +239,8 @@ The system demonstrates how permissioned blockchain technology (Hyperledger Fabr
 ## Authors
 
 - Shaina Talisay
+- Jullyanne
+- Elisha Andrea
 - University of the Philippines Visayas
 - College of Arts and Sciences
 

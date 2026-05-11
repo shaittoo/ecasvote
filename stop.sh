@@ -1,10 +1,13 @@
 #!/bin/bash
-# eCASVote — Stop all services
+# eCASVote — Stop local dev processes and Fabric-related containers
+#
+# Does not run network.sh down (volumes / crypto are preserved).
+# Production on Debian: use docker compose down in this repo and your Fabric/CCaaS
+# lifecycle — see DEPLOY.md.
 #
 # Usage: ./stop.sh (from the repo root)
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
-NETWORK_DIR="$REPO_DIR/fabric-network-ecasvote"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -54,6 +57,15 @@ else
   else
     info "OMR worker is not running."
   fi
+fi
+
+# ------------------------------------------------------------------
+# 3b. Stop CCaaS chaincode container (fabric-network-ecasvote compose)
+# ------------------------------------------------------------------
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^chaincode-ecasvote$'; then
+  info "Stopping chaincode-ecasvote (CCaaS)..."
+  docker stop chaincode-ecasvote 2>/dev/null
+  info "CCaaS chaincode container stopped."
 fi
 
 # ------------------------------------------------------------------

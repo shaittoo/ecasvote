@@ -13,6 +13,7 @@ services:
       PEER_HOST_ALIAS: peer0.org1.example.com
       PORT: "4000"
       OMR_WORKER_URL: http://127.0.0.1:8090
+      ELECTION_POSITIONS_CACHE_TTL_MS: "120000"
     volumes:
       - ./gateway-api/prisma/dev.db:/app/prisma/dev.db
       - ../fabric-network-ecasvote/organizations:/crypto/organizations
@@ -22,7 +23,10 @@ services:
     build:
       context: ./frontend-ecasvote
       args:
-        - NEXT_PUBLIC_GATEWAY_URL=${NEXT_PUBLIC_GATEWAY_URL:-http://localhost:4000}
+        # Empty → browser uses same-origin /ecasvote-gateway (see nginx/ecasvote.conf + next.config rewrites).
+        - NEXT_PUBLIC_GATEWAY_URL=${NEXT_PUBLIC_GATEWAY_URL:-}
+        # Comma-separated hostnames for next/image (optional "|http"|"|https"). See frontend-ecasvote/next.config.ts
+        - NEXT_PUBLIC_IMAGE_REMOTE_HOSTS=${NEXT_PUBLIC_IMAGE_REMOTE_HOSTS:-}
     network_mode: host
     restart: unless-stopped
     depends_on:
@@ -40,8 +44,5 @@ services:
       GATEWAY_URL: http://localhost:4000
       OMR_BUBBLE_CLAHE: "1"
       OMR_BUBBLE_LOCALIZE: "1"
-      OMR_BUBBLE_LOCALIZE_HALF: "14"
+      OMR_BUBBLE_LOCALIZE_HALF: "12"
       OMR_BUBBLE_MASK_PAD_SCALE: "1.2"
-      OMR_BUBBLE_LOCALIZE_HALF: "16"
-      OMR_BBOX_EXTRA_EDGE_PAD_PX: "14"
-      OMR_AUTO_HOMOGRAPHY_SKEW_DEG: "6"
