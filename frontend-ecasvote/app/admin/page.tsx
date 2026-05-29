@@ -400,7 +400,20 @@ export default function AdminDashboardPage() {
                 </CardContent>
               </Card>
 
-              <VoterTurnoutTabs stats={stats} groups={groups} />
+              {electionStatus === "CLOSED" ? (
+                <VoterTurnoutTabs stats={stats} groups={groups} />
+              ) : (
+                <Card>
+                  <CardContent className="py-16 text-center">
+                    <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                      Voter turnout not available yet
+                    </h2>
+                    <p className="text-gray-500">
+                      Voter turnout data will be available after the election closes.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
             </div>
           </div>
         </main>

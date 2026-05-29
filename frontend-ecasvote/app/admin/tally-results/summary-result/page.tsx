@@ -396,6 +396,17 @@ export default function ResultsSummaryPage() {
 
                   {/* Action buttons — same position as voter roster's import buttons */}
                   <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end sm:ml-auto">
+                    {isClosed && !isPublished && (
+                      <Button
+                        type="button"
+                        className="h-10 gap-2 bg-[#0C8C3F] hover:bg-[#0a7a36] text-white cursor-pointer"
+                        onClick={handlePublish}
+                        disabled={!hasResults || publishing}
+                      >
+                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                        {publishing ? "Publishing..." : "Publish Results"}
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="outline"

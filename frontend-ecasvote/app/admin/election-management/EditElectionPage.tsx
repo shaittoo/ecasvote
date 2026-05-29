@@ -91,8 +91,8 @@ export function EditElectionPage() {
   const electionStatus =
     (electionDetail?.status ?? electionRow?.status)?.toUpperCase() ?? "DRAFT";
   const settingsReadOnly = electionStatus !== "DRAFT";
-  /** Candidate panel lock policy unchanged from prior behavior (draft-only edits). */
-  const locked = false;
+  /** Candidates can only be added/edited while DRAFT; lock once the election is OPEN or CLOSED. */
+  const locked = electionStatus !== "DRAFT";
 
   useEffect(() => {
     if (!electionId) {
@@ -388,11 +388,11 @@ export function EditElectionPage() {
           </CardHeader>
 
           <CardContent className="space-y-4">
-            {settingsReadOnly ? (
+            {/* {settingsReadOnly ? (
               <p className="rounded-md border border-gray-200 bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
                 Election settings cannot be edited while the election is OPEN or CLOSED.
               </p>
-            ) : null}
+            ) : null} */}
 
             {locked ? (
               <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
