@@ -20,12 +20,8 @@ export function ElectionSelector() {
   useEffect(() => {
     fetchElections()
       .then((list) => {
-        const active = list.filter(
-          (e) => e.status === "OPEN" || e.status === "CLOSED"
-        );
-        setElections(active.length > 0 ? active : list);
-        if (active.length === 1) setSelectedId(active[0].id);
-        else if (list.length === 1) setSelectedId(list[0].id);
+        setElections(list);
+        if (list.length === 1) setSelectedId(list[0].id);
       })
       .catch(() => setElections([]))
       .finally(() => setLoading(false));

@@ -230,6 +230,8 @@ app.use((req, res, next) => {
 });
 app.use(body_parser_1.default.json({ limit: '25mb' }));
 app.use('/uploads', express_1.default.static(path_1.default.join(__dirname, '../uploads')));
+const scanSessions = new Map();
+let activeScanSessionId = null;
 // Simple health-check
 app.get('/health', (_req, res) => {
     res.json({ ok: true });
@@ -861,8 +863,8 @@ app.post('/elections', async (req, res) => {
             { id: 'skimmers-governor', name: 'Skimmers Governor', maxVotes: 1, order: 6 },
         ];
         // Wait for CreateElection transaction to be fully processed before adding positions
-        console.log('⏳ Waiting 2s for CreateElection to be processed on-chain...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log('⏳ Waiting 5s for CreateElection to be processed on-chain...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
         let positionsSucceeded = 0;
         for (const pos of defaultPositions) {
             let positionAdded = false;
@@ -885,7 +887,8 @@ app.post('/elections', async (req, res) => {
                 catch (ccErr) {
                     console.warn(`⚠️ AddPosition ${pos.id} attempt ${attempt}/5 failed:`, ccErr.message);
                     if (attempt < 5) {
-                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        const retryDelay = ccErr.message?.includes('does not exist') ? 2000 : 1000;
+                        await new Promise(resolve => setTimeout(resolve, retryDelay));
                     }
                 }
             }
@@ -1071,132 +1074,164 @@ app.get('/elections/:id', async (req, res) => {
         res.status(400).json({ error: errorMessage || 'GetElection failed' });
     }
 });
-// 2) Get all positions with candidates for an election
-app.get('/elections/:id/positions', async (req, res) => {
-    const { id } = req.params;
-    try {
-        const contract = await (0, fabricClient_1.getContract)();
-        const electionBytes = await contract.evaluateTransaction('GetElection', id);
-        const electionText = Buffer.from(electionBytes).toString('utf8').trim();
-        const election = electionText ? JSON.parse(electionText) : null;
-        const chainPositions = Array.isArray(election?.positions) ? election.positions : [];
-        // Source positions from chaincode (authoritative), then join DB candidates by electionId+positionId.
-        if (chainPositions.length > 0) {
-            const positionsWithCandidates = await Promise.all(chainPositions.map(async (position, idx) => {
-                const positionId = String(position?.id ?? '').trim();
-                const candidateBytes = await contract.evaluateTransaction('GetCandidatesByPosition', id, positionId);
-                const candidateText = Buffer.from(candidateBytes).toString('utf8').trim();
-                const chainCandidates = candidateText ? JSON.parse(candidateText) : [];
-                // Preserve optional DB metadata (e.g. imageUrl) if present, without trusting DB IDs.
-                const scopedPid = scopedPositionId(id, positionId);
-                const dbCandidates = await prismaClient_1.prisma.candidate.findMany({
-                    where: { electionId: id, positionId: scopedPid },
-                    orderBy: { name: 'asc' },
-                });
-                const dbByName = new Map(dbCandidates.map((c) => [c.name.trim().toLowerCase(), c]));
-                const candidates = Array.isArray(chainCandidates) && chainCandidates.length > 0
-                    ? chainCandidates.map((c) => {
-                        const name = String(c?.name ?? '').trim();
-                        const db = dbByName.get(name.toLowerCase());
-                        return {
-                            id: String(c?.id ?? ''),
-                            electionId: id,
-                            positionId,
-                            name,
-                            party: c?.party ?? null,
-                            program: c?.program ?? null,
-                            yearLevel: c?.yearLevel ?? null,
-                            imageUrl: db?.imageUrl ?? null,
-                        };
-                    })
-                    : dbCandidates.map((c) => ({ ...c, positionId }));
-                return {
-                    id: positionId,
-                    electionId: id,
-                    name: String(position?.name ?? positionId),
-                    maxVotes: Number(position?.maxVotes ?? 1),
-                    order: Number(position?.order ?? idx + 1),
-                    candidates,
-                };
-            }));
-            return res.json(positionsWithCandidates);
-        }
-        // Fallback #1: derive positions from chaincode candidates when election.positions is empty
-        const allCandidateBytes = await contract.evaluateTransaction('GetCandidatesByElection', id);
-        const allCandidateText = Buffer.from(allCandidateBytes).toString('utf8').trim();
-        const chainCandidatesAll = allCandidateText ? JSON.parse(allCandidateText) : [];
-        if (Array.isArray(chainCandidatesAll) && chainCandidatesAll.length > 0) {
-            const byPosition = new Map();
-            for (const c of chainCandidatesAll) {
-                const pid = String(c?.positionId ?? '').trim();
-                if (!pid)
-                    continue;
-                if (!byPosition.has(pid))
-                    byPosition.set(pid, []);
-                byPosition.get(pid).push(c);
-            }
-            // Hydrate names/maxVotes/order from DB position metadata for this election only.
-            const dbPositionsForElection = await prismaClient_1.prisma.position.findMany({ where: { electionId: id } });
-            const dbPosByChainId = new Map(dbPositionsForElection.map((p) => [chainPositionIdFromDb(p.id, id), p]));
-            const dbCandidatesAll = await prismaClient_1.prisma.candidate.findMany({
-                where: { electionId: id },
+/** Same payload as GET /elections/:id/positions — reused when enriching scan sessions for the review monitor. */
+async function loadElectionPositionsWithCandidates(electionId) {
+    const contract = await (0, fabricClient_1.getContract)();
+    const electionBytes = await contract.evaluateTransaction('GetElection', electionId);
+    const electionText = Buffer.from(electionBytes).toString('utf8').trim();
+    const election = electionText ? JSON.parse(electionText) : null;
+    const chainPositions = Array.isArray(election?.positions) ? election.positions : [];
+    if (chainPositions.length > 0) {
+        const positionsWithCandidates = await Promise.all(chainPositions.map(async (position, idx) => {
+            const positionId = String(position?.id ?? '').trim();
+            const candidateBytes = await contract.evaluateTransaction('GetCandidatesByPosition', electionId, positionId);
+            const candidateText = Buffer.from(candidateBytes).toString('utf8').trim();
+            const chainCandidates = candidateText ? JSON.parse(candidateText) : [];
+            const scopedPid = scopedPositionId(electionId, positionId);
+            const dbCandidates = await prismaClient_1.prisma.candidate.findMany({
+                where: { electionId, positionId: scopedPid },
+                orderBy: { name: 'asc' },
             });
-            const dbCandidateByPosAndName = new Map(dbCandidatesAll.map((c) => [
-                `${chainPositionIdFromDb(c.positionId, id)}::${c.name.trim().toLowerCase()}`,
-                c,
-            ]));
-            const positionsWithCandidates = [...byPosition.entries()].map(([positionId, group], idx) => {
-                const dbPos = dbPosByChainId.get(positionId);
-                const dbCandidates = (group.length > 0
-                    ? [] // chain candidates already available for this position
-                    : []);
-                const candidates = group.map((c) => {
+            const dbByName = new Map(dbCandidates.map((c) => [c.name.trim().toLowerCase(), c]));
+            // Include DB-only rows (e.g. RegisterCandidate failed, or election not DRAFT) so admin UI
+            // still lists everyone saved in Prisma — not only whoever is already on the ledger.
+            const fromChain = Array.isArray(chainCandidates) && chainCandidates.length > 0
+                ? chainCandidates.map((c) => {
                     const name = String(c?.name ?? '').trim();
+                    const db = dbByName.get(name.toLowerCase());
                     return {
                         id: String(c?.id ?? ''),
-                        electionId: id,
+                        electionId,
                         positionId,
                         name,
                         party: c?.party ?? null,
                         program: c?.program ?? null,
                         yearLevel: c?.yearLevel ?? null,
-                        imageUrl: dbCandidateByPosAndName.get(`${positionId}::${name.toLowerCase()}`)?.imageUrl ?? null,
+                        imageUrl: db?.imageUrl ?? null,
                     };
-                });
-                return {
-                    id: positionId,
-                    electionId: id,
-                    name: String(dbPos?.name ?? positionId),
-                    maxVotes: Number(dbPos?.maxVotes ?? 1),
-                    order: Number(dbPos?.order ?? idx + 1),
-                    candidates: candidates.length > 0 ? candidates : dbCandidates,
-                };
-            });
-            return res.json(positionsWithCandidates.sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)));
-        }
-        // Fallback #2: legacy/local-only DB data
-        const dbPositions = await prismaClient_1.prisma.position.findMany({
-            where: { electionId: id },
-            orderBy: { order: 'asc' },
-        });
-        const positionsWithCandidates = await Promise.all(dbPositions.map(async (position) => {
-            const candidates = await prismaClient_1.prisma.candidate.findMany({
-                where: {
-                    electionId: id,
-                    positionId: position.id,
-                },
-                orderBy: { name: 'asc' },
-            });
-            const shortId = chainPositionIdFromDb(position.id, id);
+                })
+                : [];
+            const chainNames = new Set(fromChain.map((c) => c.name.trim().toLowerCase()));
+            const dbOnlyExtra = dbCandidates
+                .filter((c) => !chainNames.has(c.name.trim().toLowerCase()))
+                .map((c) => ({
+                id: c.id,
+                electionId,
+                positionId,
+                name: c.name,
+                party: c.party ?? null,
+                program: c.program ?? null,
+                yearLevel: c.yearLevel ?? null,
+                imageUrl: c.imageUrl ?? null,
+            }));
+            const candidates = fromChain.length > 0 || dbOnlyExtra.length > 0
+                ? [...fromChain, ...dbOnlyExtra]
+                : dbCandidates.map((c) => ({ ...c, positionId }));
             return {
-                id: shortId,
-                electionId: id,
-                name: position.name,
-                maxVotes: position.maxVotes,
-                order: position.order,
-                candidates: candidates.map((c) => ({ ...c, positionId: shortId })),
+                id: positionId,
+                electionId,
+                name: String(position?.name ?? positionId),
+                maxVotes: Number(position?.maxVotes ?? 1),
+                order: Number(position?.order ?? idx + 1),
+                candidates,
             };
         }));
+        return positionsWithCandidates;
+    }
+    const allCandidateBytes = await contract.evaluateTransaction('GetCandidatesByElection', electionId);
+    const allCandidateText = Buffer.from(allCandidateBytes).toString('utf8').trim();
+    const chainCandidatesAll = allCandidateText ? JSON.parse(allCandidateText) : [];
+    if (Array.isArray(chainCandidatesAll) && chainCandidatesAll.length > 0) {
+        const byPosition = new Map();
+        for (const c of chainCandidatesAll) {
+            const pid = String(c?.positionId ?? '').trim();
+            if (!pid)
+                continue;
+            if (!byPosition.has(pid))
+                byPosition.set(pid, []);
+            byPosition.get(pid).push(c);
+        }
+        const dbPositionsForElection = await prismaClient_1.prisma.position.findMany({ where: { electionId } });
+        const dbPosByChainId = new Map(dbPositionsForElection.map((p) => [chainPositionIdFromDb(p.id, electionId), p]));
+        const dbCandidatesAll = await prismaClient_1.prisma.candidate.findMany({
+            where: { electionId },
+        });
+        const dbCandidateByPosAndName = new Map(dbCandidatesAll.map((c) => [
+            `${chainPositionIdFromDb(c.positionId, electionId)}::${c.name.trim().toLowerCase()}`,
+            c,
+        ]));
+        const positionsWithCandidates = [...byPosition.entries()].map(([positionId, group], idx) => {
+            const dbPos = dbPosByChainId.get(positionId);
+            const fromChain = group.map((c) => {
+                const name = String(c?.name ?? '').trim();
+                return {
+                    id: String(c?.id ?? ''),
+                    electionId,
+                    positionId,
+                    name,
+                    party: c?.party ?? null,
+                    program: c?.program ?? null,
+                    yearLevel: c?.yearLevel ?? null,
+                    imageUrl: dbCandidateByPosAndName.get(`${positionId}::${name.toLowerCase()}`)?.imageUrl ?? null,
+                };
+            });
+            const chainNames = new Set(fromChain.map((c) => c.name.trim().toLowerCase()));
+            const dbForPosition = dbCandidatesAll.filter((c) => chainPositionIdFromDb(c.positionId, electionId) === positionId);
+            const dbOnlyExtra = dbForPosition
+                .filter((c) => !chainNames.has(c.name.trim().toLowerCase()))
+                .map((c) => ({
+                id: c.id,
+                electionId,
+                positionId,
+                name: c.name,
+                party: c.party ?? null,
+                program: c.program ?? null,
+                yearLevel: c.yearLevel ?? null,
+                imageUrl: c.imageUrl ?? null,
+            }));
+            const candidates = fromChain.length > 0 || dbOnlyExtra.length > 0
+                ? [...fromChain, ...dbOnlyExtra]
+                : [];
+            return {
+                id: positionId,
+                electionId,
+                name: String(dbPos?.name ?? positionId),
+                maxVotes: Number(dbPos?.maxVotes ?? 1),
+                order: Number(dbPos?.order ?? idx + 1),
+                candidates,
+            };
+        });
+        return positionsWithCandidates.sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+    }
+    const dbPositions = await prismaClient_1.prisma.position.findMany({
+        where: { electionId },
+        orderBy: { order: 'asc' },
+    });
+    const positionsWithCandidates = await Promise.all(dbPositions.map(async (position) => {
+        const candidates = await prismaClient_1.prisma.candidate.findMany({
+            where: {
+                electionId,
+                positionId: position.id,
+            },
+            orderBy: { name: 'asc' },
+        });
+        const shortId = chainPositionIdFromDb(position.id, electionId);
+        return {
+            id: shortId,
+            electionId,
+            name: position.name,
+            maxVotes: position.maxVotes,
+            order: position.order,
+            candidates: candidates.map((c) => ({ ...c, positionId: shortId })),
+        };
+    }));
+    return positionsWithCandidates;
+}
+// 2) Get all positions with candidates for an election
+app.get('/elections/:id/positions', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const positionsWithCandidates = await loadElectionPositionsWithCandidates(id);
         return res.json(positionsWithCandidates);
     }
     catch (err) {
@@ -1728,8 +1763,130 @@ app.post('/scanner/validate', async (req, res) => {
         res.status(500).json({ error: err.message || 'validate failed' });
     }
 });
+// ─── Dual-monitor scan session endpoints ─────────────────────────────────────
+/** Create a scan session (admin scans ballot, voter reviews on separate monitor). */
+app.post('/scanner/create-session', async (req, res) => {
+    try {
+        const electionId = String(req.body?.electionId ?? '');
+        const ballotToken = String(req.body?.ballotToken ?? '');
+        const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v2');
+        const selections = req.body?.selections ?? {};
+        const ballotStatus = String(req.body?.ballotStatus ?? 'VALID');
+        const ballotInvalidReasons = req.body?.ballotInvalidReasons ?? [];
+        if (!electionId || !ballotToken || typeof selections !== 'object') {
+            return res.status(400).json({ error: 'electionId, ballotToken, and selections are required' });
+        }
+        const sessionId = `sess-${Date.now()}-${crypto_1.default.randomBytes(4).toString('hex')}`;
+        let reviewDisplay;
+        try {
+            const rows = await loadElectionPositionsWithCandidates(electionId);
+            reviewDisplay = rows.map((p) => ({
+                id: String(p.id ?? ''),
+                name: String(p.name ?? p.id ?? ''),
+                maxVotes: Number(p.maxVotes ?? 1),
+                order: Number(p.order ?? 0),
+                candidates: (Array.isArray(p.candidates) ? p.candidates : []).map((c) => ({
+                    id: String(c.id ?? ''),
+                    name: String(c.name ?? '').trim() || String(c.id ?? ''),
+                    party: c.party ?? null,
+                })),
+            }));
+        }
+        catch (e) {
+            console.warn('create-session: reviewDisplay not loaded:', e?.message ?? e);
+        }
+        const session = {
+            id: sessionId,
+            electionId,
+            ballotToken,
+            templateVersion,
+            selections: selections,
+            ballotStatus,
+            ballotInvalidReasons,
+            status: 'SCANNED',
+            createdAt: new Date(),
+            reviewDisplay,
+        };
+        scanSessions.set(sessionId, session);
+        activeScanSessionId = sessionId;
+        res.json({ sessionId, status: 'SCANNED' });
+    }
+    catch (err) {
+        console.error('POST /scanner/create-session error:', err);
+        res.status(500).json({ error: err.message || 'create-session failed' });
+    }
+});
+/** Review monitor: get current active scan session for voter review display. */
+app.get('/review-monitor/current', (_req, res) => {
+    if (!activeScanSessionId) {
+        return res.json({ status: 'WAITING' });
+    }
+    const session = scanSessions.get(activeScanSessionId);
+    if (!session || session.status === 'SUBMITTED' || session.status === 'RESCAN') {
+        activeScanSessionId = null;
+        return res.json({ status: 'WAITING' });
+    }
+    res.json(session);
+});
+/** Voter confirms vote from review monitor — submits to blockchain. */
+app.post('/scan-sessions/:sessionId/confirm', async (req, res) => {
+    const { sessionId } = req.params;
+    const session = scanSessions.get(sessionId);
+    if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+    }
+    if (session.status === 'SUBMITTED') {
+        return res.status(400).json({ error: 'Session already submitted' });
+    }
+    try {
+        // Reuse the confirm-vote logic by forwarding internally
+        const confirmRes = await new Promise((resolve) => {
+            const mockReq = {
+                body: {
+                    electionId: session.electionId,
+                    ballotToken: session.ballotToken,
+                    templateVersion: session.templateVersion,
+                    selections: session.selections,
+                    ballotStatus: session.ballotStatus,
+                    ballotInvalidReasons: session.ballotInvalidReasons,
+                },
+            };
+            const mockRes = {
+                _status: 200,
+                _body: null,
+                status(code) { this._status = code; return this; },
+                json(data) { resolve({ status: this._status, body: data }); return this; },
+            };
+            // Call the confirm-vote handler directly
+            confirmVoteHandler(mockReq, mockRes);
+        });
+        if (confirmRes.status >= 400) {
+            return res.status(confirmRes.status).json(confirmRes.body);
+        }
+        session.status = 'SUBMITTED';
+        activeScanSessionId = null;
+        res.json(confirmRes.body);
+    }
+    catch (err) {
+        console.error('POST /scan-sessions/:sessionId/confirm error:', err);
+        res.status(500).json({ error: err.message || 'confirm failed' });
+    }
+});
+/** Voter or admin requests rescan from review monitor. */
+app.post('/scan-sessions/:sessionId/rescan', (req, res) => {
+    const { sessionId } = req.params;
+    const session = scanSessions.get(sessionId);
+    if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+    }
+    session.status = 'RESCAN';
+    if (activeScanSessionId === sessionId) {
+        activeScanSessionId = null;
+    }
+    res.json({ status: 'RESCAN' });
+});
 /** Scanner: confirm paper vote — public anonymous record + mark issuance used (no voterId on vote). */
-app.post('/scanner/confirm-vote', async (req, res) => {
+const confirmVoteHandler = async (req, res) => {
     const electionId = String(req.body?.electionId ?? '');
     const ballotToken = String(req.body?.ballotToken ?? '');
     const templateVersion = String(req.body?.templateVersion ?? 'ballot-template-v2');
@@ -1940,7 +2097,8 @@ app.post('/scanner/confirm-vote', async (req, res) => {
         console.error('POST /scanner/confirm-vote error:', err);
         res.status(500).json({ error: err.message || 'confirm-vote failed' });
     }
-});
+};
+app.post('/scanner/confirm-vote', confirmVoteHandler);
 // ─── OMR Layout store ────────────────────────────────────────────────────────
 /**
  * POST /api/omr-layout
@@ -2103,14 +2261,14 @@ app.post('/elections/:id/candidates', async (req, res) => {
         // Get positions from chaincode to avoid DB cross-election ID collisions.
         const contract = await (0, fabricClient_1.getContract)();
         const dbPositions = await prismaClient_1.prisma.position.findMany({ where: { electionId: id } });
-        const positionMap = new Map(dbPositions.map((p) => [p.name, { id: p.id, name: p.name }]));
+        const positionMap = new Map(dbPositions.map((p) => [p.name.trim(), { id: p.id, name: p.name }]));
         const createdCandidates = [];
         for (const candidateData of candidates) {
             const { positionName, name, party, yearLevel, program } = candidateData;
             if (!positionName || !name) {
                 continue; // Skip invalid candidates
             }
-            const position = positionMap.get(positionName);
+            const position = positionMap.get(String(positionName).trim());
             if (!position) {
                 continue;
             }

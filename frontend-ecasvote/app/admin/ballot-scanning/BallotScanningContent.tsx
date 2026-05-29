@@ -2055,14 +2055,14 @@ export function BallotScanningContent({ initialElectionId }: { initialElectionId
                     >
                       {isScanning ? "Scanning…" : "Scan Ballot"}
                     </Button>
-                    <Button
+                    {/* <Button
                       type="button"
                       variant="outline"
                       disabled={previewBlockedReason !== null}
                       onClick={() => void previewDebugOverlay()}
                     >
                       {debugOverlayBusy ? "Rendering…" : "Preview Overlay"}
-                    </Button>
+                    </Button> */}
 
                   </div>
                   {(scanBlockedReason || previewBlockedReason) && (

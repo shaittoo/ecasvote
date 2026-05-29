@@ -137,6 +137,16 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
       }));
       const response = await createCandidates(electionId, candidatesToSave);
 
+      if (!response.count) {
+        notify.warning({
+          title: "No candidates were saved",
+          description:
+            "Each row needs a position that already exists for this election, with the name matching exactly (check spelling and spacing).",
+        });
+        await loadPositionsForElection(electionId);
+        return;
+      }
+
       // Upload images for candidates that have one
       if (response.candidates && response.candidates.length > 0) {
         for (let i = 0; i < toAdd.length; i++) {
@@ -279,21 +289,6 @@ export function CandidateManagementPanel({ electionId, electionTitle, locked = f
               >
                 <Plus className="mr-2 h-4 w-4" />
                 Add New Candidate
-              </Button>
-              <Button
-                className="text-white"
-                variant="outline"
-                style={{ backgroundColor: locked ? "#9CA3AF" : "#7A0019" }}
-                disabled={locked}
-                onClick={() =>
-                  notify.info({
-                    title: "Draft saved",
-                    description:
-                      'Draft saved locally. Use "Add Candidates" in the modal to save to the database.',
-                  })
-                }
-              >
-                Save Draft
               </Button>
               {candidatesPublished ? (
                 <Button variant="outline" disabled className="text-green-700 border-green-300 bg-green-50">

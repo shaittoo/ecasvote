@@ -1202,7 +1202,9 @@ async function loadElectionPositionsWithCandidates(electionId: string): Promise<
         const dbByName = new Map<string, (typeof dbCandidates)[number]>(
           dbCandidates.map((c) => [c.name.trim().toLowerCase(), c])
         );
-        const candidates = Array.isArray(chainCandidates) && chainCandidates.length > 0
+        // Include DB-only rows (e.g. RegisterCandidate failed, or election not DRAFT) so admin UI
+        // still lists everyone saved in Prisma — not only whoever is already on the ledger.
+        const fromChain = Array.isArray(chainCandidates) && chainCandidates.length > 0
           ? chainCandidates.map((c: any) => {
               const name = String(c?.name ?? '').trim();
               const db = dbByName.get(name.toLowerCase());
@@ -1217,7 +1219,24 @@ async function loadElectionPositionsWithCandidates(electionId: string): Promise<
                 imageUrl: db?.imageUrl ?? null,
               };
             })
-          : dbCandidates.map((c) => ({ ...c, positionId }));
+          : [];
+        const chainNames = new Set(fromChain.map((c) => c.name.trim().toLowerCase()));
+        const dbOnlyExtra = dbCandidates
+          .filter((c) => !chainNames.has(c.name.trim().toLowerCase()))
+          .map((c) => ({
+            id: c.id,
+            electionId,
+            positionId,
+            name: c.name,
+            party: c.party ?? null,
+            program: c.program ?? null,
+            yearLevel: c.yearLevel ?? null,
+            imageUrl: c.imageUrl ?? null,
+          }));
+        const candidates =
+          fromChain.length > 0 || dbOnlyExtra.length > 0
+            ? [...fromChain, ...dbOnlyExtra]
+            : dbCandidates.map((c) => ({ ...c, positionId }));
         return {
           id: positionId,
           electionId,
@@ -1259,8 +1278,7 @@ async function loadElectionPositionsWithCandidates(electionId: string): Promise<
 
     const positionsWithCandidates = [...byPosition.entries()].map(([positionId, group], idx) => {
       const dbPos = dbPosByChainId.get(positionId);
-      const dbCandidates = group.length > 0 ? [] : [];
-      const candidates = group.map((c: any) => {
+      const fromChain = group.map((c: any) => {
         const name = String(c?.name ?? '').trim();
         return {
           id: String(c?.id ?? ''),
@@ -1274,13 +1292,33 @@ async function loadElectionPositionsWithCandidates(electionId: string): Promise<
             dbCandidateByPosAndName.get(`${positionId}::${name.toLowerCase()}`)?.imageUrl ?? null,
         };
       });
+      const chainNames = new Set(fromChain.map((c) => c.name.trim().toLowerCase()));
+      const dbForPosition = dbCandidatesAll.filter(
+        (c) => chainPositionIdFromDb(c.positionId, electionId) === positionId,
+      );
+      const dbOnlyExtra = dbForPosition
+        .filter((c) => !chainNames.has(c.name.trim().toLowerCase()))
+        .map((c) => ({
+          id: c.id,
+          electionId,
+          positionId,
+          name: c.name,
+          party: c.party ?? null,
+          program: c.program ?? null,
+          yearLevel: c.yearLevel ?? null,
+          imageUrl: c.imageUrl ?? null,
+        }));
+      const candidates =
+        fromChain.length > 0 || dbOnlyExtra.length > 0
+          ? [...fromChain, ...dbOnlyExtra]
+          : [];
       return {
         id: positionId,
         electionId,
         name: String(dbPos?.name ?? positionId),
         maxVotes: Number(dbPos?.maxVotes ?? 1),
         order: Number(dbPos?.order ?? idx + 1),
-        candidates: candidates.length > 0 ? candidates : dbCandidates,
+        candidates,
       };
     });
     return positionsWithCandidates.sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
@@ -2478,7 +2516,7 @@ app.post('/elections/:id/candidates', async (req, res) => {
     const contract = await getContract();
     const dbPositions = await prisma.position.findMany({ where: { electionId: id } });
     const positionMap = new Map<string, { id: string; name: string }>(
-      dbPositions.map((p) => [p.name, { id: p.id, name: p.name }])
+      dbPositions.map((p) => [p.name.trim(), { id: p.id, name: p.name }])
     );
 
     const createdCandidates: any[] = [];
@@ -2490,7 +2528,7 @@ app.post('/elections/:id/candidates', async (req, res) => {
         continue; // Skip invalid candidates
       }
 
-      const position = positionMap.get(positionName);
+      const position = positionMap.get(String(positionName).trim());
       if (!position) {continue;
       }
 
